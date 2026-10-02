@@ -59,7 +59,7 @@ Python functions run in Python, and JavaScript functions run in JavaScript. Supp
 
 ## Get started
 
-Download the appropriate asset from the **[v0.1.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.1.0)**. The repository currently requires GitHub access, so download while signed in. `SHA256SUMS.txt` is included for verifying the packages.
+Download the appropriate asset from the **[v0.1.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.1.0)**. `SHA256SUMS.txt` is included for verifying the packages.
 
 ### Python: a plot in a few lines
 
