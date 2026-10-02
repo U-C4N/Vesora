@@ -1,4 +1,4 @@
-"""Run after building/installing Vesora: python examples/python_desktop.py."""
+"""Run the NumPy-free desktop example: python examples/python_desktop.py."""
 import math
 import vesora as vs
 
@@ -9,6 +9,6 @@ vs.plot(x, y, color="cyan", label="model")
 vs.scatter(x[::100], y[::100], color="orange", size=5, label="samples")
 fig.set_axes(xlabel="Time (s)", ylabel="Amplitude")
 fig.show()
-# Closing the desktop window preserves the figure so it can be exported/reopened.
+# Closing the desktop window preserves the figure for later export or display.
 fig.savefig("oscillation.png")
 fig.close()

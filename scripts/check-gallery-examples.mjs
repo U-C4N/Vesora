@@ -33,7 +33,7 @@ function checkBenchmarkValues(fig, id) {
     assert.match(view.yLabel, /°C/);
   } else if (id === 'training-loss') {
     assert.equal(view.yScale, 'log');
-    assert.match(view.yLabel, /düşük/i);
+    assert.match(view.yLabel, /lower is better/i);
     for (const layer of layers) {
       assert.ok(layer.y.every(value => Number.isFinite(value) && value > 0));
       assert.ok(layer.y.at(-1) < layer.y[0]);
@@ -48,7 +48,7 @@ function checkBenchmarkValues(fig, id) {
     }
   } else if (id === 'quality-latency') {
     assert.match(view.xLabel, /\bms\b/);
-    assert.match(view.yLabel, /kalite|puan/i);
+    assert.match(view.yLabel, /quality score/i);
     assert.deepEqual(view.yDomain, [0, 100]);
     for (const layer of layers) {
       assert.ok(layer.x.every(value => Number.isFinite(value) && value > 0));
@@ -81,7 +81,7 @@ for (const example of examples) {
     assert.ok(snapshot.figure.layers.length > 0, `${example.id}: empty scene`);
     if (expected.slice(0, 4).includes(example.id)) {
       assert.equal(example.synthetic, true);
-      assert.match(example.dataNote, /Temsili/);
+      assert.match(example.dataNote, /Synthetic data/);
       assert.equal(example.series.length, 3);
       assert.deepEqual(example.series.flatMap(series => series.layerIndices).sort((a, b) => a - b), snapshot.figure.layers.map((_, index) => index));
       checkBenchmarkValues(fig, example.id);
@@ -147,7 +147,7 @@ for example in json.load(sys.stdin):
                 assert [layer['kind'] for layer in layers] == ['line', 'line', 'line']
                 assert '°C' in view['yLabel']
             elif example['id'] == 'training-loss':
-                assert view['yScale'] == 'log' and 'düşük' in view['yLabel'].lower()
+                assert view['yScale'] == 'log' and 'lower is better' in view['yLabel'].lower()
                 for layer in layers:
                     loss = values(layer, 'y')
                     assert all(math.isfinite(value) and value > 0 for value in loss)
@@ -160,7 +160,7 @@ for example in json.load(sys.stdin):
                     assert all(math.isfinite(value) and 0 <= value <= 100 for value in values(layer, 'y'))
             elif example['id'] == 'quality-latency':
                 assert 'ms' in view['xLabel'] and view['yDomain'] == [0, 100]
-                assert 'kalite' in view['yLabel'].lower() or 'puan' in view['yLabel'].lower()
+                assert 'quality score' in view['yLabel'].lower()
                 for layer in layers:
                     assert all(math.isfinite(value) and value > 0 for value in values(layer, 'x'))
                     assert all(math.isfinite(value) and 0 <= value <= 100 for value in values(layer, 'y'))

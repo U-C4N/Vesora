@@ -182,6 +182,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/examples/web/');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   const modes = ['multi-line', 'training-loss', 'benchmark-score', 'quality-latency', 'signal', 'scatter', 'density', 'heatmap', 'precision', 'spectrum', 'phase', 'surface', 'scatter3d', 'lorenz', 'interference', 'peaks'];
   const benchmarkModes = modes.slice(0, 4);
   await expect(page.locator('[data-example]')).toHaveCount(16);
@@ -191,7 +192,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
   await expect(page.locator('[data-example] canvas')).toHaveCount(32);
   for (const mode of modes) {
     const card = page.locator(`[data-example="${mode}"]`);
-    await expect(card.locator('.representation')).not.toHaveText(/loading|preparing|hazırlanıyor|yükleniyor/i);
+    await expect(card.locator('.representation')).not.toHaveText(/loading|preparing/i);
     await expect(card.locator('.representation')).not.toBeEmpty();
     await expect(card.locator('.error')).toBeHidden();
     await expect(card.locator('.code-details')).toHaveCount(1);
@@ -247,7 +248,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
   expect(benchmarks.lines.layers.map(layer => layer.kind)).toEqual(['line', 'line', 'line']);
   expect(benchmarks.lines.view.yLabel).toContain('°C');
   expect(benchmarks.training.view.yScale).toBe('log');
-  expect(benchmarks.training.view.yLabel).toMatch(/düşük/i);
+  expect(benchmarks.training.view.yLabel).toMatch(/lower is better/i);
   for (const layer of benchmarks.training.layers) {
     expect(layer.y.every(value => Number.isFinite(value) && value > 0)).toBe(true);
     expect(layer.y.at(-1)).toBeLessThan(layer.y[0]);
@@ -260,7 +261,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
     expect(layer.y.every(value => Number.isFinite(value) && value >= 0 && value <= 100)).toBe(true);
   }
   expect(benchmarks.latency.view.xLabel).toMatch(/\bms\b/);
-  expect(benchmarks.latency.view.yLabel).toMatch(/kalite|puan/i);
+  expect(benchmarks.latency.view.yLabel).toMatch(/quality score/i);
   expect(benchmarks.latency.view.yDomain).toEqual([0, 100]);
 
   const geometrySignature = id => page.evaluate(id => {
@@ -274,7 +275,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
   }, id);
   for (const mode of benchmarkModes) {
     const card = page.locator(`[data-example="${mode}"]`);
-    await expect(card.locator('.data-note')).toContainText('Temsili');
+    await expect(card.locator('.data-note')).toContainText('Synthetic data');
     const toggle = card.locator('.series-legend button[data-series="0"]');
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
     const indices = await page.evaluate(async id => {
@@ -305,7 +306,7 @@ test('the gallery renders sixteen scientific examples, toggles benchmark series,
     await page.evaluate(async () => vesoraGallery.get('benchmark-score').ready());
   }
   expect(await page.evaluate(() => vesoraGallery.get('benchmark-score').spec.layers.every(layer => !layer.visible))).toBe(true);
-  await expect(scoreCard.locator('.representation')).toContainText('Tüm seriler gizli');
+  await expect(scoreCard.locator('.representation')).toContainText('All series hidden');
   expect((await geometrySignature('benchmark-score')).colored).toBe(0);
   await scoreCard.locator('[data-action="reset"]').click();
   await page.evaluate(async () => vesoraGallery.get('benchmark-score').ready());

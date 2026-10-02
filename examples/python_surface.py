@@ -1,4 +1,4 @@
-"""A regular-grid mathematical surface, rendered by the shared JavaScript engine."""
+"""Plot a regular-grid surface using the standard library and Vesora's shared engine."""
 import math
 import vesora as vs
 

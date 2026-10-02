@@ -1,25 +1,25 @@
-# Geliştirme, test ve ölçüm
+# Development, testing, and measurement
 
-Depo kökünden Node.js 22+ kullanın. Python geliştirmesi için Python 3.10+ gerekir. WebGL2 tarayıcıda ve masaüstü QtWebEngine ortamında etkin olmalıdır.
+Use Node.js 22+ from the repository root. Python development requires Python 3.10+. WebGL2 must be available in the browser and the desktop QtWebEngine environment.
 
-NumPy Python API'sinin zorunlu bağımlılığı değildir. Temel kurulum `aiohttp` ve `PySide6` içerir; notebook için `.[notebook]`, NumPy ile çalışmak için isteğe bağlı `.[numpy]` kurulabilir. Varsayılan Python örnekleri `math`, `random` ve listeler kullanır. NumPy birlikte çalışabilirlik kontrollerini de çalıştırmak isteyen geliştiriciler NumPy extra'sını test ortamına eklemelidir.
+NumPy is not a required dependency of the Python API. The base installation includes `aiohttp` and `PySide6`. Install `.[notebook]` for notebook support or `.[numpy]` for optional NumPy integration. The default Python examples use `math`, `random`, and lists. Add the NumPy extra to your test environment to run the optional NumPy interoperability checks.
 
-## Çekirdeği derleme
+## Build the core
 
 ```bash
 npm install
 npm run check
 ```
 
-Build, JS paketinin dağıtım dosyalarını üretir ve aynı motoru Python asset dizinine kopyalar. Python paketi için build önce tamamlanmalıdır. Core, worker ve Python'ın motor asset'leri birlikte sürümlenir; protokol sürümü iki tarafta da `1` olur.
+The build produces the JavaScript distribution files and copies the same engine into the Python asset directory. Complete this build before packaging Python. The core, worker, and bundled Python engine assets are versioned together, with protocol version `1` on both sides.
 
-Hazır wheel üretmek için build sonrasında:
+After building the engine, create a wheel with:
 
 ```bash
 python -m pip wheel --no-deps --no-build-isolation . --wheel-dir dist
 ```
 
-## Browser testlerini çalıştırma
+## Run browser tests
 
 ```bash
 python -m pip install -e ".[test,notebook]"
@@ -27,45 +27,45 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Windows'ta standart konumdaki Chrome varsa otomatik seçilir. `VESORA_CHROME` ortam değişkeni farklı executable yolunu belirler. CI Playwright Chromium kullanır. Testler SwiftShader ile yazılımsal WebGL çalıştırır; sonuçları donanım performansı olarak yorumlamayın.
+On Windows, Chrome is selected automatically when installed at the standard location. Set `VESORA_CHROME` to use another executable. CI uses Playwright Chromium. These tests use SwiftShader software WebGL, so their results are not hardware GPU performance measurements.
 
-Browser testleri gerçek WebGL piksellerini okur; layer güncellemesi, Float64 koordinat farkları, çizgi boşlukları, adaptif temsil, hover/seçim, görünüm değişimi, heatmap/3D ve PNG başlık kompozisyonunu denetler. Python tarafından üretilmiş gerçek binary snapshot'lar da JS sahnesiyle karşılaştırılır ve aynı motorda çizilir. Bu test `.venv` içindeki Python'ı veya PATH'teki `python` komutunu kullanır; `PYTHON` ortam değişkeniyle değiştirilebilir. PNG boyutları ekran piksel oranını dikkate alır. Hata durumunda Playwright trace ve test sonuçları saklanır.
+Browser tests read actual WebGL pixels to check layer updates, small differences between large Float64 coordinates, line gaps, adaptive representations, hover/selection, view updates, heatmaps, 3D rendering, and PNG title compositing. Real binary snapshots produced by Python are compared with JavaScript scenes and rendered through the same engine. These tests use Python from `.venv` or the `python` command on PATH; set `PYTHON` to override it. PNG dimensions account for the device pixel ratio. Playwright traces and test results are retained on failure.
 
-Notebook JavaScript adaptörü gerçek Python trait verisi ve mock widget model'iyle tarayıcıda test edilir: blob ESM yükleme, blob worker, binary buffer güncellemesi, comm üzerinden PNG export ve cleanup. Bu, tam bir Jupyter arayüzü otomasyon testi değildir. `npm run test:parity` Python/JS normalize sahne modelini ayrıca tarayıcı olmadan karşılaştırır; CI bu kontrolü de çalıştırır.
+The notebook JavaScript adapter is tested in the browser with real Python trait data and a mock widget model: blob ESM loading, a blob worker, binary updates, PNG export over widget messages, and cleanup. This does not automate a complete Jupyter interface. `npm run test:parity` separately compares normalized Python/JavaScript scenes without a browser; CI runs this check too.
 
-`npm run test:examples`, galerideki 16 JavaScript ve 16 Python kod örneğini çalıştırır. Python alt süreci NumPy erişimi kapalı ve site paketleri olmadan başlatılır; yalnızca pencere açma ve DOM'a bağlama çağrıları test adaptörüyle değiştirilir. Gerçek sahne oluşturma, boyutlar ve veri kanalları kontrol edilir. Galeri browser testi ayrıca parametre değişikliklerini, arama/filtreleri, PNG çıktısını, mobil taşmayı ve tekrar sıfırlama sırasında GPU kaynaklarının serbest bırakılmasını doğrular. Üç AI benchmark kartı sentetik verilerle eğitim kaybı, skor ve kalite/gecikme örnekleri sunar; model performansına ilişkin ölçüm veya kıyas iddiası taşımaz.
+`npm run test:examples` executes the gallery's 16 JavaScript and 16 Python code examples. The Python subprocess runs without site packages and with NumPy access blocked. Only window-opening and DOM-mounting calls are replaced by the test adapter; real scene creation, dimensions, and data channels are checked. The gallery browser test also checks parameter updates, search/filters, PNG export, mobile overflow, and GPU resource cleanup during repeated resets. The three AI benchmark cards use synthetic data for training loss, scores, and quality/latency examples; they make no claims about measured model performance.
 
-## Python testleri
+## Run Python tests
 
 ```bash
 python -m pip install -e ".[test,notebook]"
 python -m pytest tests/python
 ```
 
-Pencereyi normal script'te `fig.show()` açar. Qt çağrıları ana thread'de çalışmalıdır. `show(block=False)` ile ana döngünüzden `vs.process_events()` çağırın. Başka bir Qt uygulaması içine gömüyorsanız mevcut event loop'u kullanın. Headless bir sistemde QtWebEngine export için çalışan bir grafik/sanal ekran ortamı gerekir.
+In a normal script, `fig.show()` opens the desktop window. Qt calls must run on the main thread. With `show(block=False)`, call `vs.process_events()` from your main loop. When embedding Vesora in another Qt application, use its existing event loop. On a headless system, QtWebEngine export requires a working graphics or virtual-display environment.
 
-Gerçek QtWebEngine testleri normal test koşusunda atlanır. Çalışan grafik ortamında `VESORA_TEST_QT=1` ayarlayıp `python -m pytest tests/python/test_desktop.py` çalıştırın. Bu testler line/heatmap/surface/scatter3d PNG'lerini, veri güncellemesini ve pencereyi kapatıp yeniden açmayı doğrular.
+Real QtWebEngine tests are skipped by default. In a working graphics environment, set `VESORA_TEST_QT=1` and run `python -m pytest tests/python/test_desktop.py`. These tests verify line/heatmap/surface/scatter3d PNGs, data updates, and closing and reopening a window.
 
-## Tekrarlanabilir benchmark
+## Run a reproducible benchmark
 
 ```bash
 npm run build
 node scripts/benchmark.mjs 1000000
 ```
 
-Çıktı `artifacts/benchmark.json` dosyasına kaydedilir. Donanım GPU'su kullanılamıyorsa `VESORA_SOFTWARE_GPU=1` ile SwiftShader ölçümü yapılabilir; rapor bu tercihi ve sürücünün bildirdiği GPU renderer'ını kaydeder.
+The report is saved to `artifacts/benchmark.json`. If a hardware GPU is unavailable, set `VESORA_SOFTWARE_GPU=1` to measure SwiftShader. The report records that choice and the GPU renderer reported by the driver.
 
-Rapor şu bilgileri ayırır:
+The report separates:
 
-- CPU, işletim sistemi, bellek, tarayıcı sürümü ve GPU renderer.
-- Seed 42 ile üretilen Gaussian veri, dtype, kayıt sayısı ve kaynak byte miktarı.
-- Figure boyutu, ekran piksel oranı ve başlangıç/son temsil bilgisi.
-- İlk çizim süresi, 20 görünüm değişiminin `ready()` gecikmeleri ve örnek dağılımı.
-- Boşta `requestAnimationFrame` aralıkları; bunlar render FPS garantisi değildir.
-- Erişilebilirse JS heap; ölçülemeyen Python/GPU belleği ve Python transfer miktarı `null`.
+- CPU, operating system, memory, browser version, and GPU renderer.
+- Gaussian data generated with seed 42, dtype, record count, and source bytes.
+- Figure dimensions, device pixel ratio, and initial/final representations.
+- First-render time, `ready()` latencies for 20 view updates, and the sample distribution.
+- Idle `requestAnimationFrame` intervals, which are not a rendering FPS guarantee.
+- JavaScript heap usage when available; unmeasured Python/GPU memory and Python transfer counts are `null`.
 
-Bu browser benchmark'ı Python bridge gecikmesini ölçmez. Bütün metrikler aynı donanım, veri dağılımı, browser ve görüntü boyutuyla karşılaştırılmalıdır. İlk görüntü süresi veri üretimini içermez; veri üretimi ayrıca raporlanır. Tek bir ölçümden genel bir nokta/FPS iddiası çıkarılmaz.
+This browser benchmark does not measure Python bridge latency. Compare metrics under the same hardware, data distribution, browser, and viewport conditions. First-render time excludes data generation, which is reported separately. A single measurement does not establish a universal point-count or FPS guarantee.
 
-## Destek sınırları
+## Current limits
 
-Bu sürüm in-memory 2D/temel 3D temelidir. İndeksli dosya sorguları, tile/streaming, çoklu view düzeni, vector_field, adaptif fonksiyon örnekleme, mesh/volume işlemleri ve SVG/PDF export sonraki işlerdir. WebGL2 olmayan bir ortam için alternatif renderer bulunmaz. 3D seçim ve gelişmiş picking destek düzeyi 2D ile aynı değildir.
+This version provides in-memory 2D and basic 3D visualization. Indexed file queries, tiles/streaming, multi-view layouts, `vector_field`, adaptive function sampling, advanced mesh/volume operations, and SVG/PDF export are future work. There is no alternative renderer for environments without WebGL2. 3D selection and advanced picking do not have the same support as 2D interactions.

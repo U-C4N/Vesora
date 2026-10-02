@@ -1,6 +1,6 @@
-# Ortak çekirdek ve veri modeli
+# Shared core and data model
 
-Python paketi bir sahne ve binary veri üretir. Çizim, ölçekler, yerleşim, kamera ve temsil planlaması aynı TypeScript motorunda çalışır. JS API bu motoru doğrudan çağırır; Python için ikinci bir renderer yoktur.
+The Python package produces a scene and binary data. Rendering, scales, layout, camera behavior, and representation planning run in one TypeScript engine. The JavaScript API calls this engine directly; the Python adapter uses the same renderer.
 
 ```mermaid
 flowchart LR
@@ -15,36 +15,36 @@ flowchart LR
     T --> E
 ```
 
-## Sahne ve kaynaklar
+## Scenes and data sources
 
-`FigureSpec`, view ve layer tanımlarını içerir. `ViewSpec` lineer/log ölçekleri, domain'leri, eksen adlarını ve kamerayı taşır. `LayerSpec` kaynak dizilerine kimlikle referans verir; veri dizileri JSON'a yazılmaz.
+`FigureSpec` contains the view and layer definitions. `ViewSpec` carries linear/log scales, domains, axis labels, and camera settings. `LayerSpec` references source arrays by ID; the numeric arrays are transferred separately from JSON.
 
-Her `DataDescriptor` için `id`, `dtype`, `shape`, artan `version`, `byteLength` alanları bulunur. Binary veri little-endian'dır. Protokol sürümü `1`; uyumsuz sürüm reddedilir. Buffer uzunluğu dtype × shape ile doğrulanır. Aynı kaynak kimliği güncellendiğinde version artar; kaldırılan kaynak worker ve sonuç cache'inden de çıkarılır.
+Each `DataDescriptor` includes `id`, `dtype`, `shape`, an increasing `version`, and `byteLength`. Binary data is little-endian. The protocol version is `1`; incompatible versions are rejected. Buffer length is validated against dtype and shape. Updating an existing source ID increases its version. Removing a source also removes it from the worker and result cache.
 
-Desteklenen kaynak türleri Float32/Float64 ile 8/16/32 bit işaretli/işaretsiz integer'lardır. JS normal number dizileri Float64 olur. Python 64 bit integer'ları yalnızca Float64'te kesin temsil edilebilen aralıkta dönüştürür; dışındaki değerleri reddeder. Kaynak Float64 verisi GPU'ya doğrudan Float32 olarak gönderilmez: görünüm dönüşümü kaynak hassasiyetinde yapılır, göreli koordinatlar Float32 geometriye çevrilir.
+Supported source types are Float32/Float64 and signed/unsigned 8-, 16-, and 32-bit integers. Ordinary JavaScript number arrays become Float64. Python converts 64-bit integers only within the exact Float64 integer range and rejects values outside it. View transformations use source precision before converting relative coordinates to Float32 GPU geometry.
 
-Python veri adaptörü standart kütüphaneyle çalışır; listeleri ve sayısal buffer protocol girişlerini ortak binary veri tanımına çevirir. NumPy zorunlu bağımlılık değildir. Kurulu olduğunda NumPy dizileri aynı buffer yolu üzerinden alınır; çizim çekirdeği değişmez.
+The Python data adapter uses the standard library to convert lists and numeric buffer protocol inputs into the shared binary representation. NumPy is optional. When installed, its arrays enter through the same buffer path and use the same rendering core.
 
-Matematiksel Python fonksiyonları JS'ye çevrilmez. Kullanıcının `math` tabanlı hesaplama kodu veya isteğe bağlı NumPy işlemleri modeli örnekler, sonuç dizilerini ortak motora verir. Temel pakette `aiohttp` yerel bağlantıyı, `PySide6` masaüstü host'u sağlar; `notebook` extra'sı anywidget, `numpy` extra'sı NumPy kurulumu içindir.
+Mathematical Python functions execute in Python. User calculations based on `math` or optional NumPy operations sample the model and send result arrays to the engine. The base package uses `aiohttp` for the local connection and `PySide6` for the desktop host. The `notebook` extra installs anywidget; the `numpy` extra installs NumPy.
 
-## Temsil planlama
+## Plan the visual representation
 
-Scatter planlayıcısı görünür veriyi ekran uzayında hücrelere sayar. `auto` yoğun görünümde count aggregation, seyrek görünümde orijinal noktalar seçer. Density'den noktalara dönüş için daha düşük eşik kullanılması küçük zoom hareketlerinde temsillerin sürekli değişmesini engeller. `points` zorlandığında bütçe aşılırsa hata oluşur; örnekler sessizce atılmaz.
+The scatter planner counts visible samples into screen-space cells. In `auto` mode, it chooses count aggregation for dense views and original points for sparse views. A lower threshold for switching back from density to points prevents repeated changes around the transition during small zoom movements. Forcing `points` raises an error when the budget is exceeded; samples are not silently discarded.
 
-Çizgi planlayıcısı ardışık ekran sütunu gruplarında ilk/son ve minimum/maksimum değerleri kaynak sırasıyla korur. NaN, sonsuz ve log ölçeğinde geçersiz değerler segmenti sonlandırır. Görünümden geçen, iki ucu dışarıdaki çizgi parçaları korunur. Çok karmaşık topoloji bütçeyi aşarsa hata raporlanır.
+The line planner preserves the first, last, minimum, and maximum samples in each consecutive group of screen columns, in source order. NaN, infinity, and values invalid on a log axis end a segment. Segments crossing the viewport are preserved even when both endpoints are outside it. If complex topology exceeds the budget, the planner reports an error.
 
-Hesaplama 65.536 kayıtlık parçalarda ilerler ve iptali denetler. Worker kullanılamadığında işbirlikçi ana thread yolu vardır. Kaynak dizileri worker'a her görünüm değişiminde tekrar gönderilmez; yalnızca yeni veri sürümünde aktarılır. Sorgu sonuç cache'i varsayılan olarak 32 MiB ve 100 kayıtla sınırlıdır. Yeni sorgu aynı layer'ın eski sorgusunu iptal eder; eski sonuç yeni görünümü değiştiremez.
+Computation advances in chunks of 65,536 records and checks for cancellation. A cooperative main-thread path is available when workers cannot be used. Source arrays are sent to the worker only for a new data version; viewport changes send query parameters. The result cache defaults to a maximum of 32 MiB and 100 entries. A new query cancels the previous query for the same layer, and stale results cannot replace the current view.
 
-Bu sınırlar bütün süreç belleğini sınırlamaz: kaynak veriler, worker kopyaları, geometri ve GPU buffer'ları ek bellek kullanır. Bu sürüm indeks kurmaz; görünüm sorguları bellek içi veri üzerinden O(n) tarama yapar. Çok büyük veriler için indeksli/uzak veri sağlayıcıları sonraki mimari genişlemedir.
+These limits do not cap total process memory: source data, worker copies, geometry, and GPU buffers use additional memory. This version does not build a spatial index. Viewport queries perform O(n) scans over in-memory data. Indexed and remote data providers are future extensions.
 
-Figure görünümü 250.000 noktalık sorgu bütçesi kullanır; yoğun scatter otomatik olarak count temsiline geçer. Heatmap/surface ve 3D scatter için bir milyon kaynak değer kontrolü, layer geometrisi için iki milyon vertex sınırı vardır. Grid üçgenlemesi bu sınırı kaynak değer sayısından önce doldurabilir; bütçe aşımı hata üretir. `inspect().rendered`, scatter için çizilen noktaları, çizgi için korunan kaynak indekslerini, density için dolu hücreleri, heatmap için çizilen hücreleri ve surface için üçgenleri sayar. `method` alanı kullanılan temsili açıklar.
+The figure view uses a query budget of 250,000 points; dense scatter switches automatically to count aggregation. Heatmaps, surfaces, and 3D scatter have a one-million-source-value limit, and layer geometry has a two-million-vertex limit. Grid triangulation can reach the geometry limit before the source-value limit; exceeding either produces an error. `inspect().rendered` counts drawn points for scatter, retained source indices for lines, occupied cells for density, drawn cells for heatmaps, and triangles for surfaces. The `method` field explains the representation.
 
-## Render ve export
+## Render and export
 
-WebGL2 geometriyi çizer. Her layer için GPU buffer nesneleri tekrar kullanılır; stil/veri değişimlerinde içerik güncellenir. Canvas2D yalnızca eksen, metin, legend, colorbar ve etkileşim açıklamaları içindir. Bağımsız Canvas2D çizim backend'i bulunmaz.
+WebGL2 draws the geometry. GPU buffer objects are reused for each layer, with their contents updated as styles or data change. Canvas2D draws axes, text, legends, colorbars, and interaction annotations. It is not a standalone data-rendering backend.
 
-Renderer yetenekleri `name`, `supports3d`, `rasterExport`, `vectorExport` alanlarıyla ifade edilir. PNG export iki canvas'ı birleştirir. WebGPU, SVG ve PDF bu sürümde uygulanmamıştır. GPU context kaybı hata olarak bildirilir; görünümü tekrar mount etmek kaynakları yeniden kurar.
+Renderer capabilities are described by `name`, `supports3d`, `rasterExport`, and `vectorExport`. PNG export composites the two canvases. WebGPU, SVG, and PDF are not implemented in this version. A lost GPU context is reported as an error; remounting the view recreates its resources.
 
-Python host snapshot'ları artan bir revision taşır. Görüntüleyici bütün binary kaynakları ve çizimi tamamladıktan sonra aynı revision için hazır olduğunu bildirir. Yeni veri güncellemesi sırasında eski hazır/hata mesajları yok sayılır; export en son snapshot'ın tamamlanmasını bekler ve geçerli render hatasını eski görüntüye dönüştürmez.
+Python host snapshots carry an increasing revision. After loading every binary source and completing the render, the viewer acknowledges that revision. During a data update, stale ready/error messages are ignored. Export waits for the latest snapshot and reports a current rendering error rather than returning an older image.
 
-Bilimsel görseller için boyut/eksen anlamı kaynak veriye aittir. Otomatik unit dönüşümü, projeksiyon sistemi ve sembolik matematik motoru yoktur.
+Units and axis meaning come from the source data. Automatic unit conversion, geographic projection systems, and symbolic mathematics are outside the current engine.

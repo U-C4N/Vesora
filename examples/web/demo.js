@@ -1,30 +1,30 @@
 import { figure, Layer } from '../../packages/core/dist/index.js';
 import { examples } from './scenarios.js';
 
-const number = new Intl.NumberFormat('tr-TR');
-const parameterNumber = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 });
+const number = new Intl.NumberFormat('en-US');
+const parameterNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 const cards = new Map();
 window.vesoraGallery = new Map();
 let activeFilter = 'all';
 let pageClosed = false;
 
 function representationText(infos) {
-  if (!infos.length) return 'Görünüm hazırlanıyor…';
+  if (!infos.length) return 'Preparing view…';
   const density = infos.find(info => info.kind === 'density');
-  if (density) return `${number.format(density.visible)} kayıt · Hücre başına sayım`;
+  if (density) return `${number.format(density.visible)} records · Count per bin`;
   const surface = infos.find(info => info.kind === 'surface');
-  if (surface) return `${number.format(surface.rendered)} üçgen · Düzenli grid`;
+  if (surface) return `${number.format(surface.rendered)} triangles · Regular grid`;
   const grid = infos.find(info => info.kind === 'grid');
-  if (grid) return `${number.format(grid.rendered)} hücre · Skaler alan`;
+  if (grid) return `${number.format(grid.rendered)} cells · Scalar field`;
   const points = infos.find(info => info.kind === 'points');
-  if (points) return `${number.format(points.rendered)} nokta · Gerçek kayıtlar`;
+  if (points) return `${number.format(points.rendered)} points · Original data`;
   const total = Math.max(...infos.map(info => info.total));
   const reduced = infos.some(info => !info.exact);
-  return `${number.format(total)} örnek · ${reduced ? 'Min/max azaltma' : 'Tam çizgi'}${infos.length > 1 ? ` · ${infos.length} seri` : ''}`;
+  return `${number.format(total)} samples · ${reduced ? 'Min/max reduction' : 'Full line'}${infos.length > 1 ? ` · ${infos.length} series` : ''}`;
 }
 
 function searchText(value) {
-  return value.toLocaleLowerCase('tr-TR').normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/ı/g, 'i');
+  return value.toLocaleLowerCase('en-US').normalize('NFD').replace(/\p{Diacritic}/gu, '');
 }
 
 function applyFilters() {
@@ -42,7 +42,7 @@ function applyFilters() {
     document.getElementById(dimension === '2d' ? 'two-d' : 'three-d').hidden = !matches;
   }
   const count = document.getElementById('visible-count');
-  count.textContent = `${visible} / ${examples.length} örnek`;
+  count.textContent = `${visible} / ${examples.length} examples`;
   count.dataset.count = String(visible);
   document.getElementById('gallery-empty').hidden = visible !== 0;
   for (const button of document.querySelectorAll('[data-filter]')) button.setAttribute('aria-pressed', String(button.dataset.filter === activeFilter));
@@ -58,9 +58,9 @@ function createCard(example, index) {
   card.innerHTML = `<div class="card-header"><div class="card-heading"><div class="card-kicker"><span class="card-number"></span><span class="card-type"></span></div><h3 id="title-${example.id}"></h3><p class="card-description"></p></div><span class="dimension ${example.dimension === '3d' ? 'three' : ''}">${example.dimension.toUpperCase()}</span></div>
     <div class="card-tags"></div><div class="chart"></div><p class="error" role="alert" hidden></p>
     <div class="card-insight"></div>
-    <div class="card-bottom"><span class="representation" role="status">Görünüm hazırlanıyor…</span><div class="card-actions"><button data-action="focus" aria-pressed="false" title="Grafiği tam satıra genişlet" disabled>Genişlet ↗</button><button data-action="reset" title="Başlangıç verisine ve görünümüne dön" disabled>↺ Sıfırla</button><button data-action="export" disabled>PNG ↓</button></div></div>
+    <div class="card-bottom"><span class="representation" role="status">Preparing view…</span><div class="card-actions"><button data-action="focus" aria-pressed="false" title="Expand chart to a full row" disabled>Expand ↗</button><button data-action="reset" title="Restore the initial data and view" disabled>↺ Reset</button><button data-action="export" disabled>PNG ↓</button></div></div>
     <p class="feedback" aria-live="polite"></p>
-    <details class="code-details"><summary><span>Başlangıç kodu<span class="code-label">Python / JavaScript</span></span></summary><div class="code-body"><div class="card-tools"><div class="code-tabs" aria-label="Örnek kod dili"><button data-language="python" aria-pressed="true">Python</button><button data-language="javascript" aria-pressed="false">JavaScript</button></div><button class="copy-code" data-action="copy">Kodu kopyala</button></div><pre><code></code></pre></div></details>`;
+    <details class="code-details"><summary><span>Starter code<span class="code-label">Python / JavaScript</span></span></summary><div class="code-body"><div class="card-tools"><div class="code-tabs" aria-label="Example code language"><button data-language="python" aria-pressed="true">Python</button><button data-language="javascript" aria-pressed="false">JavaScript</button></div><button class="copy-code" data-action="copy">Copy code</button></div><pre><code></code></pre></div></details>`;
   card.querySelector('.card-number').textContent = String(index + 1).padStart(2, '0');
   card.querySelector('.card-type').textContent = example.type;
   card.querySelector('h3').textContent = example.title;
@@ -69,15 +69,15 @@ function createCard(example, index) {
   card.querySelector('code').textContent = example.python;
   if (example.synthetic) {
     const note = document.createElement('p'); note.className = 'data-note';
-    note.textContent = example.dataNote ?? 'Temsili veri · Gerçek model sonuçları değildir.';
+    note.textContent = example.dataNote ?? 'Synthetic data · Not real model results.';
     card.querySelector('.card-tags').after(note);
   }
   if (example.series) {
     const legend = document.createElement('div'); legend.className = 'series-legend';
-    legend.setAttribute('role', 'group'); legend.setAttribute('aria-label', 'Grafik serilerini göster veya gizle');
+    legend.setAttribute('role', 'group'); legend.setAttribute('aria-label', 'Show or hide chart series');
     for (const [index, series] of example.series.entries()) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.series = String(index);
-      button.setAttribute('aria-pressed', 'true'); button.title = `${series.label} serisini gizle`; button.disabled = true;
+      button.setAttribute('aria-pressed', 'true'); button.title = `Hide ${series.label}`; button.disabled = true;
       const swatch = document.createElement('span'); swatch.className = 'series-swatch';
       swatch.style.backgroundColor = series.color; swatch.setAttribute('aria-hidden', 'true');
       button.append(swatch, document.createTextNode(series.label)); legend.append(button);
@@ -110,11 +110,11 @@ function createCard(example, index) {
   card.querySelector('[data-action="copy"]').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(example[language]);
-      card.querySelector('.feedback').textContent = `${language === 'python' ? 'Python' : 'JavaScript'} kodu kopyalandı.`;
+      card.querySelector('.feedback').textContent = `${language === 'python' ? 'Python' : 'JavaScript'} code copied.`;
     } catch {
       const range = document.createRange(); range.selectNodeContents(card.querySelector('code'));
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-      card.querySelector('.feedback').textContent = 'Kod seçildi. Ctrl+C veya ⌘C ile kopyalayabilirsin.';
+      card.querySelector('.feedback').textContent = 'Code selected. Press Ctrl+C or ⌘C to copy.';
     }
   });
   const entry = { card, example, report, frame: 0, parameterVersion: 0, viewRevision: 0 };
@@ -136,19 +136,19 @@ async function mountExample(entry) {
     window.vesoraGallery.set(example.id, fig);
     fig.on('representation', infos => {
       const status = card.querySelector('.representation');
-      status.textContent = infos.length ? representationText(infos) : 'Tüm seriler gizli · Bir seri seçin';
+      status.textContent = infos.length ? representationText(infos) : 'All series hidden · Select a series';
       if (infos.length && example.series) {
         const visible = example.series.filter(series => series.layerIndices.some(index => fig.spec.layers[index].visible)).length;
         const markers = example.series.some(series => series.layerIndices.length > 1);
-        status.textContent = `${visible} / ${example.series.length} seri · ${markers ? 'Çizgi + noktalar' : 'Çok serili çizgi'}`;
+        status.textContent = `${visible} / ${example.series.length} series · ${markers ? 'Lines + points' : 'Multiple line series'}`;
       }
       status.title = infos.map(info => info.method).join(' / ');
     });
     fig.on('error', report);
     fig.on('selection', event => {
       card.querySelector('.feedback').textContent = event.kind === 'density'
-        ? `Seçilen hücre bölgesinde ${number.format(event.count)} kayıt var.`
-        : `${number.format(event.count)} kayıt seçildi.${event.truncated ? ' İlk 10.000 kaydın kimliği döndürüldü.' : ''}`;
+        ? `${number.format(event.count)} records in the selected bin region.`
+        : `${number.format(event.count)} records selected.${event.truncated ? ' IDs returned for the first 10,000 records.' : ''}`;
     });
     fig.mount(chart); await fig.ready();
     card.dataset.ready = 'true';
@@ -160,7 +160,7 @@ async function mountExample(entry) {
         const series = example.series[Number(button.dataset.series)];
         const visible = button.getAttribute('aria-pressed') !== 'true';
         button.setAttribute('aria-pressed', String(visible));
-        button.title = `${series.label} serisini ${visible ? 'gizle' : 'göster'}`;
+        button.title = `${visible ? 'Hide' : 'Show'} ${series.label}`;
         for (const index of series.layerIndices) layerHandles[index].setVisible(visible);
         try { await fig.ready(); } catch (error) { if (!pageClosed && revision === entry.viewRevision) report(error); }
       });
@@ -187,7 +187,7 @@ async function mountExample(entry) {
       const revision = entry.viewRevision;
       const focused = card.classList.toggle('is-focused');
       event.currentTarget.setAttribute('aria-pressed', String(focused));
-      event.currentTarget.textContent = focused ? 'Küçült ↙' : 'Genişlet ↗';
+      event.currentTarget.textContent = focused ? 'Collapse ↙' : 'Expand ↗';
       fig.spec.height = focused ? 520 : 380; fig.changed();
       try { await fig.ready(); } catch (error) { if (!pageClosed && revision === entry.viewRevision) report(error); }
     });
@@ -200,7 +200,7 @@ async function mountExample(entry) {
         layerHandles.forEach((layer, index) => layer.setVisible(initialVisibility[index]));
         for (const button of card.querySelectorAll('[data-series]')) {
           button.setAttribute('aria-pressed', 'true');
-          button.title = `${example.series[Number(button.dataset.series)].label} serisini gizle`;
+          button.title = `Hide ${example.series[Number(button.dataset.series)].label}`;
         }
         if (input) {
           input.value = String(example.control.value);
@@ -228,7 +228,7 @@ async function mountExample(entry) {
     });
   } catch (error) {
     fig?.close(); window.vesoraGallery.delete(example.id);
-    card.dataset.ready = 'error'; card.querySelector('.representation').textContent = 'Görünüm oluşturulamadı';
+    card.dataset.ready = 'error'; card.querySelector('.representation').textContent = 'Could not render the view';
     report(error);
   }
 }

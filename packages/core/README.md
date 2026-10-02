@@ -1,46 +1,46 @@
 # @vesora/core
 
-Python ve JavaScript'in paylaştığı TypeScript bilimsel görselleştirme motoru. WebGL2 ile 2D çizgi/scatter/heatmap, 3D surface/scatter ve PNG export sağlar. TypeScript tipleri pakete dahildir.
+A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, scatter, and heatmaps; 3D surfaces and scatter; and PNG export. TypeScript types are included.
 
-**0.1 geliştirme sürümü:** API henüz kararlı değildir. Çizim için WebGL2 destekleyen bir tarayıcı gerekir.
+**0.1 development release:** the API is not yet stable. Rendering requires a browser with WebGL2 support.
 
-## Kurulum
+## Installation
 
-[v0.1.0 GitHub Release](https://github.com/U-C4N/Vesora/releases/tag/v0.1.0) eklerinden `vesora-core-0.1.0.tgz` dosyasını indirip frontend projenize koyun:
+Download `vesora-core-0.1.0.tgz` from the [v0.1.0 GitHub Release](https://github.com/U-C4N/Vesora/releases/tag/v0.1.0) assets and place it in your frontend project:
 
 ```bash
 npm install ./vesora-core-0.1.0.tgz
 ```
 
-Paket GitHub Release üzerinden dağıtılır; npm registry üzerinde yayımlanmış değildir.
+The package is distributed through GitHub Release assets. It has not been published to the npm registry.
 
-## JavaScript / TypeScript kullanımı
+## JavaScript / TypeScript usage
 
-HTML sayfanıza bir grafik alanı ekleyin:
+Add a chart container to your HTML page:
 
 ```html
 <div id="chart"></div>
 ```
 
-Tarayıcıda çalışan bundler projenizin JavaScript veya TypeScript giriş dosyasında:
+In the JavaScript or TypeScript entry point of your browser-based bundler project:
 
 ```javascript
 import { figure } from '@vesora/core';
 
 const chart = document.getElementById('chart');
-if (!chart) throw new Error('#chart elementi bulunamadı');
+if (!chart) throw new Error('The #chart element was not found');
 
-const fig = figure({ title: 'Ölçüm' });
+const fig = figure({ title: 'Measurements' });
 fig.plot([0, 1, 2, 3], [0, 1, 4, 9], { label: 'y = x²' });
 fig.mount(chart);
 ```
 
-`await fig.ready()` bekleyen çizimin tamamlanmasını bekler; `await fig.savefig()` PNG `Blob` döndürür. Layer'lar `setData`, `setStyle` ve `setVisible` ile güncellenebilir. Sayfadan kaldırılan figure için `fig.close()` çağırın.
+`await fig.ready()` waits for pending rendering to finish; `await fig.savefig()` returns a PNG `Blob`. Update layers with `setData`, `setStyle`, and `setVisible`. Call `fig.close()` when removing a figure from the page.
 
-## Belgeler
+## Documentation
 
-- [API ve örnekler](https://github.com/U-C4N/Vesora/blob/main/docs/api.md)
-- [Ortak çekirdek ve veri modeli](https://github.com/U-C4N/Vesora/blob/main/docs/architecture.md)
-- [Python kurulumu ve kaynak geliştirme](https://github.com/U-C4N/Vesora#readme)
+- [API and examples](../../docs/api.md)
+- [Shared core and data model](../../docs/architecture.md)
+- [Python installation and source development](../../README.md)
 
-Bu sürüm bellek içi veriyle çalışır. Büyük scatter verilerinde count aggregation, çizgilerde extrema koruyan azaltma uygulanır. WebGPU ve SVG/PDF export bu sürümde bulunmaz.
+This version works with in-memory data. Dense scatter uses count aggregation, and line reduction preserves extrema. WebGPU and SVG/PDF export are not available in this version.
