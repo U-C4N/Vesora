@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vesora"
+version = "0.1.0"
+description = "Shared-engine scientific visualization for Python and JavaScript"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["aiohttp>=3.10,<4", "PySide6>=6.7,<7"]
+
+[project.urls]
+Homepage = "https://github.com/U-C4N/Vesora"
+Repository = "https://github.com/U-C4N/Vesora"
+Issues = "https://github.com/U-C4N/Vesora/issues"
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.24"]
+notebook = ["anywidget>=0.9,<1"]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+vesora = ["_assets/*", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+pythonpath = ["python"]

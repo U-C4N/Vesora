@@ -1,0 +1,26 @@
+{
+  "name": "vesora-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/core"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests/unit",
+    "test:browser": "playwright test",
+    "check": "npm run typecheck && npm test && npm run build",
+    "demo": "node scripts/serve.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
+    "test:parity": "node scripts/parity.mjs",
+    "test:examples": "node scripts/check-gallery-examples.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,16 @@
+node_modules/
+.cache/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+test-results/
+playwright-report/
+python/vesora/_assets/*.js
+!python/vesora/_assets/host.js
+python/vesora/_assets/*.map
+.pytest-tmp*/
+artifacts/
