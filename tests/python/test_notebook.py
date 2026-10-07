@@ -34,3 +34,39 @@ def test_widget_sync_and_async_export():
     finally:
         widget.close()
         fig.close()
+
+
+def test_widget_revision_protects_bookmark_restore_and_preserves_selection():
+    from vesora.notebook import make_widget
+    fig = vs.Figure()
+    fig.plot([1, 2], [3, 4])
+    widget = make_widget(fig)
+    try:
+        assert widget.revision == 1
+        fig.bookmark("Overview")
+        fig.set_axes(xlim=(1.2, 1.8))
+        stale = widget.revision
+        fig.restore_bookmark("Overview")
+        current = widget.revision
+        assert current > stale
+        for revision in (stale, None):
+            widget._receive(widget, {"type": "event", "event": "viewchange", "revision": revision,
+                                     "payload": {"xDomain": [1.2, 1.8]}}, [])
+        assert "xDomain" not in fig.snapshot()["figure"]["view"]
+        widget._receive(widget, {"type": "event", "event": "viewchange", "revision": current,
+                                 "payload": {"xDomain": [1.1, 1.9], "pan3d": [0.1, 0.2]}}, [])
+        assert fig.snapshot()["figure"]["view"]["xDomain"] == [1.1, 1.9]
+        assert widget.revision == current
+        widget._receive(widget, {"type": "event", "event": "viewchange", "revision": current,
+                                 "payload": {"xDomain": None, "pan3d": [0, 0]}}, [])
+        assert "xDomain" not in fig.snapshot()["figure"]["view"]
+        errors, selections = [], []
+        fig.on("error", errors.append)
+        fig.on("selection", selections.append)
+        widget._receive(widget, {"type": "event", "event": "error", "revision": stale,
+                                 "payload": {"message": "obsolete"}}, [])
+        widget._receive(widget, {"type": "event", "event": "selection", "payload": {"count": 1}}, [])
+        assert errors == [] and selections == [{"count": 1}]
+    finally:
+        widget.close()
+        fig.close()

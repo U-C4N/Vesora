@@ -46,6 +46,43 @@ def _domain(value: Any, name: str, scale: str = "linear") -> list[float]:
     return result
 
 
+def _view(value: Any, kind: str) -> dict[str, Any]:
+    """Validate and copy a complete view, including optional auto domains."""
+    if not isinstance(value, dict) or value.get("kind") != kind:
+        raise ValueError("View cannot change figure dimensionality")
+    view = copy.deepcopy(value)
+    for axis in "xyz":
+        scale = view.get(f"{axis}Scale")
+        if scale not in ("linear", "log"):
+            raise ValueError("Invalid viewer scale")
+        key = f"{axis}Domain"
+        if view.get(key) is None:
+            view.pop(key, None)
+        else:
+            view[key] = _domain(view[key], key, scale)
+        if not isinstance(view.get(f"{axis}Label"), str):
+            raise ValueError("Viewer labels must be strings")
+    camera = view.get("camera")
+    if not isinstance(camera, dict) or set(camera) != {"azimuth", "elevation", "distance"}:
+        raise ValueError("Invalid viewer camera")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in camera.values()) or camera["distance"] <= 0:
+        raise ValueError("Camera values must be finite and distance positive")
+    pan = view.get("pan3d", [0, 0])
+    if not isinstance(pan, (list, tuple)) or len(pan) != 2 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in pan):
+        raise ValueError("3D pan must contain two finite numbers")
+    view["pan3d"] = list(pan)
+    return view
+
+
+def _bookmark_name(name: Any) -> str:
+    if not isinstance(name, str):
+        raise TypeError("Bookmark name must be a string")
+    name = name.strip()
+    if not name:
+        raise ValueError("Bookmark name must not be empty")
+    return name
+
+
 def _style(values: dict[str, Any]) -> dict[str, Any]:
     result = dict(values)
     if "color_domain" in result:
@@ -208,7 +245,7 @@ class Figure:
                       "width": int(width), "height": int(height), "view": {
                           "kind": kind, "xScale": "linear", "yScale": "linear", "zScale": "linear",
                           "xLabel": "", "yLabel": "", "zLabel": "",
-                          "camera": {"azimuth": 35, "elevation": 25, "distance": 3}}, "layers": []}
+                          "camera": {"azimuth": 35, "elevation": 25, "distance": 3}, "pan3d": [0, 0]}, "layers": []}
         self._sources: dict[str, tuple[dict[str, Any], NumericData]] = {}
         self._listeners: list[Callable[[], None]] = []
         self._events: dict[str, list[Callable[[Any], None]]] = defaultdict(list)
@@ -249,8 +286,8 @@ class Figure:
         dimension = "3d" if kind in ("surface", "scatter3d") else "2d"
         with self._lock:
             self._ensure_open()
-            if self._spec["layers"] and self._spec["view"]["kind"] != dimension:
-                raise ValueError("2D and 3D layers require separate figures")
+            if (self._spec["layers"] or self._spec.get("bookmarks")) and self._spec["view"]["kind"] != dimension:
+                raise ValueError("2D and 3D layers or bookmarks require separate figures")
             self._spec["view"]["kind"] = dimension
             refs = {}
             for name, array in arrays.items():
@@ -308,6 +345,69 @@ class Figure:
         self._publish()
         return self
 
+    def bookmark(self, name: str, *, note: str = "") -> Figure:
+        """Remember the current view; replacing a name preserves its position."""
+        name = _bookmark_name(name)
+        if not isinstance(note, str):
+            raise TypeError("Bookmark note must be a string")
+        with self._lock:
+            self._ensure_open()
+            entry = {"name": name, "view": _view(self._spec["view"], self._spec["view"]["kind"])}
+            if note:
+                entry["note"] = note
+            bookmarks = self._spec.setdefault("bookmarks", [])
+            for index, item in enumerate(bookmarks):
+                if item["name"] == name:
+                    bookmarks[index] = entry
+                    break
+            else:
+                bookmarks.append(entry)
+        self._publish()
+        return self
+
+    def restore_bookmark(self, name: str) -> Figure:
+        """Restore a complete view without changing layer data or visibility."""
+        name = _bookmark_name(name)
+        with self._lock:
+            self._ensure_open()
+            entry = next((item for item in self._spec.get("bookmarks", []) if item["name"] == name), None)
+            if entry is None:
+                raise ValueError(f"Unknown bookmark: {name}")
+            self._spec["view"] = _view(entry["view"], self._spec["view"]["kind"])
+        self._publish()
+        return self
+
+    def remove_bookmark(self, name: str) -> Figure:
+        name = _bookmark_name(name)
+        with self._lock:
+            self._ensure_open()
+            bookmarks = self._spec.get("bookmarks", [])
+            entry = next((item for item in bookmarks if item["name"] == name), None)
+            if entry is None:
+                raise ValueError(f"Unknown bookmark: {name}")
+            bookmarks.remove(entry)
+            if not bookmarks:
+                self._spec.pop("bookmarks", None)
+        self._publish()
+        return self
+
+    def to_html(self) -> str:
+        """Return a standalone interactive HTML document, without starting a host."""
+        from .html import make_html
+        with self._lock:
+            self._ensure_open()
+            snapshot = self.snapshot()
+            buffers = [(source["id"], self._data_bytes(source["id"], source["version"])) for source in snapshot["sources"]]
+        return make_html(snapshot, buffers)
+
+    def save_html(self, path: str | Path) -> Path:
+        """Write a standalone interactive HTML document to disk."""
+        path = Path(path)
+        if path.suffix.lower() not in (".html", ".htm"):
+            raise ValueError("HTML export requires a .html or .htm path")
+        path.write_text(self.to_html(), encoding="utf-8")
+        return path
+
     def on(self, event: str, callback: Callable[[Any], None]) -> Callable[[], None]:
         self._events[event].append(callback)
         def unsubscribe() -> None:
@@ -329,29 +429,11 @@ class Figure:
         """Retain browser interaction state without echoing another update to it."""
         if not isinstance(payload, dict):
             raise ValueError("viewchange payload must be an object")
-        allowed = {"kind", "camera"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")}
+        allowed = {"kind", "camera", "pan3d"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")}
         with self._lock:
             view = copy.deepcopy(self._spec["view"])
             view.update({key: value for key, value in payload.items() if key in allowed})
-            if view["kind"] != self._spec["view"]["kind"]:
-                raise ValueError("Viewer cannot change figure dimensionality")
-            for axis in "xyz":
-                scale = view[f"{axis}Scale"]
-                if scale not in ("linear", "log"):
-                    raise ValueError("Invalid viewer scale")
-                domain = view.get(f"{axis}Domain")
-                if domain is not None:
-                    view[f"{axis}Domain"] = _domain(domain, f"{axis}Domain", scale)
-                elif f"{axis}Domain" in view:
-                    del view[f"{axis}Domain"]
-                if not isinstance(view[f"{axis}Label"], str):
-                    raise ValueError("Viewer labels must be strings")
-            camera = view["camera"]
-            if not isinstance(camera, dict) or set(camera) != {"azimuth", "elevation", "distance"}:
-                raise ValueError("Invalid viewer camera")
-            if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in camera.values()) or camera["distance"] <= 0:
-                raise ValueError("Camera values must be finite and distance positive")
-            self._spec["view"] = copy.deepcopy(view)
+            self._spec["view"] = _view(view, self._spec["view"]["kind"])
 
     def show(self, *, block: bool = True, host: str = "auto") -> Any:
         self._ensure_open()

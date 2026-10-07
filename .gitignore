@@ -12,5 +12,6 @@ playwright-report/
 python/vesora/_assets/*.js
 !python/vesora/_assets/host.js
 python/vesora/_assets/*.map
+python/vesora/_assets/standalone.html
 .pytest-tmp*/
 artifacts/

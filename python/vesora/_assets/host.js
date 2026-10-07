@@ -8,12 +8,15 @@ window.vesoraFigure=fig;
 let socket, generation=0, mounted=false, reconnects=0, controller;
 let buffers=new Map();
 let applying=Promise.resolve();
-let currentRevision=0, renderFailure=null;
+let currentRevision=0, renderFailure=null, applyingView=true;
 const endpoint=(path)=>`${path}${path.includes('?')?'&':'?'}token=${encodeURIComponent(token??'')}`;
 const send=(message)=>{if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));};
-for(const event of ['selection','viewchange','representation','error'])fig.on(event,payload=>send({type:'event',event,payload,revision:currentRevision}));
+for(const event of ['selection','viewchange','representation','error'])fig.on(event,payload=>{
+  if(event==='viewchange'&&applyingView)return;
+  send({type:'event',event,payload,revision:currentRevision});
+});
 async function apply(snapshot,revision=0){
-  currentRevision=revision;renderFailure=null;
+  renderFailure=null;applyingView=true;chart.style.pointerEvents='none';
   const version=++generation;controller?.abort();controller=new AbortController();const signal=controller.signal;
   try{
     const next=new Map();
@@ -28,9 +31,10 @@ async function apply(snapshot,revision=0){
       }));
     }
     if(version!==generation)return;
-    fig.applySnapshot(snapshot,new Map([...next].map(([id,data])=>[id,data.buffer])));buffers=next;
+    fig.applySnapshot(snapshot,new Map([...next].map(([id,data])=>[id,data.buffer])));buffers=next;currentRevision=revision;
     if(!mounted){fig.mount(chart);mounted=true;}
     await fig.ready();if(version!==generation)return;
+    applyingView=false;chart.style.pointerEvents='';
     status.textContent='';document.title=snapshot.figure.title||'Vesora';send({type:'ready',revision});
   }catch(error){if(error.name==='AbortError'||version!==generation)return;renderFailure=error;status.textContent=error.message;send({type:'event',event:'error',payload:{message:error.message},revision});}
 }

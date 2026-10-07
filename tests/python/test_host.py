@@ -119,3 +119,28 @@ def test_publish_invalidates_ready_and_ignores_obsolete_responses(live_host):
     assert host.render_error is None
     host._receive({"type": "ready", "revision": 2})
     assert host.ready.is_set()
+
+
+def test_stale_viewchange_cannot_overwrite_restored_bookmark(live_host):
+    host, fig, layer = live_host
+    fig.bookmark("Overview")
+    fig.set_axes(xlim=(1.2, 1.8))
+    old_revision = host._revision
+    fig.restore_bookmark("Overview")
+    restored = fig.snapshot()
+    revision = host._revision
+    events = []
+    fig.on("viewchange", events.append)
+    for stale in (old_revision, None):
+        host._receive({"type": "event", "event": "viewchange", "revision": stale,
+                       "payload": {"xDomain": [1.2, 1.8], "pan3d": [0.4, 0.2]}})
+    assert fig.snapshot() == restored
+    assert events == []
+    host._receive({"type": "event", "event": "viewchange", "revision": revision,
+                   "payload": {"xDomain": [1.1, 1.9], "pan3d": [0.1, 0.2]}})
+    assert fig.snapshot()["figure"]["view"]["xDomain"] == [1.1, 1.9]
+    assert len(events) == 1
+    assert host._revision == revision  # A browser interaction must not echo a snapshot.
+    host._receive({"type": "event", "event": "viewchange", "revision": revision,
+                   "payload": {"xDomain": None, "pan3d": [0, 0]}})
+    assert "xDomain" not in fig.snapshot()["figure"]["view"]

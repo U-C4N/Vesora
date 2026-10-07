@@ -12,7 +12,7 @@
   <a href="#get-started">Quick start</a> ·
   <a href="#how-it-compares-with-matplotlib">Vesora &amp; Matplotlib</a> ·
   <a href="docs/api.md">API reference</a> ·
-  <a href="https://github.com/U-C4N/Vesora/releases/tag/v0.1.0">Download v0.1.0</a>
+  <a href="https://github.com/U-C4N/Vesora/releases/tag/v0.2.0">Download v0.2.0</a>
 </p>
 
 > **Developer preview.** The API is evolving. WebGL2 is required; Python desktop windows use QtWebEngine. Install the prebuilt GitHub Release packages below. Vesora is not published to PyPI or the npm registry yet.
@@ -29,7 +29,30 @@ These are **real PNG exports from Vesora's shared engine**, generated through th
 | [![A smooth mathematical interference surface colored by amplitude](docs/assets/surface.png)](docs/assets/surface.png) | [![Sampled Lorenz attractor rendered as a three-dimensional point trajectory](docs/assets/lorenz.png)](docs/assets/lorenz.png) |
 | A 140 × 140 regular grid, with color mapped to amplitude. | 19,000 numerical trajectory samples, with color mapped to z. |
 
-The [interactive gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. Explore line charts, synthetic AI comparisons, heatmaps, large-coordinate precision, density plots and chaotic systems. Pan, zoom, rotate, toggle series, change model parameters and export a PNG. Every experiment includes Python and JavaScript code.
+The [interactive gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. Explore line charts, synthetic AI comparisons, heatmaps, large-coordinate precision, density plots and chaotic systems. Pan, zoom, rotate, toggle series, change model parameters and export a PNG or an interactive HTML file. Every experiment includes Python and JavaScript code.
+
+## New in v0.2: share interactive discoveries
+
+Send a figure as **one self-contained HTML file**. The recipient can open it directly in a WebGL2-capable browser, without Python, a local server, or internet access. Save named viewpoints to guide the reader from an overview to a detail, then let them explore freely.
+
+```python
+import math
+import vesora as vs
+
+x = [i / 100 for i in range(1200)]
+y = [math.sin(t) + 2 * math.exp(-((t - 5) / 0.06) ** 2) for t in x]
+fig = vs.figure(title="A narrow peak in a signal")
+fig.plot(x, y, label="Signal")
+fig.bookmark("Overview")
+fig.set_axes(xlim=(4.8, 5.2))
+fig.bookmark("Narrow peak", note="Zoom in to inspect the short disturbance.")
+fig.restore_bookmark("Overview")
+fig.save_html("experiment.html")
+```
+
+No window needs to open to create the file. In JavaScript, use `toHTML(fig)` for a string or `downloadHTML(fig, "experiment.html")` for a browser download. The exported viewer includes bookmarks, reset, PNG download, and a per-layer inspector explaining the current representation.
+
+Try the [downloadable discovery demo](https://github.com/U-C4N/Vesora/releases/download/v0.2.0/vesora-discovery-demo.html): one million synthetic measurements and three saved viewpoints. HTML contains the original exported data, not just the points currently drawn. Python callbacks, gallery parameter sliders, and live data connections are not included. See [the sharing API](docs/api.md#share-an-interactive-figure).
 
 Run it locally from a checkout:
 
@@ -59,14 +82,14 @@ Python functions run in Python, and JavaScript functions run in JavaScript. Supp
 
 ## Get started
 
-Download the appropriate asset from the **[v0.1.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.1.0)**. `SHA256SUMS.txt` is included for verifying the packages.
+Download the appropriate asset from the **[v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0)**. `SHA256SUMS.txt` is included for verifying the packages.
 
 ### Python: a plot in a few lines
 
 With Python 3.10+, install the downloaded wheel:
 
 ```bash
-python -m pip install ./vesora-0.1.0-py3-none-any.whl
+python -m pip install ./vesora-0.2.0-py3-none-any.whl
 ```
 
 ```python
@@ -94,7 +117,7 @@ fig.show()
 Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
 
 ```bash
-python -m pip install "./vesora-0.1.0-py3-none-any.whl[notebook]"
+python -m pip install "./vesora-0.2.0-py3-none-any.whl[notebook]"
 ```
 
 ### JavaScript / TypeScript: the same engine in your app
@@ -102,7 +125,7 @@ python -m pip install "./vesora-0.1.0-py3-none-any.whl[notebook]"
 Place the downloaded tarball in your frontend project and install it:
 
 ```bash
-npm install ./vesora-core-0.1.0.tgz
+npm install ./vesora-core-0.2.0.tgz
 ```
 
 Add a mount element to your HTML:
@@ -140,8 +163,8 @@ The core package includes TypeScript declarations and has **no runtime npm depen
 | Interaction | Pan/zoom, 2D hover and region selection, 3D orbit in the shared viewer. | Interactive figures, navigation tools and an event system. |
 | Dense data | Automatic scatter count aggregation, extrema-preserving line reduction and representation inspection. | Line simplification, marker subsampling and Agg path chunking are available. |
 | 3D | Regular-grid surfaces and 3D scatter with depth testing. | `mplot3d` supports a wider range of 3D plot types. |
-| Export | PNG, including axes and labels. | PNG, SVG, PDF and other formats, depending on backend. |
-| Maturity | v0.1 preview; five plot types; API still evolving. | An established plotting library with extensive configuration and documentation. |
+| Export | PNG, including axes and labels; self-contained interactive HTML with bookmarks. | PNG, SVG, PDF and other formats, depending on backend. |
+| Maturity | v0.2 preview; five plot types; API still evolving. | An established plotting library with extensive configuration and documentation. |
 
 Choose Vesora when sharing one engine between Python and a browser application is central to your workflow. Prefer Matplotlib today when you need its broader plotting catalog, publication layout controls or vector export. Vesora does not implement the Matplotlib API, and this project makes **no unmeasured speedup claim** against it.
 
@@ -175,7 +198,7 @@ The Python adapter manages the local viewer connection. Numeric buffers retain t
 | Linear/log scales, legends and colorbars | More layout and scientific annotation tools |
 | Desktop Python, notebook adapter and browser JS/TS | Additional data providers and host integrations |
 | In-memory adaptive representations and cancellable queries | Indexed disk data, tiles, chunks and streaming |
-| PNG export | SVG/PDF export and additional render backends |
+| PNG and self-contained HTML export, named view bookmarks | SVG/PDF export and additional render backends |
 
 Data scans are currently **O(n)** and workers may copy source buffers. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Indexed out-of-core data, general mesh/volume rendering and a 100-million-record performance guarantee are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
 
@@ -203,6 +226,6 @@ The checks cover scene equivalence, real rendered pixels, invalid values and gap
 | [Architecture](docs/architecture.md) | Shared scene model, binary protocol and representation rules |
 | [Development and benchmarks](docs/development.md) | Packaging, validation, measured performance and support limits |
 | [Interactive examples](examples/web/) | Sixteen experiments with Python and JS source |
-| [Release notes](docs/releases/v0.1.0.md) | Downloadable packages and the scope of the first preview |
+| [Release notes](docs/releases/v0.2.0.md) | Downloadable packages and the scope of the first preview |
 
 Have a reproducible rendering issue or a scientific workflow Vesora should support? [Open an issue](https://github.com/U-C4N/Vesora/issues) with a small dataset, the expected result and your environment.

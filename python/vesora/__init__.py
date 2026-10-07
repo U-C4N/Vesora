@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from .figure import Figure, Layer, PROTOCOL_VERSION
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["Figure", "Layer", "figure", "plot", "scatter", "heatmap", "surface", "scatter3d", "show", "savefig", "process_events"]
 _last_figure: Figure | None = None
 

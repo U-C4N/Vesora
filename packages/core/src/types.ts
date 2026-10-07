@@ -21,10 +21,13 @@ export interface ViewSpec {
   xDomain?: Domain; yDomain?: Domain; zDomain?: Domain;
   xLabel: string; yLabel: string; zLabel: string;
   camera: {azimuth: number; elevation: number; distance: number};
+  pan3d?: [number, number];
 }
+export interface ViewBookmark {name: string; note?: string; view: ViewSpec}
 export interface FigureSpec {
   protocolVersion: number; id: string; title: string; width: number; height: number;
   view: ViewSpec; layers: LayerSpec[];
+  bookmarks?: ViewBookmark[];
 }
 export interface Snapshot {figure: FigureSpec; sources: DataDescriptor[]}
 export interface DataEntry {descriptor: DataDescriptor; values: NumericArray}

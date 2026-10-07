@@ -121,10 +121,18 @@ h2 { font: 400 27px/1.2 var(--serif); letter-spacing: -.7px; margin: 0; }
 .parameter-control label { font-size: 10px; line-height: 1.5; color: #6a786f; }
 .parameter-control input[type="range"] { accent-color: var(--cobalt); width: 100%; min-width: 0; cursor: pointer; margin: 0; }
 .parameter-control output { justify-self: end; color: var(--cobalt); font: 11px var(--mono); text-align: right; }
-.card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 21px; border-top: 1px solid #edf0eb; }
+.card-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 13px 21px; border-top: 1px solid #edf0eb; }
 .representation { min-width: 0; color: #798584; font: 9px/1.6 var(--mono); overflow-wrap: anywhere; }
-.card-actions { display: flex; flex-shrink: 0; align-items: center; gap: 5px; }
-.card-actions [data-action="export"] { color: #4660a2; background: #f6f8fd; border-color: #e2e7f1; }
+.card-actions { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; gap: 5px; }
+.card-actions [data-action="export"], .card-actions [data-action="export-html"] { color: #4660a2; background: #f6f8fd; border-color: #e2e7f1; }
+.card-actions [data-action="export-html"] { color: #fff; background: var(--cobalt); border-color: var(--cobalt); }
+.card-actions [data-action="export-html"]:hover { background: #233fbd; }
+.gallery-bookmarks { margin: 0 24px 18px; padding: 14px; border: 1px solid #e0e5f1; border-radius: 5px; background: #f8faff; }
+.bookmark-heading { margin: 0 0 9px; font: 8px var(--mono); letter-spacing: 1.1px; color: #8090ae; }
+.bookmark-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.bookmark-controls button { min-height: 44px; min-width: 0; font-size: 10px; padding: 9px 11px; white-space: normal; }
+.bookmark-controls button[aria-pressed="true"] { color: #2b4fec; border-color: #a9b8ee; background: #edf1ff; }
+.gallery-bookmark-note { margin: 12px 0 0; color: #697c99; font-size: 10px; line-height: 1.75; overflow-wrap: anywhere; }
 .feedback { margin: 0 23px; color: #4b699a; font-size: 10px; line-height: 1.7; }
 .feedback:not(:empty) { padding: 0 0 12px; }
 .code-details { background: #fbfcfa; border-top: 1px solid #edf0eb; }

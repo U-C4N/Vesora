@@ -25,10 +25,9 @@ export class FigureView {
   private failure?:Error;
   private waiters:Array<{resolve:()=>void;reject:(error:Error)=>void}>=[];
   private cleanup:Array<()=>void>=[];
-  private drag?:{x:number;y:number;lastX:number;lastY:number;select:boolean;pan:boolean;bounds:Bounds};
+  private drag?:{pointerId:number;x:number;y:number;lastX:number;lastY:number;select:boolean;pan:boolean;bounds:Bounds};
   private box?:[number,number,number,number];
   private tooltip?:{x:number;y:number;text:string};
-  private pan3d:[number,number]=[0,0];
   constructor(private figure:Figure,container:HTMLElement){
     this.root=document.createElement('div');this.root.className='vesora-figure';this.root.style.cssText='position:relative;width:100%;overflow:hidden;background:white;color:#0f172a;font-family:system-ui,sans-serif;';
     this.root.style.height=`${figure.spec.height}px`;this.root.setAttribute('role','img');this.root.setAttribute('aria-label',figure.spec.title||'Scientific visualization');
@@ -42,7 +41,11 @@ export class FigureView {
     this.listen('pointerdown',this.pointerDown as EventListener);this.listen('pointermove',this.pointerMove as EventListener);this.listen('pointerup',this.pointerUp as EventListener);
     this.listen('pointercancel',(()=>{this.drag=undefined;this.box=undefined;this.drawOverlay();}) as EventListener);
     this.listen('pointerleave',(()=>{if(!this.drag){this.tooltip=undefined;this.drawOverlay();}}) as EventListener);
-    this.listen('dblclick',(()=>{this.pan3d=[0,0];this.figure.setView({xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3}});}) as EventListener);
+    this.listen('dblclick',(()=>{this.figure.restoreView({...this.figure.spec.view,xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]});}) as EventListener);
+  }
+  clearInteraction():void{
+    if(this.drag&&this.overlay.hasPointerCapture(this.drag.pointerId))this.overlay.releasePointerCapture(this.drag.pointerId);
+    this.drag=undefined;this.box=undefined;this.tooltip=undefined;
   }
   private listen(name:string,callback:EventListener,options?:AddEventListenerOptions):void{this.overlay.addEventListener(name,callback,options);this.cleanup.push(()=>this.overlay.removeEventListener(name,callback,options));}
   schedule():void{
@@ -73,6 +76,9 @@ export class FigureView {
   private async render(generation:number):Promise<void>{
     try{
       const spec=this.figure.spec;
+      this.overlay.setAttribute('aria-label',spec.view.kind==='3d'
+        ?'Plot controls: drag to orbit, wheel to zoom, Shift-drag to pan, double-click to reset'
+        :'Plot controls: drag to pan, wheel to zoom, Shift-drag to select, double-click to reset');
       this.width=Math.max(200,Math.round(this.root.clientWidth||spec.width));this.height=spec.height;this.dpr=Math.min(2,window.devicePixelRatio||1);
       this.root.style.height=`${this.height}px`;
       this.rect={left:85,top:spec.title?48:28,width:Math.max(40,this.width-170),height:Math.max(40,this.height-(spec.title?130:110))};
@@ -115,7 +121,7 @@ export class FigureView {
       const live=new Set(layers.map(l=>l.id));for(const key of this.geometries.keys())if(!live.has(key)){this.geometries.delete(key);this.scheduler.cancel(key);this.previous.delete(key);}
       const sources=new Set(Object.keys(Object.fromEntries(this.figure.registry.entries())));for(const source of this.extents.keys())if(!sources.has(source)){this.extents.delete(source);this.scheduler.release(source);}
       this.plans=nextPlans;this.infos=infos;
-      const matrix=view.kind==='3d'?cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,rect.width/rect.height,this.pan3d):identity;
+      const matrix=view.kind==='3d'?cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,rect.width/rect.height,view.pan3d??[0,0]):identity;
       if(view.kind==='3d')items.unshift(this.axes3d());
       this.renderer.draw(items,rect,this.width,this.height,this.dpr,matrix,view.kind==='3d');
       this.drawOverlay();this.completed=generation;this.figure.emit('representation',this.inspect());
@@ -134,7 +140,17 @@ export class FigureView {
   private drawOverlay(error?:string):void{
     if(this.disposed)return;const ctx=this.ctx(),r=this.rect,spec=this.figure.spec;ctx.clearRect(0,0,this.width,this.height);
     ctx.font='12px system-ui, sans-serif';ctx.fillStyle='#334155';ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;
-    if(spec.title){ctx.font='600 17px system-ui, sans-serif';ctx.textAlign='left';ctx.fillText(spec.title,r.left,25);ctx.font='12px system-ui, sans-serif';}
+    if(spec.title){
+      const left=this.width<480?16:r.left,available=this.width-left-16;let size=17,title=spec.title;
+      ctx.font=`600 ${size}px system-ui, sans-serif`;
+      while(size>13&&ctx.measureText(title).width>available)ctx.font=`600 ${--size}px system-ui, sans-serif`;
+      if(ctx.measureText(title).width>available){
+        const characters=Array.from(title);let low=0,high=characters.length;
+        while(low<high){const middle=Math.ceil((low+high)/2);if(ctx.measureText(characters.slice(0,middle).join('')+'…').width<=available)low=middle;else high=middle-1;}
+        title=characters.slice(0,low).join('')+'…';
+      }
+      ctx.textAlign='left';ctx.fillText(title,left,25);ctx.font='12px system-ui, sans-serif';
+    }
     if(spec.view.kind==='2d'){
       const xSpan=this.bounds.x[1]-this.bounds.x[0],ySpan=this.bounds.y[1]-this.bounds.y[0];
       const xOffset=spec.view.xScale==='linear'&&Math.abs(this.bounds.x[0])/xSpan>1e5?this.bounds.x[0]:0;
@@ -152,7 +168,7 @@ export class FigureView {
       if(yOffset){ctx.textAlign='left';ctx.fillText(`offset ${yOffset>=0?'+':''}${yOffset}`,r.left,r.top-8);}
       ctx.textAlign='center';ctx.fillText(spec.view.xLabel,r.left+r.width/2,this.height-35);ctx.save();ctx.translate(17,r.top+r.height/2);ctx.rotate(-Math.PI/2);ctx.fillText(spec.view.yLabel,0,0);ctx.restore();
     }else{
-      const m=cameraMatrix(spec.view.camera.azimuth,spec.view.camera.elevation,spec.view.camera.distance,r.width/r.height,this.pan3d);
+      const m=cameraMatrix(spec.view.camera.azimuth,spec.view.camera.elevation,spec.view.camera.distance,r.width/r.height,spec.view.pan3d??[0,0]);
       const pos=(x:number,y:number,z:number)=>[r.left+((m[0]*x+m[4]*y+m[8]*z+m[12])+1)/2*r.width,r.top+(1-(m[1]*x+m[5]*y+m[9]*z+m[13]))/2*r.height];
       for(const [axis,end,domain]of [['x',[1,-1,-1],this.bounds.x],['y',[-1,1,-1],this.bounds.y],['z',[-1,-1,1],this.zDomain]] as const){
         const p=pos(end[0],end[1],end[2]);ctx.textAlign='center';ctx.fillText(spec.view[`${axis}Label`]||axis,p[0],p[1]-12);
@@ -189,12 +205,12 @@ export class FigureView {
       const zoom=(d:Domain,t:number,scale:'linear'|'log'):Domain=>[denormalize(t+(0-t)*factor,d,scale),denormalize(t+(1-t)*factor,d,scale)];
       const xd=zoom(this.bounds.x,tx,view.xScale),yd=zoom(this.bounds.y,ty,view.yScale);
       if([...xd,...yd].every(Number.isFinite)&&xd[0]<xd[1]&&yd[0]<yd[1])this.figure.setView({xDomain:xd,yDomain:yd});
-    }this.figure.emit('viewchange',structuredClone(this.figure.spec.view));
+    }this.figure.emitViewChange();
   };
   private pointerDown=(event:PointerEvent):void=>{
     const [x,y]=this.location(event);if(!this.inside(x,y)||event.button!==0)return;
     this.overlay.setPointerCapture(event.pointerId);this.tooltip=undefined;
-    this.drag={x,y,lastX:x,lastY:y,select:event.shiftKey&&this.figure.spec.view.kind==='2d',pan:event.shiftKey,bounds:structuredClone(this.bounds)};
+    this.drag={pointerId:event.pointerId,x,y,lastX:x,lastY:y,select:event.shiftKey&&this.figure.spec.view.kind==='2d',pan:event.shiftKey,bounds:structuredClone(this.bounds)};
   };
   private pointerMove=(event:PointerEvent):void=>{
     const [x,y]=this.location(event),d=this.drag;
@@ -202,7 +218,7 @@ export class FigureView {
     if(d.select){this.box=[d.x,d.y,Math.max(this.rect.left,Math.min(this.rect.left+this.rect.width,x)),Math.max(this.rect.top,Math.min(this.rect.top+this.rect.height,y))];this.drawOverlay();return;}
     const view=this.figure.spec.view;
     if(view.kind==='3d'){
-      if(d.pan){this.pan3d=[this.pan3d[0]+(x-d.lastX)/this.rect.width*2,this.pan3d[1]-(y-d.lastY)/this.rect.height*2];this.schedule();}
+      if(d.pan){const pan=view.pan3d??[0,0];this.figure.setView({pan3d:[pan[0]+(x-d.lastX)/this.rect.width*2,pan[1]-(y-d.lastY)/this.rect.height*2]});}
       else this.figure.setView({camera:{...view.camera,azimuth:view.camera.azimuth+(x-d.lastX)*.5,elevation:Math.max(-89,Math.min(89,view.camera.elevation+(y-d.lastY)*.5))}});
       d.lastX=x;d.lastY=y;
     }else{
@@ -215,7 +231,7 @@ export class FigureView {
   private pointerUp=(event:PointerEvent):void=>{
     if(!this.drag)return;if(this.drag.select&&this.box)this.select(this.box);
     this.drag=undefined;this.box=undefined;if(this.overlay.hasPointerCapture(event.pointerId))this.overlay.releasePointerCapture(event.pointerId);
-    this.drawOverlay();this.figure.emit('viewchange',structuredClone(this.figure.spec.view));
+    this.drawOverlay();this.figure.emitViewChange();
   };
   private pointToData(x:number,y:number):[number,number]{return [denormalize((x-this.rect.left)/this.rect.width,this.bounds.x,this.figure.spec.view.xScale),denormalize(1-(y-this.rect.top)/this.rect.height,this.bounds.y,this.figure.spec.view.yScale)];}
   private hover(x:number,y:number):void{

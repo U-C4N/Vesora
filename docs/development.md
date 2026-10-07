@@ -11,7 +11,7 @@ npm install
 npm run check
 ```
 
-The build produces the JavaScript distribution files and copies the same engine into the Python asset directory. Complete this build before packaging Python. The core, worker, and bundled Python engine assets are versioned together, with protocol version `1` on both sides.
+The build produces the JavaScript distribution files and copies the same engine into the Python asset directory. Complete this build before packaging Python. The core, worker, standalone HTML template, and bundled Python engine assets are versioned together, with protocol version `1` on both sides. Generated engine files and the standalone template are not committed.
 
 After building the engine, create a wheel with:
 
@@ -65,6 +65,22 @@ The report separates:
 - JavaScript heap usage when available; unmeasured Python/GPU memory and Python transfer counts are `null`.
 
 This browser benchmark does not measure Python bridge latency. Compare metrics under the same hardware, data distribution, browser, and viewport conditions. First-render time excludes data generation, which is reported separately. A single measurement does not establish a universal point-count or FPS guarantee.
+
+## Validate a release package
+
+After completing the test suite, build release assets and test them outside the checkout:
+
+```bash
+npm run build
+npm run package:release
+npm run test:packages
+```
+
+`package:release` writes the wheel, npm tarball, standalone discovery demo, and SHA-256 manifest to `dist/release-v0.2.0`. `test:packages` installs the wheel without dependencies in a clean temporary virtual environment and installs the tarball in a separate temporary npm project. It verifies installed-package imports, TypeScript declarations, and offline HTML rendering. Temporary environments are retained and their paths are printed for inspection.
+
+The HTML browser tests open files directly through `file://` with networking disabled. They cover all five plot types, bookmarks and reset, precision and missing-value behavior, hostile text, fallback rendering, and mobile layout. A local HTTP server used by the other browser tests is not a dependency of the exported files.
+
+Tag and publish only a commit whose tests pass. Build the uploaded artifacts from that exact commit, publish as a GitHub prerelease, then download the assets and compare them against `SHA256SUMS.txt`. Release-note validation claims must describe checks actually completed.
 
 ## Current limits
 

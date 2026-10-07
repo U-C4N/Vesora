@@ -50,3 +50,60 @@ describe('public Figure semantic model',()=>{
     expect(figure.registry.get(second.spec.data.x).values.length).toBe(2);
   });
 });
+
+describe('saved views and bookmarks',()=>{
+  it('captures independent views and replaces named bookmarks without reordering',()=>{
+    const figure=new Figure({kind:'3d'});
+    figure.setView({pan3d:[.3,-.2],camera:{azimuth:80,elevation:15,distance:4}});
+    figure.bookmark('  Overview  ',{note:'A <plain-text> note'});
+    figure.setView({pan3d:[1,2]});figure.bookmark('Detail');
+    expect(figure.spec.bookmarks?.[0].view.pan3d).toEqual([.3,-.2]);
+    figure.bookmark('Overview',{note:''});
+    expect(figure.spec.bookmarks?.map(item=>item.name)).toEqual(['Overview','Detail']);
+    expect(figure.spec.bookmarks?.[0]).not.toHaveProperty('note');
+    figure.spec.view.pan3d![0]=9;
+    expect(figure.spec.bookmarks?.[0].view.pan3d).toEqual([1,2]);
+    figure.removeBookmark('Detail').removeBookmark('Overview');
+    expect(figure.snapshot().figure).not.toHaveProperty('bookmarks');
+    expect(()=>figure.restoreBookmark('missing')).toThrow(/Unknown bookmark/);
+    expect(()=>figure.removeBookmark('missing')).toThrow(/Unknown bookmark/);
+  });
+  it('fully restores automatic domains and emits JSON-safe reset fields',()=>{
+    const figure=new Figure();figure.plot([1,2],[3,4]);figure.bookmark('Automatic');
+    const events:any[]=[];figure.on('viewchange',event=>events.push(event));
+    figure.setView({xDomain:[1,2],yDomain:[3,4],zDomain:[5,6],pan3d:[.5,.25]});
+    figure.restoreBookmark('Automatic');
+    expect(figure.spec.view).not.toHaveProperty('xDomain');
+    expect(figure.spec.view).not.toHaveProperty('yDomain');
+    expect(figure.spec.view).not.toHaveProperty('zDomain');
+    expect(figure.spec.view.pan3d).toEqual([0,0]);
+    expect(JSON.parse(JSON.stringify(events[0]))).toMatchObject({xDomain:null,yDomain:null,zDomain:null,pan3d:[0,0]});
+    events[0].camera.azimuth=180;
+    expect(figure.spec.view.camera.azimuth).toBe(35);
+    const legacy={...figure.spec.view};delete legacy.pan3d;
+    figure.restoreView(legacy);
+    expect(events[1].pan3d).toEqual([0,0]);
+  });
+  it('validates views and bookmark metadata before changing state',()=>{
+    const figure=new Figure();figure.bookmark('Empty figure');const before=figure.snapshot();
+    expect(()=>figure.setView({pan3d:[0,Infinity]})).toThrow(/finite/);
+    expect(()=>figure.restoreView({...figure.spec.view,camera:{azimuth:0,elevation:0,distance:0}})).toThrow(/camera/);
+    expect(()=>figure.bookmark(' ')).toThrow(/nonempty/);
+    expect(()=>figure.bookmark('Invalid',{note:5 as any})).toThrow(/note/);
+    expect(()=>figure.surface([0,1],[0,1],[[0,0],[0,0]])).toThrow(/separate figures/);
+    expect(figure.snapshot()).toEqual(before);
+  });
+  it('imports optional saved views atomically and accepts older protocol-one scenes',()=>{
+    const original=new Figure({kind:'3d'});original.bookmark('Pose',{note:'Saved'});
+    const snapshot=original.snapshot(),copy=new Figure();copy.applySnapshot(snapshot,new Map());
+    expect(copy.snapshot()).toEqual(snapshot);
+    const before=copy.snapshot();
+    const duplicate=structuredClone(snapshot);duplicate.figure.bookmarks!.push(duplicate.figure.bookmarks![0]);
+    expect(()=>copy.applySnapshot(duplicate,new Map())).toThrow(/Duplicate bookmark/);
+    const mismatch=structuredClone(snapshot);mismatch.figure.bookmarks![0].view.kind='2d';
+    expect(()=>copy.applySnapshot(mismatch,new Map())).toThrow(/dimensionality/);
+    expect(copy.snapshot()).toEqual(before);
+    delete snapshot.figure.bookmarks;delete snapshot.figure.view.pan3d;
+    copy.applySnapshot(snapshot,new Map());expect(copy.snapshot()).toEqual(snapshot);
+  });
+});
