@@ -1,5 +1,5 @@
 {
-  "name": "@vesora/core", "version": "0.1.0", "type": "module",
+  "name": "@vesora/core", "version": "0.2.0", "type": "module",
   "description": "Shared scientific visualization engine for Python and JavaScript",
   "repository": {"type": "git", "url": "git+https://github.com/U-C4N/Vesora.git", "directory": "packages/core"},
   "homepage": "https://github.com/U-C4N/Vesora#readme",

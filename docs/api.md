@@ -14,6 +14,8 @@ Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same s
 | 3D scatter | `fig.scatter3d(x, y, z)` | `fig.scatter3d(x, y, z)` |
 | Display | `fig.show()` | `fig.mount(element)` |
 | PNG export | `fig.savefig("figure.png")` | `await fig.savefig()` → `Blob` |
+| Interactive HTML | `fig.save_html("figure.html")` | `downloadHTML(fig, "figure.html")` |
+| HTML string | `fig.to_html()` | `toHTML(fig)` |
 | Close | `fig.close()` | `fig.close()` |
 
 Plotting methods called on a figure return a layer. Python convenience functions such as `vs.plot` add layers to the current figure. JavaScript's top-level `plot` and `scatter` functions create and return a new figure. Use an explicit `figure()` when combining multiple layers.
@@ -36,7 +38,7 @@ fig.show()
 
 Supported Python inputs include lists, tuples, `array.array`, and supported numeric buffers. When installed, NumPy `ndarray` inputs are accepted through the buffer protocol. This uses the same data adapter and visualization engine.
 
-For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a downloaded wheel, run `python -m pip install "./vesora-0.1.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
+For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a downloaded wheel, run `python -m pip install "./vesora-0.2.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
 
 This example supplies Float32 buffers using the Python standard library:
 
@@ -87,6 +89,54 @@ unsubscribe();
 JavaScript's `fig.inspect()` returns `kind`, `total`, `visible`, `rendered`, `exact`, `method`, and `layerId` for each layer. For density, `exact: true` means the counts are exact; it does not mean every point is drawn separately. After a view update, use `await fig.ready()` before reading the completed result.
 
 Event names are `hover`, `selection`, `viewchange`, `representation`, and `error`. A point selection includes source `indices`, `count`, and `truncated`. A density selection includes `bounds` and `count`. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
+
+## Share an interactive figure
+
+HTML export embeds the engine, worker, current scene, and original numeric data in one UTF-8 file. Open it directly in a WebGL2-capable browser with no server or internet connection. Creating HTML does not require `show()`, `mount()`, Qt initialization, or a graphics context. The Python installation still includes its normal desktop dependencies.
+
+```python
+import vesora as vs
+
+fig = vs.figure(title="Measurements")
+fig.scatter([1, 2, 3], [2, 4, 3], label="Samples")
+fig.bookmark("Overview")
+fig.set_axes(xlim=(1.5, 2.5), ylim=(3.5, 4.5))
+fig.bookmark("Detail", note="Inspect the highest measurement.")
+fig.restore_bookmark("Overview")
+html = fig.to_html()
+path = fig.save_html("measurements.html")
+```
+
+```javascript
+import { figure, toHTML, downloadHTML } from '@vesora/core';
+
+const fig = figure({ title: 'Measurements' });
+fig.scatter([1, 2, 3], [2, 4, 3], { label: 'Samples' });
+fig.bookmark('Overview');
+fig.setView({ xDomain: [1.5, 2.5], yDomain: [3.5, 4.5] });
+fig.bookmark('Detail', { note: 'Inspect the highest measurement.' });
+fig.restoreBookmark('Overview');
+const html = toHTML(fig);
+downloadHTML(fig, 'measurements.html');
+```
+
+`save_html(path)` returns a `Path`; use an `.html` or `.htm` extension. `to_html()` and `toHTML(fig)` return a string. `downloadHTML` starts a browser download; its default filename is `figure.html`.
+
+### Save and restore viewpoints
+
+Bookmarks capture axis scales, labels and limits, camera rotation/distance, and 3D pan. They do not capture data copies, historical layer visibility/styles, or selections. Every bookmark uses the latest dataset and the layer visibility at export time.
+
+Names are trimmed and must be nonempty. Reusing a name replaces its view and note without changing the order. Notes are plain text and may be omitted. `restore_bookmark(name)` / `restoreBookmark(name)` replaces the full view, including returning to automatic axis limits. `remove_bookmark(name)` / `removeBookmark(name)` deletes it. Unknown names raise an error. Closed figures cannot be exported or bookmarked.
+
+JavaScript can also restore a saved complete `ViewSpec` with `fig.restoreView(view)`. This replaces the view and clears transient interaction state; `setView` continues to update only supplied settings. `pan3d` is a pair of finite normalized screen offsets, defaulting to `[0, 0]`. In the viewer, Shift + drag pans a 3D scene; Python retains that interaction state for bookmarks and export.
+
+The exported file opens at the export-time view, not the first bookmark. Its **Reset view** button and double-click restore that opening view. Clicking a bookmark restores its saved view; exploring manually clears the active bookmark indicator. Bookmarks are authored through the API, not edited in the exported viewer.
+
+### Understand what is shared
+
+The viewer's **Inspector** reports each visible layer separately, with units such as points, retained line samples, occupied density bins, cells, or triangles. Density's **All visible samples counted** means exact bin counts, not that every source point is drawn. Counts refresh after rendering each new view.
+
+Full exported source arrays are embedded even when the screen shows a reduced representation. Large datasets produce larger files. Python callbacks, application code, gallery sliders, and live data connections are not serialized; computed data can be explored but Python calculations cannot be rerun from the file.
 
 ## Display Python figures on desktop or in a notebook
 

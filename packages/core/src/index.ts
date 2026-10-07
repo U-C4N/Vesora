@@ -1,4 +1,5 @@
 export {Figure,Layer,figure,plot,scatter,scatter3d,heatmap,surface,defaultView} from './figure';
+export {toHTML,downloadHTML} from './html-export';
 export type {Series,Grid,LayerOptions,FigureEvent} from './figure';
 export {DataRegistry,toNumericArray,decodeData,describeData} from './data';
 export {planScatter,planLine} from './planning';

@@ -12,6 +12,10 @@ fig = vs.figure(title='Parity', width=640, height=420)
 fig.set_axes(xlabel='Time', ylabel='Value', xlim=(0, 4), ylim=(0, 8))
 fig.plot(array('d', [0, 1, 2, 3]), array('f', [1, 4, 2, 6]), color='#3366ff', label='signal')
 fig.scatter([1, 2], [2, 4], size=7)
+fig.bookmark('Overview', note='Shared view')
+fig.set_axes(xlim=(1, 3))
+fig.bookmark('Detail')
+fig.restore_bookmark('Overview')
 s = fig.snapshot()
 print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']},'version':vs.__version__}))
 fig.close()
@@ -20,6 +24,7 @@ const result=JSON.parse(execFileSync(python,['-c',code],{env:{...process.env,PYT
 const js=figure({title:'Parity',width:640,height:420});js.setView({xLabel:'Time',yLabel:'Value',xDomain:[0,4],yDomain:[0,8]});
 js.plot(new Float64Array([0,1,2,3]),new Float32Array([1,4,2,6]),{color:'#3366ff',label:'signal'});
 js.scatter(new Float64Array([1,2]),new Float64Array([2,4]),{size:7});
+js.bookmark('Overview',{note:'Shared view'});js.setView({xDomain:[1,3]});js.bookmark('Detail');js.restoreBookmark('Overview');
 const py=figure();py.applySnapshot(result.snapshot,new Map(Object.entries(result.buffers).map(([id,base64])=>{const b=Buffer.from(base64,'base64');return [id,b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength)];})));
 function normalize(f){
   const {id,...scene}=f.snapshot().figure;

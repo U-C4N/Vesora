@@ -92,6 +92,12 @@ function density(fig) {
   }
   fig.scatter(x, y, { color: '#137f8b', size: 3, representation: 'auto', colormap: 'viridis' });
   fig.setView({ xLabel: 'x', yLabel: 'y' });
+  fig.bookmark('Overview', { note: 'Zoomed out, color reports the number of samples in each bin.' });
+  fig.setView({ xDomain: [-3.5, 0], yDomain: [-2, 0.6] });
+  fig.bookmark('Separate clusters', { note: 'Inspect the left-hand cluster without changing the source data.' });
+  fig.setView({ xDomain: [-1.81, -1.79], yDomain: [-0.81, -0.79] });
+  fig.bookmark('Individual samples', { note: 'At this scale, the renderer shows individual samples.' });
+  fig.restoreBookmark('Overview');
 }
 
 function heatmap(fig) {
@@ -272,9 +278,9 @@ fig.set_axes(xlabel="Input x", ylabel="Response y")`),
   {
     id: 'density', dimension: '2d', title: 'Three clusters, one million points', type: 'DENSITY / ADAPTIVE EXPLORATION',
     description: '1,000,000 records · A 50% / 30% / 20% mixture with different cluster spreads.',
-    tags: ['1 million records', 'Count aggregation', 'Zoom in'],
-    insight: 'At a distance, color shows records per bin; zoom in far enough to see individual points.',
-    create: density, javascript: javascript(density, [gaussian]),
+    tags: ['1 million records', 'Count aggregation', 'Bookmarks', 'Offline sharing'],
+    insight: 'Follow three saved views, then download HTML to share the same interactive exploration offline.',
+    create: density, javascript: javascript(density, [gaussian]) + '\n\n// Optional: save a self-contained interactive figure.\n// import { downloadHTML } from "@vesora/core";\n// downloadHTML(fig, "three-clusters.html");',
     python: python(`${pythonGaussian}
 fig = vs.figure()
 x, y = gaussian(1000000, 42)
@@ -288,7 +294,15 @@ for i in range(len(x)):
         x[i], y[i] = 0.65*a, 1.65 + 0.35*b
 fig.scatter(x, y, color="#137f8b", size=3,
             representation="auto", colormap="viridis")
-fig.set_axes(xlabel="x", ylabel="y")`),
+fig.set_axes(xlabel="x", ylabel="y")
+fig.bookmark("Overview", note="Zoomed out, color reports the number of samples in each bin.")
+fig.set_axes(xlim=(-3.5, 0), ylim=(-2, 0.6))
+fig.bookmark("Separate clusters", note="Inspect the left-hand cluster without changing the source data.")
+fig.set_axes(xlim=(-1.81, -1.79), ylim=(-0.81, -0.79))
+fig.bookmark("Individual samples", note="At this scale, the renderer shows individual samples.")
+fig.restore_bookmark("Overview")
+# Optional: save a self-contained interactive figure.
+# fig.save_html("three-clusters.html")`),
   },
   {
     id: 'heatmap', dimension: '2d', title: 'Tracing interference', type: 'HEATMAP / WAVE INTENSITY',

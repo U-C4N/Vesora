@@ -41,6 +41,12 @@ The figure view uses a query budget of 250,000 points; dense scatter switches au
 
 ## Render and export
 
+Standalone HTML packages a versioned envelope (`formatVersion: 1`) containing the scene snapshot and base64-encoded little-endian source buffers. One generated HTML template is shared by the Python and JavaScript exporters. It embeds the renderer, worker, CSS, and viewer controls; it makes no external asset requests. The build bundles the worker first, the standalone viewer second, and the public HTML exporter last to avoid recursively including the exporter in its own runtime.
+
+The scene protocol remains version `1`. Optional `bookmarks` on the figure and `pan3d` on the view extend it without requiring them in older snapshots; absent pan means `[0, 0]`. Each bookmark contains a name, optional plain-text note, and a full view, with no duplicate data buffers. Files always embed a matching runtime; older engines are not expected to implement these additional behaviors.
+
+Restoring a bookmark replaces the full view rather than merging it. Interaction events represent cleared domains explicitly as `null` so the Python adapter removes old limits even after JSON transport. Python export captures the scene and source bytes under the same figure lock before serialization. Export retains source precision and missing-value bytes rather than saving reduced drawing geometry.
+
 WebGL2 draws the geometry. GPU buffer objects are reused for each layer, with their contents updated as styles or data change. Canvas2D draws axes, text, legends, colorbars, and interaction annotations. It is not a standalone data-rendering backend.
 
 Renderer capabilities are described by `name`, `supports3d`, `rasterExport`, and `vectorExport`. PNG export composites the two canvases. WebGPU, SVG, and PDF are not implemented in this version. A lost GPU context is reported as an error; remounting the view recreates its resources.

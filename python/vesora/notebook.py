@@ -21,6 +21,7 @@ def make_widget(figure: Any) -> Any:
         _esm = asset
         snapshot = traitlets.Dict().tag(sync=True)
         buffers = traitlets.List(traitlets.Bytes()).tag(sync=True)
+        revision = traitlets.Int(0).tag(sync=True)
 
         def __init__(self) -> None:
             super().__init__()
@@ -34,12 +35,15 @@ def make_widget(figure: Any) -> Any:
             with figure._lock:
                 snapshot = figure.snapshot()
                 buffers = [figure._data_bytes(source["id"], source["version"]) for source in snapshot["sources"]]
-            with self.hold_sync():
-                self.buffers = buffers
-                self.snapshot = snapshot
+                with self.hold_sync():
+                    self.buffers = buffers
+                    self.snapshot = snapshot
+                    self.revision += 1
 
         def _receive(self, widget: Any, content: Any, buffers: Any) -> None:
             if isinstance(content, dict) and content.get("type") == "event":
+                if content.get("event") in ("viewchange", "error") and content.get("revision") != self.revision:
+                    return
                 figure._emit(str(content.get("event", "")), content.get("payload"))
             elif isinstance(content, dict) and content.get("type") in ("export", "export-error"):
                 future = self._export_requests.pop(str(content.get("requestId", "")), None)

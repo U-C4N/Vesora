@@ -1,4 +1,4 @@
-import { figure, Layer } from '../../packages/core/dist/index.js';
+import { figure, Layer, downloadHTML } from '../../packages/core/dist/index.js';
 import { examples } from './scenarios.js';
 
 const number = new Intl.NumberFormat('en-US');
@@ -58,7 +58,7 @@ function createCard(example, index) {
   card.innerHTML = `<div class="card-header"><div class="card-heading"><div class="card-kicker"><span class="card-number"></span><span class="card-type"></span></div><h3 id="title-${example.id}"></h3><p class="card-description"></p></div><span class="dimension ${example.dimension === '3d' ? 'three' : ''}">${example.dimension.toUpperCase()}</span></div>
     <div class="card-tags"></div><div class="chart"></div><p class="error" role="alert" hidden></p>
     <div class="card-insight"></div>
-    <div class="card-bottom"><span class="representation" role="status">Preparing view…</span><div class="card-actions"><button data-action="focus" aria-pressed="false" title="Expand chart to a full row" disabled>Expand ↗</button><button data-action="reset" title="Restore the initial data and view" disabled>↺ Reset</button><button data-action="export" disabled>PNG ↓</button></div></div>
+    <div class="card-bottom"><span class="representation" role="status">Preparing view…</span><div class="card-actions"><button data-action="focus" aria-pressed="false" title="Expand chart to a full row" disabled>Expand ↗</button><button data-action="reset" title="Restore the initial data and view" disabled>↺ Reset</button><button data-action="export" disabled>PNG ↓</button><button data-action="export-html" title="Save the current data, view, and bookmarks in an interactive file that works offline" disabled>HTML ↓</button></div></div>
     <p class="feedback" aria-live="polite"></p>
     <details class="code-details"><summary><span>Starter code<span class="code-label">Python / JavaScript</span></span></summary><div class="code-body"><div class="card-tools"><div class="code-tabs" aria-label="Example code language"><button data-language="python" aria-pressed="true">Python</button><button data-language="javascript" aria-pressed="false">JavaScript</button></div><button class="copy-code" data-action="copy">Copy code</button></div><pre><code></code></pre></div></details>`;
   card.querySelector('.card-number').textContent = String(index + 1).padStart(2, '0');
@@ -133,6 +133,36 @@ async function mountExample(entry) {
     const initialView = structuredClone(fig.spec.view);
     const initialVisibility = fig.spec.layers.map(layer => layer.visible);
     const layerHandles = fig.spec.layers.map(layer => new Layer(fig, layer.id));
+    let restoringBookmark = false;
+    const bookmarkButtons = [];
+    let bookmarkNote;
+    const clearBookmark = () => {
+      for (const button of bookmarkButtons) button.setAttribute('aria-pressed', 'false');
+      if (bookmarkNote) { bookmarkNote.textContent = ''; bookmarkNote.hidden = true; }
+    };
+    if (fig.spec.bookmarks?.length) {
+      const bookmarks = document.createElement('div'); bookmarks.className = 'gallery-bookmarks';
+      const label = document.createElement('p'); label.className = 'bookmark-heading'; label.textContent = 'SAVED VIEWS';
+      const controls = document.createElement('div'); controls.className = 'bookmark-controls'; controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Saved views');
+      bookmarkNote = document.createElement('p'); bookmarkNote.className = 'gallery-bookmark-note'; bookmarkNote.hidden = true;
+      for (const bookmark of fig.spec.bookmarks) {
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.bookmark = bookmark.name;
+        button.textContent = bookmark.name; button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', async () => {
+          const revision = entry.viewRevision;
+          clearBookmark(); button.setAttribute('aria-pressed', 'true');
+          bookmarkNote.textContent = bookmark.note ?? ''; bookmarkNote.hidden = !bookmark.note;
+          restoringBookmark = true;
+          try { fig.restoreBookmark(bookmark.name); }
+          catch (error) { report(error); }
+          finally { restoringBookmark = false; }
+          try { await fig.ready(); } catch (error) { if (!pageClosed && revision === entry.viewRevision) report(error); }
+        });
+        controls.append(button); bookmarkButtons.push(button);
+      }
+      bookmarks.append(label, controls, bookmarkNote); card.querySelector('.card-insight').after(bookmarks);
+      fig.on('viewchange', () => { if (!restoringBookmark) clearBookmark(); });
+    }
     window.vesoraGallery.set(example.id, fig);
     fig.on('representation', infos => {
       const status = card.querySelector('.representation');
@@ -207,22 +237,37 @@ async function mountExample(entry) {
           card.querySelector('output').textContent = `${parameterNumber.format(example.control.value)}${example.control.unit ? ` ${example.control.unit}` : ''}`;
           controller.update(example.control.value);
         }
-        fig.setView({ ...structuredClone(initialView), xDomain: initialView.xDomain, yDomain: initialView.yDomain, zDomain: initialView.zDomain });
+        clearBookmark(); fig.restoreView(initialView);
         fig.mount(chart); await fig.ready();
         card.querySelector('.feedback').textContent = ''; errorElement.hidden = true;
       } catch (error) { if (!pageClosed) report(error); }
       finally { button.disabled = false; card.dataset.updating = 'false'; }
     });
-    card.querySelector('[data-action="export"]').addEventListener('click', async event => {
-      const button = event.currentTarget; button.disabled = true;
-      try {
+    const flushUpdates = async () => {
+      do {
         if (entry.frame) {
           cancelAnimationFrame(entry.frame); entry.frame = 0;
           await updateParameter(Number(input.value));
         }
+        await fig.ready();
+      } while (entry.frame);
+    };
+    card.querySelector('[data-action="export"]').addEventListener('click', async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        await flushUpdates();
         const blob = await fig.savefig(), url = URL.createObjectURL(blob), link = document.createElement('a');
         link.href = url; link.download = `vesora-${example.id}.png`; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) { if (!pageClosed) report(error); }
+      finally { button.disabled = false; }
+    });
+    card.querySelector('[data-action="export-html"]').addEventListener('click', async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        await flushUpdates();
+        downloadHTML(fig, `vesora-${example.id}.html`);
+        card.querySelector('.feedback').textContent = 'HTML downloaded. Open it in a browser to explore offline. The current data and saved views are included.';
       } catch (error) { if (!pageClosed) report(error); }
       finally { button.disabled = false; }
     });

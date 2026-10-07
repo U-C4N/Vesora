@@ -23,6 +23,9 @@ jobs:
       - run: python -m pytest tests/python
       - run: python -m pip install -e ".[numpy]"
       - run: python -m pytest tests/python/test_numpy.py
+      - run: python -m pip install "setuptools>=77" wheel
+      - run: npm run package:release
+      - run: npm run test:packages
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
