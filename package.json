@@ -1,7 +1,7 @@
 {
   "name": "vesora-workspace",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.4.0",
   "type": "module",
   "workspaces": [
     "packages/core"
@@ -14,6 +14,8 @@
     "check": "npm run typecheck && npm test && npm run build",
     "demo": "node scripts/serve.mjs",
     "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:panels": "node scripts/benchmark-panels.mjs",
+    "benchmark:statistics": "node scripts/benchmark-statistics.mjs",
     "test:parity": "node scripts/parity.mjs",
     "test:examples": "node scripts/check-gallery-examples.mjs",
     "package:release": "node scripts/package-release.mjs",

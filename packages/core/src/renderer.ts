@@ -18,6 +18,9 @@ export class WebGLRenderer {
   private program: WebGLProgram;
   private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array}>();
   private lost: (event: Event)=>void;
+  private frameHeight=0;
+  private frameDpr=1;
+  private frameItems=new Set<string>();
   constructor(canvas: HTMLCanvasElement, onError:(message:string)=>void) {
     this.canvas=canvas;
     const gl=canvas.getContext('webgl2',{alpha:false,antialias:true,preserveDrawingBuffer:true});
@@ -40,18 +43,23 @@ export class WebGLRenderer {
     this.lost=(event)=>{event.preventDefault();onError('WebGL context lost. Remount the figure to restore GPU resources.');};
     canvas.addEventListener('webglcontextlost',this.lost);
   }
-  draw(items:Geometry[],rect:PlotRect,width:number,height:number,dpr:number,matrix:Float32Array=identity,threeD=false):void {
+  /** Clear once for the whole figure; resources survive between panel draws. */
+  beginFrame(width:number,height:number,dpr:number):void {
     const gl=this.gl,w=Math.round(width*dpr),h=Math.round(height*dpr);
+    if(gl.isContextLost())throw new Error('WebGL context lost. Remount the figure to restore GPU resources.');
+    this.frameHeight=height;this.frameDpr=dpr;this.frameItems.clear();
     if(this.canvas.width!==w||this.canvas.height!==h){this.canvas.width=w;this.canvas.height=h;}
     gl.disable(gl.SCISSOR_TEST);gl.viewport(0,0,w,h);gl.clearColor(1,1,1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  }
+  drawPanel(items:Geometry[],rect:PlotRect,matrix:Float32Array=identity,threeD=false):void {
+    const gl=this.gl,height=this.frameHeight,dpr=this.frameDpr;
     gl.viewport(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     gl.enable(gl.SCISSOR_TEST);gl.scissor(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     if(threeD) gl.enable(gl.DEPTH_TEST);else gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.program);gl.uniformMatrix4fv(gl.getUniformLocation(this.program,'uMatrix'),false,matrix);
-    const keep=new Set<string>();
     for(const item of items){
-      keep.add(item.id);let buffer=this.buffers.get(item.id);
+      this.frameItems.add(item.id);let buffer=this.buffers.get(item.id);
       if(!buffer){
         const vao=gl.createVertexArray()!,p=gl.createBuffer()!,c=gl.createBuffer()!;
         buffer={vao,p,c,positions:new Float32Array(0),colors:new Float32Array(0)};this.buffers.set(item.id,buffer);
@@ -66,8 +74,16 @@ export class WebGLRenderer {
       gl.uniform1i(gl.getUniformLocation(this.program,'uRound'),item.primitive==='points'?1:0);
       gl.drawArrays(item.primitive==='points'?gl.POINTS:item.primitive==='lines'?gl.LINES:gl.TRIANGLES,0,item.positions.length/3);
     }
-    for(const [id,b] of this.buffers)if(!keep.has(id)){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);this.buffers.delete(id);}
+  }
+  endFrame():void {
+    const gl=this.gl;
+    for(const [id,b] of this.buffers)if(!this.frameItems.has(id)){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);this.buffers.delete(id);}
     gl.bindVertexArray(null);gl.disable(gl.SCISSOR_TEST);
+    if(gl.isContextLost())throw new Error('WebGL context lost. Remount the figure to restore GPU resources.');
+    const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error(`WebGL frame failed (${error}).`);
+  }
+  draw(items:Geometry[],rect:PlotRect,width:number,height:number,dpr:number,matrix:Float32Array=identity,threeD=false):void {
+    this.beginFrame(width,height,dpr);this.drawPanel(items,rect,matrix,threeD);this.endFrame();
   }
   dispose():void {
     const gl=this.gl;for(const b of this.buffers.values()){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);}

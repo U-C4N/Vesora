@@ -1,18 +1,21 @@
 import {DataRegistry} from './data';
 import {lineSteps, runSteps, scatterSteps} from './planning';
-import type {DataStore, LineResult, PointPlan, Query} from './types';
+import {statisticsBytes, statisticsSteps} from './statistics';
+import type {PreparedStatistics} from './statistics';
+import type {DataStore, LayerSpec, LineResult, PointPlan, Query} from './types';
 import type {WorkerRequest, WorkerResponse} from './worker';
 
 type Plan = PointPlan | LineResult;
+type QueryResult = Plan | PreparedStatistics;
 let defaultWorkerURL: string | URL | undefined;
 /** Notebook hosts can supply a blob URL when the engine itself is an inline module. */
 export function setWorkerURL(url: string | URL | undefined): void {defaultWorkerURL = url;}
 interface Pending {
-  key: string; requestId: number; xId: string; yId: string; cacheKey: string; cancelled: boolean;
-  resolve: (result: Plan) => void; reject: (reason: Error) => void;
+  key: string; requestId: number; ids: string[]; cacheKey: string; cancelled: boolean;
+  resolve: (result: QueryResult) => void; reject: (reason: Error) => void;
   fallback: () => void;
 }
-interface Cached {plan: Plan; bytes: number; ids: [string, string]}
+interface Cached {plan: QueryResult; bytes: number; ids: string[]}
 export interface SchedulerOptions {
   /** null uses the cooperative main-thread path; useful where workers are blocked. */
   workerFactory?: (() => Worker) | null;
@@ -56,36 +59,56 @@ export class QueryScheduler {
   }
 
   query(key: string, kind: 'scatter' | 'line', xId: string, yId: string, query: Query, registry: DataRegistry | DataStore): Promise<Plan> {
+    return this.submit<Plan>(key, [xId, yId], [kind, query], registry, store => {
+      const x = store.get(xId)!.values, y = store.get(yId)!.values;
+      return kind === 'line' ? lineSteps(x, y, query) : scatterSteps(x, y, query);
+    }, requestId => ({type: 'query', requestId, key, kind, xId, yId, query}));
+  }
+
+  /** Statistics depend on source versions/options, never on the viewport. */
+  queryStatistics(key: string, layer: LayerSpec, registry: DataRegistry | DataStore): Promise<PreparedStatistics> {
+    const snapshot = structuredClone(layer), ids = Object.values(snapshot.data);
+    return this.submit<PreparedStatistics>(key, ids, ['statistics', snapshot.kind, snapshot.id, snapshot.data, snapshot.options], registry,
+      store => statisticsSteps(snapshot, store), requestId => ({type: 'statistics', requestId, key, layer: snapshot}));
+  }
+
+  private submit<T extends QueryResult>(key: string, dependencies: string[], identity: unknown[], registry: DataRegistry | DataStore,
+    steps: (store: DataStore) => Generator<void, T>, message: (requestId: number) => WorkerRequest): Promise<T> {
     if (this.disposed) return Promise.reject(new Error('Query scheduler has been disposed.'));
     const store = registry instanceof DataRegistry ? registry.store : registry;
-    const x = store.get(xId), y = store.get(yId);
-    if (!x || !y) return Promise.reject(new Error(`Unknown data source: ${!x ? xId : yId}`));
+    const ids = [...new Set(dependencies)], captured: DataStore = new Map();
+    for (const id of ids) {
+      const entry = store.get(id);
+      if (!entry) return Promise.reject(new Error(`Unknown data source: ${id}`));
+      captured.set(id, entry);
+    }
     this.cancel(key);
     // Prune sources removed by the owner even if it did not explicitly call release().
     for (const id of this.registered.keys()) if (!store.has(id)) this.release(id);
-    const cacheKey = JSON.stringify([kind, xId, x.descriptor.version, yId, y.descriptor.version, query]);
+    const cacheKey = JSON.stringify([identity, ids.map(id => [id, captured.get(id)!.descriptor.version])]);
     const cached = this.cache.get(cacheKey);
     if (cached) {
       this.cache.delete(cacheKey); this.cache.set(cacheKey, cached);
-      return Promise.resolve(cached.plan);
+      return Promise.resolve(cached.plan as T);
     }
     const requestId = ++this.sequence;
-    return new Promise<Plan>((resolve, reject) => {
-      const task: Pending = {key, requestId, xId, yId, cacheKey, cancelled: false, resolve, reject, fallback: () => {
-        const steps = kind === 'line' ? lineSteps(x.values, y.values, query) : scatterSteps(x.values, y.values, query);
-        void runSteps<Plan>(steps, () => task.cancelled || this.disposed)
-          .then(result => this.complete(task, result), error => this.reject(task, error instanceof Error ? error : new Error(String(error))));
+    return new Promise<T>((resolve, reject) => {
+      const task: Pending = {key, requestId, ids, cacheKey, cancelled: false, resolve: value => resolve(value as T), reject, fallback: () => {
+        try {
+          void runSteps<T>(steps(captured), () => task.cancelled || this.disposed)
+            .then(result => this.complete(task, result), error => this.reject(task, error instanceof Error ? error : new Error(String(error))));
+        } catch (error) {this.reject(task, error instanceof Error ? error : new Error(String(error)));}
       }};
       this.pending.set(requestId, task); this.keys.set(key, requestId);
       if (this.worker) {
         try {
-          for (const entry of [x, y]) {
+          for (const entry of captured.values()) {
             if (this.registered.get(entry.descriptor.id) === entry.descriptor.version) continue;
             this.invalidate(entry.descriptor.id);
             this.post({type: 'register', entry});
             this.registered.set(entry.descriptor.id, entry.descriptor.version);
           }
-          this.post({type: 'query', requestId, key, kind, xId, yId, query});
+          this.post(message(requestId));
         } catch {this.useFallback();}
       } else task.fallback();
     });
@@ -102,7 +125,7 @@ export class QueryScheduler {
   }
 
   release(id: string): void {
-    for (const task of [...this.pending.values()]) if (task.xId === id || task.yId === id) this.cancel(task.key);
+    for (const task of [...this.pending.values()]) if (task.ids.includes(id)) this.cancel(task.key);
     this.registered.delete(id); this.invalidate(id); this.post({type: 'release', id});
   }
 
@@ -124,10 +147,10 @@ export class QueryScheduler {
     if (this.keys.get(task.key) === task.requestId) this.keys.delete(task.key);
     task.reject(error);
   }
-  private complete(task: Pending, result: Plan): void {
+  private complete(task: Pending, result: QueryResult): void {
     if (task.cancelled || this.disposed || this.keys.get(task.key) !== task.requestId) return;
     this.pending.delete(task.requestId); this.keys.delete(task.key);
-    const bytes = 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
+    const bytes = 'marks' in result ? statisticsBytes(result) : 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
     if (bytes <= this.maxCacheBytes) {
       const previous = this.cache.get(task.cacheKey);
       if (previous) {this.cacheBytes -= previous.bytes; this.cache.delete(task.cacheKey);}
@@ -135,7 +158,7 @@ export class QueryScheduler {
         const oldest = this.cache.keys().next().value!;
         this.cacheBytes -= this.cache.get(oldest)!.bytes; this.cache.delete(oldest);
       }
-      this.cache.set(task.cacheKey, {plan: result, bytes, ids: [task.xId, task.yId]}); this.cacheBytes += bytes;
+      this.cache.set(task.cacheKey, {plan: result, bytes, ids: task.ids}); this.cacheBytes += bytes;
     }
     task.resolve(result);
   }

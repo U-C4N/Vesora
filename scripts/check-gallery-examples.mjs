@@ -5,13 +5,18 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { figure } from '../packages/core/dist/index.js';
-import { examples } from '../examples/web/scenarios.js';
+import { figure, subplots } from '../packages/core/dist/index.js';
+import { examples as originalExamples } from '../examples/web/scenarios.js';
+import { comparisonExamples } from '../examples/web/comparison-scenarios.js';
+import { statisticsExamples } from '../examples/web/statistics-scenarios.js';
+const examples = [...originalExamples, ...comparisonExamples, ...statisticsExamples];
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const expected = ['multi-line', 'training-loss', 'benchmark-score', 'quality-latency', 'signal', 'scatter', 'density', 'heatmap', 'precision', 'spectrum', 'phase', 'surface', 'scatter3d', 'lorenz', 'interference', 'peaks'];
+expected.push('signal-comparison', 'shared-distributions', 'heatmap-comparison');
+expected.push(...statisticsExamples.map(example => example.id));
 assert.deepEqual(examples.map(example => example.id), expected);
-assert.equal(examples.filter(example => example.dimension === '2d').length, 11);
+assert.equal(examples.filter(example => example.dimension === '2d').length, 20);
 assert.equal(examples.filter(example => example.dimension === '3d').length, 5);
 
 function shapeSummary(snapshot) {
@@ -61,19 +66,19 @@ const javascript = [];
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 for (const example of examples) {
   assert.equal(typeof example.javascript, 'string', `${example.id}: JavaScript source missing`);
-  const source = example.javascript.replace(/^\s*import\s*\{\s*figure\s*\}\s*from\s*['"]@vesora\/core['"];?\s*$/m, '');
+  const source = example.javascript.replace(/^\s*import\s*\{\s*(figure|subplots)\s*\}\s*from\s*['"]@vesora\/core['"];?\s*$/m, '');
   assert.notEqual(source, example.javascript, `${example.id}: expected standalone @vesora/core import`);
   const figures = [];
   const target = {};
   let mounts = 0;
-  const create = options => {
-    const fig = figure(options);
+  const create = factory => options => {
+    const fig = factory(options);
     fig.mount = element => { assert.equal(element, target); mounts++; return fig; };
     figures.push(fig);
     return fig;
   };
   try {
-    await new AsyncFunction('figure', 'document', source)(create, { querySelector: selector => { assert.equal(selector, '#chart'); return target; } });
+    await new AsyncFunction('figure', 'subplots', 'document', source)(create(figure), create(subplots), { querySelector: selector => { assert.equal(selector, '#chart'); return target; } });
     assert.equal(figures.length, 1, `${example.id}: expected one standalone Figure`);
     assert.equal(mounts, 1, `${example.id}: standalone snippet must mount #chart`);
     const fig = figures[0], snapshot = fig.snapshot();
@@ -118,6 +123,7 @@ sys.meta_path.insert(0, BlockNumPy())
 import vesora as vs
 vs.Figure.show = lambda self, *args, **kwargs: self
 original_figure = vs.figure
+original_subplots = vs.subplots
 results = []
 for example in json.load(sys.stdin):
     figures = []
@@ -126,6 +132,11 @@ for example in json.load(sys.stdin):
         figures.append(figure)
         return figure
     vs.figure = create
+    def create_subplots(*args, **options):
+        figure = original_subplots(*args, **options)
+        figures.append(figure)
+        return figure
+    vs.subplots = create_subplots
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             exec(compile(example['python'], 'gallery-' + example['id'] + '.py', 'exec'), {'__name__': '__main__'})

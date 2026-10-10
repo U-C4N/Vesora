@@ -142,7 +142,7 @@ def test_unsigned_64_bit_boundary_and_native_long_width():
     assert source_data(other, "y")[0]["dtype"] == ("float64" if native.itemsize == 8 else "int32")
 
 
-@pytest.mark.parametrize("bad", [[1 + 2j], ["1", "2"], [object()], [None]])
+@pytest.mark.parametrize("bad", [[1 + 2j], [object()], [None]])
 def test_nonreal_data_is_rejected_without_publishing_a_layer(bad):
     fig = vs.Figure()
     before = fig.snapshot()

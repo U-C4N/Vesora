@@ -4,7 +4,7 @@ import {validateDescriptor} from './data';
 import type {RepresentationInfo, Snapshot, ViewBookmark} from './types';
 
 declare const __VESORA_WORKER_SOURCE__:string;
-type LayerInfo=RepresentationInfo&{layerId:string};
+type LayerInfo=RepresentationInfo&{layerId:string;panelId?:string};
 
 function element<T extends HTMLElement>(id:string):T {
   const node=document.getElementById(id);
@@ -84,6 +84,9 @@ async function start():Promise<void> {
       line:{name:info.exact?'Full line':'Reduced line',note:info.exact?'Original samples retained':'Extrema-preserving reduction',rendered:'Retained samples'},
       grid:{name:'Heatmap',note:'Regular grid',rendered:'Cells drawn'},
       surface:{name:'Surface',note:'Regular-grid surface',rendered:'Triangles drawn'},
+      hist:{name:'Histogram',note:'Exact source-data counts',rendered:'Bins drawn'},
+      bar:{name:'Bar chart',note:'Original series values',rendered:'Bars drawn'},
+      boxplot:{name:'Box plot',note:'Exact source-data quartiles',rendered:'Groups drawn'},
     }[info.kind];
     element('vesora-representation').textContent=description.name;
     element('vesora-representation-note').textContent=description.note;
@@ -96,15 +99,20 @@ async function start():Promise<void> {
       row.append(term,amount);metrics.append(row);
     };
     add('total','Source samples',info.total);
-    add('visible',info.kind==='grid'?'Valid cells':info.kind==='surface'?'Valid vertices':layer.kind==='scatter3d'?'Valid points':'Visible samples',info.visible);
+    add('visible',info.kind==='hist'?'Samples in intersecting bins':info.kind==='boxplot'?'Samples in intersecting groups':info.kind==='bar'?'Intersecting bars':info.kind==='grid'?'Valid cells':info.kind==='surface'?'Valid vertices':layer.kind==='scatter3d'?'Valid points':'Visible samples',info.visible);
     add('rendered',description.rendered,info.rendered);
+    if(info.valid!==undefined)add('valid','Finite samples',info.valid);
+    if(info.omitted!==undefined)add('omitted','Non-finite samples omitted',info.omitted);
+    if(info.kind==='hist'&&info.rangeExcluded!==undefined)add('rangeExcluded','Outside histogram range',info.rangeExcluded);
   };
   const updateInspector=(next:LayerInfo[])=>{
     infos=next;const selected=layerSelect.value;layerSelect.replaceChildren();
     for(const info of infos){
       const index=fig!.spec.layers.findIndex(layer=>layer.id===info.layerId),layer=fig!.spec.layers[index];
-      const names={line:'Line',scatter:'Scatter',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface'};
-      const option=document.createElement('option');option.value=info.layerId;option.textContent=layer.style.label||`${names[layer.kind]} ${index+1}`;
+      const names={line:'Line',scatter:'Scatter',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
+      const panel=fig!.spec.panels?.find(panel=>panel.id===(info.panelId??'main'));
+      const label=layer.style.label||`${names[layer.kind]} ${index+1}`;
+      const option=document.createElement('option');option.value=info.layerId;option.textContent=panel?`${panel.title||`Panel ${panel.row+1}, ${panel.col+1}`} · ${label}`:label;
       layerSelect.append(option);
     }
     if(infos.some(info=>info.layerId===selected))layerSelect.value=selected;
@@ -122,7 +130,7 @@ async function start():Promise<void> {
   try{
     const {snapshot,buffers}=decodePayload(JSON.parse(element('vesora-payload').textContent||''));
     fig=figure();fig.applySnapshot(snapshot,buffers);
-    const entryView=structuredClone(fig.spec.view);
+    const entryView=fig.captureViews();
     const bookmarks=fig.spec.bookmarks??[];
     document.title=fig.spec.title?`${fig.spec.title} — Vesora`:'Vesora — Interactive figure';
     element('vesora-help').textContent=fig.spec.view.kind==='3d'
@@ -136,7 +144,7 @@ async function start():Promise<void> {
           for(const button of bookmarkList.querySelectorAll<HTMLButtonElement>('button'))button.setAttribute('aria-pressed',String(button.dataset.bookmark===bookmark.name));
           bookmarkNote.textContent=bookmark.note??'';bookmarkNote.hidden=!bookmark.note;
           fig!.restoreBookmark(bookmark.name);
-        }else fig!.restoreView(entryView);
+        }else fig!.restoreViews(entryView);
       }catch(error){fail(error);}finally{programmatic=false;}
     };
     bookmarks.forEach((bookmark,index)=>{
@@ -148,10 +156,12 @@ async function start():Promise<void> {
     });
     element('vesora-bookmark-panel').hidden=!bookmarks.length;
     reset.addEventListener('click',()=>restore());
-    chart.addEventListener('dblclick',event=>{event.preventDefault();event.stopImmediatePropagation();restore();},true);
-    lastView=JSON.stringify(fig.spec.view);
+    // Legacy single charts reset to their exported entry view. In grids a double
+    // click belongs to the active panel; the toolbar resets the complete figure.
+    if(!fig.spec.layout)chart.addEventListener('dblclick',event=>{event.preventDefault();event.stopImmediatePropagation();restore();},true);
+    lastView=JSON.stringify(fig.captureViews());
     fig.on('viewchange',()=>{
-      const next=JSON.stringify(fig!.spec.view);
+      const next=JSON.stringify(fig!.captureViews());
       if(next===lastView)return;
       lastView=next;if(!programmatic){clearBookmark();exploring=true;}busy();
       // Pointer-up can arrive after the final drag frame was already rendered.

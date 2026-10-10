@@ -83,3 +83,102 @@ def test_immediate_scatter_update_moves_exported_pixels_and_render_errors_fail(t
     finally:
         fig.close()
         vs.process_events()
+
+
+def test_grid_qt_updates_bookmarks_export_and_window_reopen(tmp_path):
+    from PySide6.QtGui import QImage
+
+    fig = vs.subplots(2, 2, sharex=True, title="Desktop comparison", width=1000, height=760)
+    try:
+        layers = []
+        for row in range(2):
+            for col in range(2):
+                panel = fig.panel(row, col).set_title(f"Panel {row + 1}, {col + 1}")
+                panel.set_axes(xlim=(0, 4), ylim=(0, 5))
+                layers.append(panel.scatter([1, 2, 3], [1, 3, 2], color="#38bdf8", size=12))
+                panel.axhline(2, color="#d36a55")
+        note = fig.panel(1, 1).text(1, 4, "Initial", font_size=14)
+        fig.bookmark("Overview")
+        first = fig.savefig(tmp_path / "grid-initial.png")
+        payload = first.read_bytes()
+        image = QImage(str(first)).convertToFormat(QImage.Format.Format_RGBA8888)
+        pixels = memoryview(image.constBits()).cast("B")
+        counts = [0, 0, 0, 0]
+        for row in range(image.height()):
+            for col in range(image.width()):
+                offset = row * image.bytesPerLine() + col * 4
+                if pixels[offset] < 100 and pixels[offset + 1] > 120 and pixels[offset + 2] > 180:
+                    quadrant = (2 if row >= image.height() // 2 else 0) + (1 if col >= image.width() // 2 else 0)
+                    counts[quadrant] += 1
+        assert all(count > 80 for count in counts), "Every panel must render into the exported PNG"
+        layers[-1].set_data(y=[4, 1, 3])
+        note.update(text="Updated")
+        fig.panel(1, 1).set_axes(xlim=(1.5, 3.5))
+        fig.bookmark("Detail")
+        updated = fig.savefig(tmp_path / "grid-updated.png")
+        assert updated.read_bytes() != payload
+        fig.restore_bookmark("Overview")
+        assert fig.snapshot()["figure"]["view"]["xDomain"] == [0, 4]
+        assert all(panel["view"]["xDomain"] == [0, 4] for panel in fig.snapshot()["figure"]["panels"][1:])
+        fig.savefig(tmp_path / "grid-restored.png")
+        fig._window.close()
+        vs.process_events()
+        assert not fig._closed and fig._window is None and fig._host is None
+        reopened = fig.savefig(tmp_path / "grid-reopened.png")
+        assert reopened.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert len(fig.snapshot()["sources"]) == 8
+    finally:
+        fig.close()
+        vs.process_events()
+    assert fig._closed and not fig.snapshot()["sources"]
+
+
+def test_statistics_categories_real_qt_render_update_export_and_reopen(tmp_path):
+    from PySide6.QtGui import QImage
+
+    fig = vs.subplots(2, 2, title="Desktop statistics", width=1000, height=760)
+    color = "#38bdf8"
+    try:
+        histogram = fig.hist([1, 1, 2, 3, 3, float("nan")], bins=[0, 2, 4], color=color, label="Counts")
+        bars = fig.panel(0, 1).set_categories("x", ["B", "A"])
+        bar = bars.bar(["A", "B"], [3, -2], color=color)
+        bars.bar(["B", "A"], [2, 4], color=color)
+        boxes = fig.panel(1, 0).boxplot([[1, 2, 3], [1, 2, 3, 40]], labels=["Tight", "Outlier"], color=color)
+        horizontal = fig.panel(1, 1).set_bar_mode("stack")
+        horizontal.barh(["A", "B"], [3, -2], color=color)
+        horizontal.barh(["B", "A"], [-3, 2], color=color)
+        fig.text(1, 2, "Raw data kept")
+        assert fig.snapshot()["figure"]["protocolVersion"] == 3
+        fig.bookmark("Overview")
+        first = fig.savefig(tmp_path / "statistics-initial.png")
+        payload = first.read_bytes()
+        image = QImage(str(first)).convertToFormat(QImage.Format.Format_RGBA8888)
+        pixels = memoryview(image.constBits()).cast("B")
+        quadrants = [0, 0, 0, 0]
+        for row in range(image.height()):
+            for col in range(image.width()):
+                offset = row * image.bytesPerLine() + col * 4
+                if pixels[offset] < 100 and pixels[offset + 1] > 120 and pixels[offset + 2] > 180:
+                    quadrants[(2 if row >= image.height() // 2 else 0) + (1 if col >= image.width() // 2 else 0)] += 1
+        assert all(count > 80 for count in quadrants), "Every statistical panel must contain rendered geometry"
+        histogram.set_options(density=True, cumulative=True)
+        histogram.set_data(samples=[1, 2, 2, 3, float("nan")])
+        bar.set_data(x=["A", "C"], y=[1, -4])
+        boxes.set_data(groups=[[2, 3, 4, 5], [1, 3, 4, 90]])
+        fig.panel(0, 1).set_axes(xlim=(.5, 2.5))
+        fig.bookmark("Focus")
+        updated = fig.savefig(tmp_path / "statistics-updated.png")
+        assert updated.read_bytes() != payload
+        assert fig.snapshot()["figure"]["categories"]["x:panel-0-1"] == ["B", "A", "C"]
+        fig.restore_bookmark("Overview")
+        assert "xDomain" not in fig.snapshot()["figure"]["panels"][1]["view"]
+        fig.savefig(tmp_path / "statistics-restored.png")
+        fig._window.close()
+        vs.process_events()
+        assert not fig._closed and fig._window is None
+        reopened = fig.savefig(tmp_path / "statistics-reopened.png")
+        assert reopened.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        fig.close()
+        vs.process_events()
+    assert not fig.snapshot()["sources"]

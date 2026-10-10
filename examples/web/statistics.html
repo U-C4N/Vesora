@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f4f2ec">
+  <meta name="description" content="Histograms, grouped and stacked bars, boxplots and named categories in Python and JavaScript.">
+  <title>Vesora — Statistics and categories</title>
+  <link rel="stylesheet" href="./style.css">
+  <style>
+    body[data-gallery="statistics"] .gallery { grid-template-columns: minmax(0, 1fr); }
+    body[data-gallery="statistics"] .intro { grid-template-columns: minmax(0, 1fr); }
+    body[data-gallery="statistics"] .intro-content { max-width: 760px; }
+  </style>
+</head>
+<body data-gallery="statistics">
+  <a class="skip-link" href="#experiments">Skip to experiments</a>
+  <header class="topbar">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">v</span><span>vesora<span class="brand-label">VISUALIZATION LAB</span></span></a>
+    <nav aria-label="Gallery pages"><a href="./">All chart types ↗</a><a href="#experiments">Statistics <span>06</span></a></nav>
+    <span class="engine-state"><span aria-hidden="true"></span>Python + JavaScript</span>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <div class="intro-content"><p class="eyebrow">NEW IN 0.4</p><h1 id="page-title">Understand distributions.<br><em>Compare categories.</em></h1><p class="intro-copy">Histograms, grouped and stacked bars, box plots and categorical axes. One engine, exact source-data statistics, and offline sharing.</p><a class="intro-link" href="#experiments">Explore the statistics ↗</a></div>
+    </section>
+    <section class="discovery" id="experiments" aria-label="Explore statistics">
+      <div class="discovery-heading"><span class="eyebrow">STATISTICS EXPERIMENTS</span><span id="visible-count" aria-live="polite">6 examples</span></div>
+      <div class="discovery-controls"><div class="filter-group" role="group" aria-label="Filter experiments"><button type="button" data-filter="all" aria-pressed="true">All statistics <span>06</span></button></div><div class="search-field"><label class="sr-only" for="gallery-search">Search statistics</label><input id="gallery-search" type="search" placeholder="Search statistics…" autocomplete="off"></div></div>
+      <div class="interaction-note"><span class="interaction-mark" aria-hidden="true">↗</span><p><strong>Inspect the original statistics.</strong> Hover for counts, values and quartiles. Shift-drag selects bins, bars or groups. Pan and zoom never recompute the distribution.</p></div>
+    </section>
+    <section id="two-d" class="collection" aria-labelledby="two-d-title"><div class="section-heading"><div><span class="section-index">I.</span><h2 id="two-d-title">From samples to statistical insight</h2><span class="section-count">2D / 06</span></div><p>Synthetic data in every example.</p></div><div class="gallery" id="gallery-2d"></div></section>
+    <section id="three-d" hidden><div id="gallery-3d"></div></section>
+    <div id="gallery-empty" class="empty-state" hidden><h2>No statistics found.</h2><p>Try another search term.</p></div>
+    <noscript><p class="page-error">Enable JavaScript to explore the statistics.</p></noscript>
+  </main>
+  <footer><div><a class="footer-brand" href="./">vesora<span aria-hidden="true">.</span></a><p>Explore the original 16 experiments in the <a href="./">main gallery</a>.</p></div><a class="back-to-top" href="#page-title">Back to top ↑</a></footer>
+  <script type="module" src="./demo.js"></script>
+</body>
+</html>

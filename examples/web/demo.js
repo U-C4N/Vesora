@@ -1,5 +1,9 @@
-import { figure, Layer, downloadHTML } from '../../packages/core/dist/index.js';
-import { examples } from './scenarios.js';
+import { figure, subplots, Layer, downloadHTML } from '../../packages/core/dist/index.js';
+import { examples as originalExamples } from './scenarios.js';
+import { comparisonExamples } from './comparison-scenarios.js';
+import { statisticsExamples } from './statistics-scenarios.js';
+
+const examples = document.body.dataset.gallery === 'comparison' ? comparisonExamples : document.body.dataset.gallery === 'statistics' ? statisticsExamples : originalExamples;
 
 const number = new Intl.NumberFormat('en-US');
 const parameterNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
@@ -16,6 +20,8 @@ function representationText(infos) {
   if (surface) return `${number.format(surface.rendered)} triangles · Regular grid`;
   const grid = infos.find(info => info.kind === 'grid');
   if (grid) return `${number.format(grid.rendered)} cells · Scalar field`;
+  const stat = infos.find(info => ['hist','bar','boxplot'].includes(info.kind));
+  if (stat) return `${number.format(stat.total)} source values · ${stat.kind === 'hist' ? 'Exact histogram' : stat.kind === 'bar' ? 'Bar series' : 'Exact quartiles'}`;
   const points = infos.find(info => info.kind === 'points');
   if (points) return `${number.format(points.rendered)} points · Original data`;
   const total = Math.max(...infos.map(info => info.total));
@@ -128,9 +134,10 @@ async function mountExample(entry) {
   const errorElement = card.querySelector('.error');
   let fig;
   try {
-    fig = figure({ width: Math.max(200, chart.clientWidth), height: 380 });
+    const options = { width: Math.max(200, chart.clientWidth), height: example.layout ? 640 : 380 };
+    fig = example.layout ? subplots({ ...options, ...example.layout }) : figure(options);
     const controller = example.create(fig);
-    const initialView = structuredClone(fig.spec.view);
+    const initialView = fig.captureViews();
     const initialVisibility = fig.spec.layers.map(layer => layer.visible);
     const layerHandles = fig.spec.layers.map(layer => new Layer(fig, layer.id));
     let restoringBookmark = false;
@@ -218,7 +225,7 @@ async function mountExample(entry) {
       const focused = card.classList.toggle('is-focused');
       event.currentTarget.setAttribute('aria-pressed', String(focused));
       event.currentTarget.textContent = focused ? 'Collapse ↙' : 'Expand ↗';
-      fig.spec.height = focused ? 520 : 380; fig.changed();
+      fig.spec.height = example.layout ? (focused ? 800 : 640) : (focused ? 520 : 380); fig.changed();
       try { await fig.ready(); } catch (error) { if (!pageClosed && revision === entry.viewRevision) report(error); }
     });
     card.querySelector('[data-action="reset"]').addEventListener('click', async event => {
@@ -237,7 +244,7 @@ async function mountExample(entry) {
           card.querySelector('output').textContent = `${parameterNumber.format(example.control.value)}${example.control.unit ? ` ${example.control.unit}` : ''}`;
           controller.update(example.control.value);
         }
-        clearBookmark(); fig.restoreView(initialView);
+        clearBookmark(); fig.restoreViews(initialView);
         fig.mount(chart); await fig.ready();
         card.querySelector('.feedback').textContent = ''; errorElement.hidden = true;
       } catch (error) { if (!pageClosed) report(error); }

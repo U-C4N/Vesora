@@ -33,3 +33,44 @@ jobs:
           path: |
             test-results
             playwright-report
+  notebook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - run: npm run build
+      - run: python -m pip install -e ".[test,notebook]" "jupyterlab>=4,<5" ipykernel
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/browser/jupyter.spec.mjs
+        env:
+          VESORA_TEST_JUPYTER: '1'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: notebook-failures
+          path: test-results
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - run: npm run build
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest tests/python/test_desktop.py
+        env:
+          VESORA_TEST_QT: '1'
+          QTWEBENGINE_CHROMIUM_FLAGS: '--use-angle=swiftshader --enable-unsafe-swiftshader'
