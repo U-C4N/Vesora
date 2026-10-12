@@ -120,11 +120,14 @@ export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Rec
     const bars = layers.filter(layer=>layer.kind==='bar'), mode = spec.barModes?.[panel.id] ?? 'group';
     for (const layer of layers) {
       const values=read(layer);
+      for(const axis of ['x','y'] as const)if((panel.view[`${axis}Scale`]==='time'||panel.view[`${axis}Format`]?.kind==='date')&&values[axis]?.some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be epoch milliseconds within the JavaScript Date range');
       if (layer.categorical !== undefined) {
         if (!layer.categorical || typeof layer.categorical !== 'object' || Array.isArray(layer.categorical) || Object.entries(layer.categorical).some(([axis,value])=>!['x','y'].includes(axis)||value!==true)) throw new Error('Invalid categorical channel metadata');
       }
       if (isStatistical(layer.kind)) {
-        if (panel.view.kind !== '2d' || panel.view.xScale !== 'linear' || panel.view.yScale !== 'linear') throw new Error('Statistical layers require linear 2D axes');
+        const position=layer.kind==='bar'&&(layer.options as BarSpecOptions)?.orientation==='horizontal'?'y':'x',value=position==='x'?'y':'x';
+        const timeBar=layer.kind==='bar'&&panel.view[`${position}Scale`]==='time'&&panel.view[`${value}Scale`]==='linear';
+        if (panel.view.kind !== '2d' || !timeBar&&(panel.view.xScale !== 'linear' || panel.view.yScale !== 'linear')) throw new Error('Statistical layers require linear 2D axes; bar positions may use time');
         validateStatisticalData(layer,values);
       } else if (layer.options !== undefined) throw new Error('Unexpected statistical options');
       for (const axis of ['x','y'] as const) {

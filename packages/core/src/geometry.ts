@@ -4,7 +4,7 @@ import {parseColor, colorMap} from './color';
 import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, ViewSpec, Domain} from './types';
 import type {Geometry} from './renderer';
 
-export function gridEdges(values: NumericArray, scale:'linear'|'log'): Float64Array {
+export function gridEdges(values: NumericArray, scale:import('./types').ScaleKind): Float64Array {
   const n=values.length,out=new Float64Array(n+1);
   if(!n)return out;
   for(let i=0;i<n;i++){
@@ -12,7 +12,7 @@ export function gridEdges(values: NumericArray, scale:'linear'|'log'): Float64Ar
     if(i&&values[i]<=values[i-1])throw new Error('Grid coordinates must be strictly increasing');
   }
   if(n===1){const domain=extent(values,scale);out[0]=domain[0];out[1]=domain[1];return out;}
-  if(scale==='linear'){
+  if(scale!=='log'){
     const halfGap=(a:number,b:number)=>Number.isFinite(b-a)?(b-a)/2:b/2-a/2;
     out[0]=Math.max(-Number.MAX_VALUE,values[0]-halfGap(values[0],values[1]));
     for(let i=1;i<n;i++)out[i]=values[i-1]+halfGap(values[i-1],values[i]);

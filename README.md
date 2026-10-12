@@ -1,21 +1,79 @@
 <p align="center">
-  <img src="docs/assets/vesora-banner.svg" alt="Vesora — scientific visualization. One engine for Python and JavaScript." width="100%">
+  <img src="docs/assets/vesora-banner.svg" alt="Vesora — charts that fit your app. One engine for React, JavaScript and Python." width="100%">
 </p>
 
 <p align="center">
-  <strong>Explore scientific data in Python and on the web with the same visualization engine.</strong><br>
-  Statistical charts · Categorical axes · Linked 2D panels · Adaptive data representations
+  <strong>Charts that fit your app. One engine for React, JavaScript and Python.</strong><br>
+  React + TypeScript · Custom themes · Interactive exploration · PNG &amp; offline HTML
 </p>
 
 <p align="center">
-  <a href="#see-it-in-action">Gallery</a> ·
+  <a href="#signal-studio">Signal Studio</a> ·
+  <a href="#react-saas-charts-in-v06">React</a> ·
+  <a href="#see-it-in-action">Scientific gallery</a> ·
   <a href="#get-started">Quick start</a> ·
-  <a href="#how-it-compares-with-matplotlib">Vesora &amp; Matplotlib</a> ·
   <a href="docs/api.md">API reference</a> ·
-  <a href="docs/releases/v0.4.0.md">v0.4 overview</a>
+  <a href="docs/releases/v0.6.0.md">v0.6 overview</a>
 </p>
 
-> **v0.4 developer preview.** Build this version from the checkout using the instructions below. Publication of v0.4 GitHub assets is a separate step. WebGL2 is required; Python desktop windows use QtWebEngine. Vesora is not published to PyPI or the npm registry.
+> **v0.6 developer preview, MIT licensed.** Build and install the release archives below. Registry publication is a separate authenticated step; these instructions do not assume published npm/PyPI packages. WebGL2 is required; Python desktop windows use QtWebEngine.
+
+<p align="center">
+  <a href="docs/assets/signal-studio-light.png"><img src="docs/assets/signal-studio-light.png" alt="Vesora Signal Studio in light mode: revenue trend, period-peak insight, subscription bars and account scatter" width="100%"></a>
+</p>
+
+## Signal Studio
+
+**See what moves.** The [React SaaS starter](examples/react-saas/) pairs a dark chart stage with warm paper surfaces, a compact navigation rail and a responsive account workspace. The charts use Vesora's own engine; the surrounding cards, filters and table are ordinary React components you can adapt to your product.
+
+| After dark | On a small screen |
+| :---: | :---: |
+| <a href="docs/assets/signal-studio-dark.png"><img src="docs/assets/signal-studio-dark.png" alt="Signal Studio dashboard with coordinated dark surfaces and chart themes" width="380"></a> | <a href="docs/assets/signal-studio-mobile.png"><img src="docs/assets/signal-studio-mobile-preview.png" alt="Signal Studio revenue chart and navigation on a 390 px mobile viewport; click for the full dashboard" width="170"></a> |
+| Coordinated chart, text and interface colors. | The same working dashboard at 390 px. |
+
+- Switch between **Revenue, Adoption and Expansion**, choose a 7/30/90-day window, and compare an available preceding period on the same date axis.
+- Inspect an account from the scatter plot or table; search, filter by plan and page through the results. The account constellation also works as a plan filter.
+- Open quick actions with **Ctrl/Cmd + K**, refresh the simulated API, switch themes, or export the current chart as PNG or interactive HTML.
+
+The screenshots show deterministic **synthetic data**, not customer results. The account workspace contains 24 sampled rows; the subscription chart uses a separate, larger synthetic plan summary. Metrics and insights are computed from the selected data. See the [starter guide](examples/react-saas/README.md) for controls, data replacement and export behavior.
+
+## React SaaS charts in v0.6
+
+Use `@vesora/react` for declarative line, grouped/stacked bar and scatter charts. The component owns rendering and cleanup, retains series identity during data refresh, and supplies keyboard-operable legends, custom tooltips and loading/empty/error states. The framework-independent core remains available.
+
+```tsx
+import { VesoraChart } from '@vesora/react';
+
+const rows = [
+  { timestamp: Date.UTC(2026, 9, 1), revenue: 4200, cost: 2100 },
+  { timestamp: Date.UTC(2026, 9, 2), revenue: 5100, cost: 2300 },
+];
+
+export function RevenueChart() {
+  return <VesoraChart type="line" data={rows} xKey="timestamp"
+    series={[{ key: 'revenue', label: 'Revenue' }, { key: 'cost', label: 'Cost' }]}
+    theme="dark" height={360} xAxis={{ type: 'time' }}
+    yAxis={{ format: 'currency', currency: 'USD' }} />;
+}
+```
+
+From this checkout:
+
+```bash
+npm ci --cache artifacts/npm-cache
+npm run build
+npm run demo:react
+```
+
+Open the URL printed by Vite to run Signal Studio. See the [React API](packages/react/README.md), [shared presentation API](docs/api.md#themes-dates-and-number-formats) and [web developer pilot](docs/pilot-v0.6.md).
+
+Build portable packages with `npm run package:release`, then install the matching archives into another React project:
+
+```bash
+npm install ./vesora-core-0.6.0.tgz ./vesora-react-0.6.0.tgz
+```
+
+React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HTML export explicitly includes all chart source rows and excludes React callbacks; use the ref handle's `exportPNG`, `exportHTML` and `resetView` methods. The pilot thresholds are proposed validation criteria, not completed user research or measured competitive advantages.
 
 ## See it in action
 
@@ -29,9 +87,28 @@ These are **real PNG exports from Vesora's shared engine**, generated through th
 | [![A smooth mathematical interference surface colored by amplitude](docs/assets/surface.png)](docs/assets/surface.png) | [![Sampled Lorenz attractor rendered as a three-dimensional point trajectory](docs/assets/lorenz.png)](docs/assets/lorenz.png) |
 | A 140 × 140 regular grid, with color mapped to amplitude. | 19,000 numerical trajectory samples, with color mapped to z. |
 
-The [original gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. The [comparison gallery](examples/web/compare.html) adds **3 multi-panel experiments**, and the [statistics gallery](examples/web/statistics.html) adds **6 more experiments**, bringing the total to 25. The pages are separate to limit simultaneous GPU contexts. Explore line charts, heatmaps, density plots, signal comparisons and chaotic systems. Every experiment includes Python and JavaScript code, PNG export and interactive HTML export.
+The [original gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. The [comparison gallery](examples/web/compare.html) adds **3 multi-panel experiments**, the [statistics gallery](examples/web/statistics.html) adds **6**, and [linked inspection](examples/web/linked.html) adds **one 200,000-row experiment**, bringing the total to 26. Pages remain separate to limit simultaneous GPU contexts. Every experiment includes Python and JavaScript code, PNG export and interactive HTML export.
 
-## New in v0.4: statistics and categories
+## New in v0.5: follow the same observations
+
+Select a rectangle in either of two linked scatter plots to highlight the same source rows and compare their count histogram with the full dataset. Membership uses original coordinates even when a scatter is displayed as density. Share the completed cohort in an offline HTML file.
+
+```python
+import vesora as vs
+
+fig = vs.subplots(1, 3, title="Inspect model errors", width=1200)
+prediction, residual, feature = [1, 2, 3, 4], [0.1, 0.2, 3.0, 0.1], [0.1, 0.2, 0.9, 0.3]
+a = fig.panel(0, 0).scatter(prediction, residual)
+b = fig.panel(0, 1).scatter(feature, residual)
+h = fig.panel(0, 2).hist(residual, bins=[0, 1, 2, 4])
+link = fig.link_selection(scatter=[a, b], histogram=h)
+fig.show()  # Shift + drag in either scatter plot.
+fig.save_html("model-errors.html")
+```
+
+Exactly two numeric scatter layers and one count histogram must occupy three distinct 2D panels. Row position identifies an observation: provide equally sized, explicitly aligned arrays. Linked data and histogram options remain fixed until `link.remove()`. Pan/zoom and Reset view preserve the cohort; `link.clear()` and the viewer's Clear selection button remove it. See [linked inspection](docs/api.md#follow-observations-across-views), [the v0.5 release](docs/releases/v0.5.0.md) and [the pilot protocol](docs/pilot-v0.5.md).
+
+## Statistics and categories from v0.4
 
 Create histograms, grouped/stacked bars and boxplots directly from source arrays. Use named categories in bars, boxes, lines and scatter plots. Exact counts and quartiles are computed in the shared TypeScript engine, including when the figure originates in Python or is opened from an offline HTML file. NumPy remains optional.
 
@@ -46,7 +123,7 @@ fig.bookmark("Overview")
 fig.save_html("statistics.html")
 ```
 
-Try all six [statistics examples](examples/web/statistics.html), or read [the statistical API](docs/api.md#analyze-distributions-and-categories). Histogram bins do not change when zooming. Grouped bars retain slots for missing categories; stacked bars accumulate positive and negative values independently. Statistics use linear axes in this release.
+Try all six [statistics examples](examples/web/statistics.html), or read [the statistical API](docs/api.md#analyze-distributions-and-categories). Histogram bins do not change when zooming. Grouped bars retain slots for missing categories; stacked bars accumulate positive and negative values independently. Histograms and boxplots use linear axes; v0.6 also permits time-positioned bars with a linear value axis.
 
 ## Also included: compare and explain
 
@@ -86,7 +163,7 @@ npm run build
 npm run demo
 ```
 
-Open **[localhost:4173/examples/web/](http://127.0.0.1:4173/examples/web/)**. Node.js 22+ is needed for development. The images above are static previews; the local gallery is interactive. Regenerate the images with [`scripts/render_readme.py`](scripts/render_readme.py).
+Open **[localhost:4173/examples/web/](http://127.0.0.1:4173/examples/web/)**. Node.js 22.12+ is needed for development. The images above are static previews; the local gallery is interactive. Regenerate the images with [`scripts/render_readme.py`](scripts/render_readme.py).
 
 ## Why Vesora exists
 
@@ -106,7 +183,7 @@ Python functions run in Python, and JavaScript functions run in JavaScript. Supp
 
 ## Get started
 
-Build the v0.4 packages from this checkout with Node.js 22+ and Python 3.10+:
+Build the v0.6 packages from this checkout with Node.js 22.12+ and Python 3.10+:
 
 ```bash
 python -m pip install "setuptools>=77" wheel
@@ -115,14 +192,14 @@ npm run build
 npm run package:release
 ```
 
-The result is `dist/release-v0.4.0`: a Python wheel, an npm tarball, three standalone demos and `SHA256SUMS.txt`. Packaging alone does not publish a release. The already published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for the previous feature set.
+The result is `dist/release-v0.6.0`: a Python wheel, core and React npm tarballs, five standalone demos and `SHA256SUMS.txt`. Packaging alone does not publish a release. The already published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for the previous feature set.
 
 ### Python: a plot in a few lines
 
 With Python 3.10+, install the wheel you built:
 
 ```bash
-python -m pip install ./dist/release-v0.4.0/vesora-0.4.0-py3-none-any.whl
+python -m pip install ./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl
 ```
 
 ```python
@@ -150,7 +227,7 @@ fig.show()
 Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
 
 ```bash
-python -m pip install "./dist/release-v0.4.0/vesora-0.4.0-py3-none-any.whl[notebook]"
+python -m pip install "./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl[notebook]"
 ```
 
 ### JavaScript / TypeScript: the same engine in your app
@@ -158,7 +235,7 @@ python -m pip install "./dist/release-v0.4.0/vesora-0.4.0-py3-none-any.whl[noteb
 Copy the built tarball into your frontend project and install it:
 
 ```bash
-npm install ./vesora-core-0.4.0.tgz
+npm install ./vesora-core-0.6.0.tgz
 ```
 
 Add a mount element to your HTML:
@@ -197,7 +274,7 @@ The core package includes TypeScript declarations and has **no runtime npm depen
 | Dense data | Automatic scatter count aggregation, extrema-preserving line reduction and representation inspection. | Line simplification, marker subsampling and Agg path chunking are available. |
 | 3D | Regular-grid surfaces and 3D scatter with depth testing. | `mplot3d` supports a wider range of 3D plot types. |
 | Export | PNG, including axes and labels; self-contained interactive HTML with bookmarks. | PNG, SVG, PDF and other formats, depending on backend. |
-| Maturity | v0.4 preview; statistical charts, categorical axes, fixed 2D panel grids and basic annotations. | An established plotting library with extensive configuration and documentation. |
+| Maturity | v0.6 preview; React adapter, themes, date/number formatting, linked observations, statistics and fixed 2D grids. | An established plotting library with extensive configuration and documentation. |
 
 Choose Vesora when sharing one engine between Python and a browser application is central to your workflow. Prefer Matplotlib today when you need its broader plotting catalog, publication layout controls or vector export. Vesora does not implement the Matplotlib API, and this project makes **no unmeasured speedup claim** against it.
 
@@ -233,11 +310,11 @@ The Python adapter manages the local viewer connection. Numeric buffers retain t
 | In-memory adaptive representations and cancellable queries | Indexed disk data, tiles, chunks and streaming |
 | PNG and self-contained HTML export, named view bookmarks | SVG/PDF export and additional render backends |
 
-Line/scatter viewport data scans are currently **O(n)** and workers may copy source buffers. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Linked brushing, 3D panels, indexed out-of-core data, streaming and general mesh/volume rendering are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
+Line/scatter viewport data scans are currently **O(n)** and workers may copy source buffers. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, 3D panels, indexed out-of-core data, streaming and general mesh/volume rendering are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
 
 ## Develop and validate
 
-From a checkout, using Node.js 22+ and Python 3.10+:
+From a checkout, using Node.js 22.12+ and Python 3.10+:
 
 ```bash
 npm ci
@@ -248,17 +325,19 @@ npm run test:parity
 npm run test:examples
 npx playwright install chromium
 npm run test:browser
+npm run test:saas
 python -m pytest tests/python
 ```
 
-The checks cover scene equivalence, real rendered pixels, invalid values and gaps, stale queries, layer updates, panels, annotations, exports and resource cleanup. The galleries' **25 Python snippets run with NumPy blocked**, alongside their 25 JavaScript equivalents. Real Qt desktop tests are opt-in; the browser tests use software WebGL and are not hardware benchmarks. Run `npm run benchmark:panels` for a measured single-panel versus four-panel comparison; see [development and measurement](docs/development.md).
+The checks cover scene equivalence, real rendered pixels, invalid values and gaps, stale queries, layer updates, panels, annotations, exports and resource cleanup. The galleries' **26 Python snippets run with NumPy blocked**, alongside their 26 JavaScript equivalents. Real Qt desktop tests are opt-in; the browser tests use software WebGL and are not hardware benchmarks. Run `npm run benchmark:panels` for a measured single-panel versus four-panel comparison; see [development and measurement](docs/development.md).
 
 | Read next | What you will find |
 | --- | --- |
 | [API and examples](docs/api.md) | Plot types, data updates, selection, notebook use and export |
 | [Architecture](docs/architecture.md) | Shared scene model, binary protocol and representation rules |
 | [Development and benchmarks](docs/development.md) | Packaging, validation, measured performance and support limits |
-| [Interactive examples](examples/web/) and [comparisons](examples/web/compare.html) | Nineteen experiments with Python and JS source |
-| [v0.4 overview](docs/releases/v0.4.0.md) | Panels, annotations, compatibility and package preparation |
+| [Scientific gallery](examples/web/), [comparisons](examples/web/compare.html), [statistics](examples/web/statistics.html) and [linked views](examples/web/linked.html) | Twenty-six experiments with Python and JS source |
+| [Signal Studio](examples/react-saas/README.md) and [React API](packages/react/README.md) | A working SaaS starter and typed chart component |
+| [v0.6 overview](docs/releases/v0.6.0.md) | React, presentation, compatibility and package preparation |
 
 Have a reproducible rendering issue or a scientific workflow Vesora should support? [Open an issue](https://github.com/U-C4N/Vesora/issues) with a small dataset, the expected result and your environment.

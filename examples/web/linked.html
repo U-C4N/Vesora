@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f4f2ec">
+  <meta name="description" content="Select scientific observations, compare the same rows across views, and share the cohort offline.">
+  <title>Vesora — Linked inspection</title><link rel="stylesheet" href="./style.css">
+  <style>body[data-gallery="linked"] .gallery,body[data-gallery="linked"] .intro{grid-template-columns:minmax(0,1fr)}body[data-gallery="linked"] .intro-content{max-width:800px}.linked-controls{display:flex;align-items:center;gap:14px;padding:12px 20px;flex-wrap:wrap}.linked-summary{font-size:12px;color:#475569}.linked-controls button{font:inherit;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer}.linked-controls button:disabled{opacity:.5;cursor:default}</style>
+</head>
+<body data-gallery="linked">
+  <a class="skip-link" href="#experiments">Skip to experiment</a>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">v</span><span>vesora<span class="brand-label">VISUALIZATION LAB</span></span></a><nav aria-label="Gallery pages"><a href="./">All chart types ↗</a><a href="./statistics.html">Statistics ↗</a></nav><span class="engine-state"><span aria-hidden="true"></span>Python + JavaScript</span></header>
+  <main>
+    <section class="intro" aria-labelledby="page-title"><div class="intro-content"><p class="eyebrow">NEW IN 0.5</p><h1 id="page-title">Find a group.<br><em>Follow the evidence.</em></h1><p class="intro-copy">Select unusual observations in either scatter plot. Inspect the same rows in another variable and compare their histogram with the complete dataset. Save the cohort in one interactive HTML file.</p><a class="intro-link" href="#experiments">Investigate model errors ↗</a></div></section>
+    <section class="discovery" id="experiments" aria-label="Explore linked inspection"><div class="discovery-heading"><span class="eyebrow">LINKED INSPECTION</span><span id="visible-count" aria-live="polite">1 example</span></div><div class="discovery-controls"><div class="filter-group" role="group" aria-label="Filter experiments"><button type="button" data-filter="all" aria-pressed="true">All examples <span>01</span></button></div><div class="search-field"><label class="sr-only" for="gallery-search">Search examples</label><input id="gallery-search" type="search" placeholder="Search linked inspection…" autocomplete="off"></div></div><div class="interaction-note"><span class="interaction-mark" aria-hidden="true">↗</span><p><strong>Shift + drag to select.</strong> Use either scatter plot. A new rectangle replaces the cohort; pan and zoom preserve it. Histogram selections do not change the cohort. Clear selection and Reset view are separate actions.</p></div></section>
+    <section id="two-d" class="collection" aria-labelledby="two-d-title"><div class="section-heading"><div><span class="section-index">I.</span><h2 id="two-d-title">One dataset, three connected views</h2><span class="section-count">2D / 01</span></div><p>200,000 synthetic observations.</p></div><div class="gallery" id="gallery-2d"></div></section>
+    <section id="three-d" hidden><div id="gallery-3d"></div></section><div id="gallery-empty" class="empty-state" hidden><h2>No examples found.</h2><p>Try another search term.</p></div><noscript><p class="page-error">Enable JavaScript to explore the observations.</p></noscript>
+  </main>
+  <footer><div><a class="footer-brand" href="./">vesora<span aria-hidden="true">.</span></a><p>These are synthetic model errors, not benchmark claims.</p></div><a class="back-to-top" href="#page-title">Back to top ↑</a></footer><script type="module" src="./demo.js"></script>
+</body></html>

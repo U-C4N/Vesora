@@ -26,3 +26,5 @@ await build({entryPoints:['packages/core/src/index.ts'],outdir:out,bundle:true,f
 await build({entryPoints:['packages/core/src/notebook.ts'],outfile:`${assets}/notebook.js`,bundle:true,format:'esm',target:'es2022',define:{__VESORA_WORKER_SOURCE__:JSON.stringify(workerSource)}});
 for(const file of ['index.js','index.js.map','worker.js','worker.js.map'])await copyFile(`${out}/${file}`,`${assets}/${file}`);
 console.log('Built @vesora/core and matching Python engine assets.');
+await copyFile('LICENSE', `${out}/../LICENSE`);
+await import('../packages/react/build.mjs');

@@ -17,9 +17,17 @@ flowchart LR
 
 ## Scenes and data sources
 
-`FigureSpec` contains the view and layer definitions. `ViewSpec` carries linear/log scales, domains, axis labels, and camera settings. `LayerSpec` references source arrays by ID; the numeric arrays are transferred separately from JSON. A figure owns one data registry, one query scheduler, one WebGL context, and one Canvas2D overlay, including when it contains multiple panels.
+`FigureSpec` contains the view and layer definitions. `ViewSpec` carries linear/log/time scales, declarative axis formats, domains, axis labels, and camera settings. `LayerSpec` references source arrays by ID; the numeric arrays are transferred separately from JSON. A figure owns one data registry, one query scheduler, one WebGL context, and one Canvas2D overlay, including when it contains multiple panels.
 
-Each `DataDescriptor` includes `id`, `dtype`, `shape`, an increasing `version`, and `byteLength`. Binary data is little-endian. Buffer length is validated against dtype and shape. Updating an existing source ID increases its version. Removing a source also removes it from the worker and result cache. The v0.4 reader accepts scene protocol versions `1`, `2` and `3`; unknown versions are rejected.
+Each `DataDescriptor` includes `id`, `dtype`, `shape`, an increasing `version`, and `byteLength`. Binary data is little-endian. Buffer length is validated against dtype and shape. Updating an existing source ID increases its version. Removing a source also removes it from the worker and result cache. The v0.6 reader accepts scene protocol versions `1` through `5`; unknown versions are rejected.
+
+## React and shared presentation
+
+`@vesora/react` is a separate adapter with React as a peer dependency. Each chart owns its Figure inside an effect lifecycle; cleanup closes that instance. Stable series keys reuse layers across immutable data updates, while chart-type/orientation changes create a fresh figure. Dashboard layout belongs to the host application's CSS. The adapter renders semantic DOM legend controls and state/tooltip UI over the shared renderer; no second data-rendering engine is introduced.
+
+Protocol 5 adds resolved `FigureSpec.theme` tokens and optional `ViewSpec.xFormat`/`yFormat`, and permits numeric 2D time coordinates. Features promote the protocol monotonically; legacy scenes without presentation extensions keep their previous protocol. Formats and themes are validated before commit and carried through bookmarks/snapshots/offline HTML. UTC calendar ticks use actual month boundaries; timezone changes formatting without changing source values.
+
+All WebGL, Canvas and DOM presentation uses the resolved theme. React render callbacks and host presentation switches are not serialized. Figure event callbacks are typed and exceptions are isolated from render/readiness settlement. A failed subscriber is reported to the console instead of becoming a renderer failure.
 
 Supported source types are Float32/Float64 and signed/unsigned 8-, 16-, and 32-bit integers. Ordinary JavaScript number arrays become Float64. Python converts 64-bit integers only within the exact Float64 integer range and rejects values outside it. View transformations use source precision before converting relative coordinates to Float32 GPU geometry.
 
@@ -96,3 +104,13 @@ Summary cache keys include every source dependency/version and statistical optio
 Category auto-domains cover their stable ordinal slots and expand for visible bar/box widths, including geometry in linked panels. Bar placement is cached separately by panel mode, order, source versions, visibility and options; shared axes do not merge stacking across panels. Box components retain one logical layer/legend/selection identity. Histogram and boxplot selection identifies bins/groups explicitly, rather than pretending their geometry is a list of raw samples.
 
 The standalone `formatVersion: 1` envelope remains unchanged. Export includes raw sources and matching runtime; statistics are recomputed from the same data in the offline viewer. No new runtime npm or mandatory Python numeric dependency is introduced.
+
+## Linked observation identity and completed selection (v0.5)
+
+Protocol 4 adds one `selectionLink` with a unique id, two scatter layer ids, one histogram layer id, generation/sequence numbers and an optional rectangle predicate (`originLayerId`, x/y bounds). Members belong to distinct 2D panels. Coordinates are numeric; all x/y and histogram channels have the same row count. **Fixed aligned row ordinal is identity**. No join or alignment inference occurs. JavaScript link attachment/import isolates member numeric arrays from caller-owned buffers while preserving source descriptors/versions and values; figure/worker preparation invalidates prior view caches when needed. These copies add memory beyond the caller buffers and worker copies. Member data and histogram options are immutable until unlinking; removing a member removes its link. Linked histograms require raw counts (`density=false`, `cumulative=false`).
+
+The worker/cooperative computation scans original finite origin coordinates within the inclusive rectangle. Complete membership occupies a one-bit-per-row mask. The event contains at most 10,000 original indices as a preview; this cap does not truncate membership, scatter highlights or selected histogram counts. The selected histogram reuses the prepared all-data edges, preserves exact bin inclusion rules and separately counts non-finite and range-excluded selected samples. Selected scatter plans follow the existing point/density budget rules.
+
+The mounted figure keeps an incoming predicate pending while snapshots retain the last completed predicate. Generation/sequence and source versions identify work; cancellation and stale-result checks prevent older selection work from replacing newer requests. Both scatters, histogram, summary and event commit after all current panel work succeeds. `ready()` and PNG wait for the current completed frame. Pending predicates are not serialized; HTML retains the completed rectangle and recomputes its cohort from embedded source arrays with the matching runtime.
+
+Views and selection are independent state. Pan/zoom, Reset view and bookmarks preserve the active cohort; clearing removes the predicate rather than selecting all rows. An active rectangle with zero matches remains distinguishable from no predicate. View bookmarks still capture views only. Source/statistical semantics, protocol validation and atomic failure rules continue to apply. Selection masks do not turn the current O(n) in-memory pipeline into an indexed or streaming data provider.

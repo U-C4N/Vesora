@@ -166,11 +166,11 @@ class LocalHost:
                     self.render_error = None
                     self.ready.set()
         elif kind == "event":
-            if message.get("event") == "viewchange":
+            if message.get("event") in ("viewchange", "selection", "click"):
                 with self._state_lock:
                     if message.get("revision") != self._revision:
                         return
-                    self.figure._emit("viewchange", message.get("payload"))
+                    self.figure._emit(message["event"], message.get("payload"))
                 return
             if message.get("event") == "error":
                 with self._state_lock:

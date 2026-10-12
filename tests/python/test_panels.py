@@ -213,7 +213,7 @@ def test_grid_hosts_ignore_stale_views_and_keep_panel_selection_identity(transpo
         assert all(view["xDomain"] == [1, 2] for view in views(fig).values())
         selections = []
         fig.on("selection", selections.append)
-        receive({"type": "event", "event": "selection", "payload": {"panelId": "panel-0-1", "count": 1}})
+        receive({"type": "event", "event": "selection", "revision": current, "payload": {"panelId": "panel-0-1", "count": 1}})
         assert selections == [{"panelId": "panel-0-1", "count": 1}]
     finally:
         host.close()

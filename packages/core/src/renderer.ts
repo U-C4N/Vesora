@@ -44,12 +44,12 @@ export class WebGLRenderer {
     canvas.addEventListener('webglcontextlost',this.lost);
   }
   /** Clear once for the whole figure; resources survive between panel draws. */
-  beginFrame(width:number,height:number,dpr:number):void {
+  beginFrame(width:number,height:number,dpr:number,background:readonly number[]=[1,1,1,1]):void {
     const gl=this.gl,w=Math.round(width*dpr),h=Math.round(height*dpr);
     if(gl.isContextLost())throw new Error('WebGL context lost. Remount the figure to restore GPU resources.');
     this.frameHeight=height;this.frameDpr=dpr;this.frameItems.clear();
     if(this.canvas.width!==w||this.canvas.height!==h){this.canvas.width=w;this.canvas.height=h;}
-    gl.disable(gl.SCISSOR_TEST);gl.viewport(0,0,w,h);gl.clearColor(1,1,1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST);gl.viewport(0,0,w,h);gl.clearColor(background[0],background[1],background[2],background[3]);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   }
   drawPanel(items:Geometry[],rect:PlotRect,matrix:Float32Array=identity,threeD=false):void {
     const gl=this.gl,height=this.frameHeight,dpr=this.frameDpr;

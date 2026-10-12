@@ -12,10 +12,14 @@ from typing import Any, Callable
 
 from .numeric import NumericData, as_numeric, numeric_range
 from . import statistics as _statistics
+from . import presentation as _presentation
 
 PROTOCOL_VERSION = 1
 EXTENDED_PROTOCOL_VERSION = 2
 STATISTICS_PROTOCOL_VERSION = 3
+LINKED_PROTOCOL_VERSION = 4
+PRESENTATION_PROTOCOL_VERSION = _presentation.PRESENTATION_PROTOCOL_VERSION
+_MAX_SAFE_SELECTION_SEQUENCE = 2**53 - 1
 _STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain"}
 
 
@@ -46,6 +50,8 @@ def _domain(value: Any, name: str, scale: str = "linear") -> list[float]:
         raise ValueError(f"{name} must contain increasing finite bounds")
     if scale == "log" and result[0] <= 0:
         raise ValueError(f"{name} must be positive for a logarithmic axis")
+    if scale == "time" and any(abs(bound) > 8.64e15 for bound in result):
+        raise ValueError(f"{name} must be within the JavaScript Date range")
     return result
 
 
@@ -56,8 +62,10 @@ def _view(value: Any, kind: str) -> dict[str, Any]:
     view = copy.deepcopy(value)
     for axis in "xyz":
         scale = view.get(f"{axis}Scale")
-        if scale not in ("linear", "log"):
+        if scale not in ("linear", "log", "time"):
             raise ValueError("Invalid viewer scale")
+        if scale == "time" and (kind != "2d" or axis == "z"):
+            raise ValueError("Time scales support x and y axes of 2D figures only")
         key = f"{axis}Domain"
         if view.get(key) is None:
             view.pop(key, None)
@@ -65,6 +73,16 @@ def _view(value: Any, kind: str) -> dict[str, Any]:
             view[key] = _domain(view[key], key, scale)
         if not isinstance(view.get(f"{axis}Label"), str):
             raise ValueError("Viewer labels must be strings")
+        format_key = f"{axis}Format"
+        if format_key in view:
+            if axis == "z":
+                raise ValueError("Axis formats support x and y axes only")
+            if view[format_key] is None:
+                view.pop(format_key)
+            else:
+                view[format_key] = _presentation.axis_format(view[format_key])
+                if view[format_key]["kind"] == "date" and key in view:
+                    _domain(view[key], key, "time")
     camera = view.get("camera")
     if not isinstance(camera, dict) or set(camera) != {"azimuth", "elevation", "distance"}:
         raise ValueError("Invalid viewer camera")
@@ -241,6 +259,7 @@ class Layer:
                     if current["color"].shape != arrays["x"].shape:
                         raise ValueError("Update scalar colors when changing the point count")
                     arrays["color"] = current["color"]
+            self.figure._validate_layer_candidate(layer, arrays, self.figure._spec.get("categories", {}))
             for name in changed:
                 array = arrays[name]
                 data_id = layer["data"].get(name, _id("data"))
@@ -254,6 +273,7 @@ class Layer:
     def set_options(self, **options: Any) -> Layer:
         with self.figure._lock:
             previous = self._spec()
+            self.figure._ensure_unlinked_data(self.id)
             if previous["kind"] not in ("hist", "bar", "boxplot"):
                 raise TypeError("set_options is only supported by statistical layers")
             for source, target in (("bar_width", "barWidth"), ("box_width", "boxWidth")):
@@ -286,9 +306,44 @@ class Layer:
     def remove(self) -> None:
         with self.figure._lock:
             spec = self._spec()
+            self.figure._unlink_member(self.id)
             self.figure._spec["layers"].remove(spec)
             for data_id in spec["data"].values():
                 self.figure._sources.pop(data_id, None)
+        self.figure._publish()
+
+
+class SelectionLink:
+    """Linked cohort handle. Member arrays stay fixed until the link is removed."""
+
+    def __init__(self, figure: Figure, link_id: str):
+        self.figure, self.id = figure, link_id
+
+    def _spec(self) -> dict[str, Any]:
+        self.figure._ensure_open()
+        link = self.figure._spec.get("selectionLink")
+        if link is None or link["id"] != self.id:
+            raise RuntimeError("Selection link has been removed")
+        return link
+
+    def clear(self) -> SelectionLink:
+        """Clear the cohort while retaining aligned sources and linked panels."""
+        with self.figure._lock:
+            link = self._spec()
+            next_sequence = link["sequence"] + 1
+            if next_sequence > _MAX_SAFE_SELECTION_SEQUENCE:
+                raise ValueError("Linked selection sequence must be a nonnegative JavaScript safe integer")
+            link.pop("selection", None)
+            link["sequence"] = next_sequence
+        self.figure._publish()
+        return self
+
+    def remove(self) -> None:
+        """Unlink the panels and allow member data/options updates again."""
+        with self.figure._lock:
+            self._spec()
+            self.figure._spec.pop("selectionLink")
+            self.figure._selection_event_sequence = -1
         self.figure._publish()
 
 
@@ -374,6 +429,10 @@ class Panel:
         self.figure._set_panel_axes(self.id, options)
         return self
 
+    def set_axis_format(self, axis: str, format: dict[str, Any] | None) -> Panel:
+        self.figure.set_axis_format(axis, format, panel_id=self.id)
+        return self
+
     def text(self, x: float, y: float, text: str, **style: Any) -> Annotation:
         return self.figure._add_annotation("text", {**style, "x": x, "y": y, "text": text}, self.id)
 
@@ -385,7 +444,7 @@ class Panel:
 
 
 class Figure:
-    def __init__(self, *, title: str = "", width: int = 800, height: int = 520, kind: str = "2d"):
+    def __init__(self, *, title: str = "", width: int = 800, height: int = 520, kind: str = "2d", theme: Any = None):
         if kind not in ("2d", "3d"):
             raise ValueError("kind must be '2d' or '3d'")
         if isinstance(width, bool) or isinstance(height, bool) or not math.isfinite(width) or not math.isfinite(height) or int(width) != width or int(height) != height or width < 200 or height < 180:
@@ -404,6 +463,10 @@ class Figure:
         self._window = None
         self._widget = None
         self._closed = False
+        self._selection_event_sequence = -1
+        if theme is not None:
+            self._spec["theme"] = _presentation.resolve_theme(theme)
+            self._spec["protocolVersion"] = PRESENTATION_PROTOCOL_VERSION
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -452,6 +515,8 @@ class Figure:
                 self._spec["view"] = view
             else:
                 self._panel_spec(panel_id)["view"] = view
+        if any(view.get(axis + "Scale") == "time" or axis + "Format" in view for view in validated.values() for axis in "xy"):
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], PRESENTATION_PROTOCOL_VERSION)
 
     def _share_view(self, views: dict[str, dict[str, Any]], source_id: str) -> None:
         layout = self._spec.get("layout", {})
@@ -464,6 +529,10 @@ class Figure:
                         view[f"{axis}Domain"] = copy.deepcopy(source[f"{axis}Domain"])
                     else:
                         view.pop(f"{axis}Domain", None)
+                    if f"{axis}Format" in source:
+                        view[f"{axis}Format"] = copy.deepcopy(source[f"{axis}Format"])
+                    else:
+                        view.pop(f"{axis}Format", None)
 
     def panel(self, row: int, col: int) -> Panel:
         with self._lock:
@@ -517,6 +586,56 @@ class Figure:
         for listener in tuple(self._listeners):
             listener()
 
+    def link_selection(self, *, scatter: Any, histogram: Layer) -> SelectionLink:
+        """Link two numeric scatter panels and one aligned count histogram.
+
+        Row position identifies the same observation in all five scatter
+        coordinate/sample arrays. Member data and histogram options cannot be
+        changed until unlinking; visibility, styles and views remain mutable.
+        """
+        if not isinstance(scatter, (list, tuple)) or len(scatter) != 2:
+            raise ValueError("link_selection requires exactly two scatter layers")
+        members = [*scatter, histogram]
+        if any(not isinstance(member, Layer) or member.figure is not self for member in members):
+            raise ValueError("Selection link members must belong to this figure")
+        with self._lock:
+            self._ensure_open()
+            if self._spec.get("selectionLink") is not None:
+                raise ValueError("Only one selection link is supported per figure")
+            layers = [member._spec() for member in members]
+            if len({layer["id"] for layer in layers}) != 3:
+                raise ValueError("Selection link members must be distinct")
+            if any(layer["kind"] != "scatter" or layer.get("categorical") for layer in layers[:2]):
+                raise ValueError("Selection links require numeric 2D scatter layers")
+            hist = layers[2]
+            if hist["kind"] != "hist" or hist["options"]["density"] or hist["options"]["cumulative"]:
+                raise ValueError("Selection links require a count-only histogram")
+            panel_ids = [layer.get("panelId", "main") for layer in layers]
+            if len(set(panel_ids)) != 3 or any(self._panel_view(panel)["kind"] != "2d" for panel in panel_ids):
+                raise ValueError("Selection link members require separate 2D panels")
+            arrays = [self._layer_arrays(layer) for layer in layers]
+            lengths = [arrays[i][axis].size for i in range(2) for axis in "xy"] + [arrays[2]["samples"].size]
+            if len(set(lengths)) != 1:
+                raise ValueError("Selection link arrays must have the same aligned row count")
+            link_id = _id("link")
+            self._spec["selectionLink"] = {"id": link_id, "scatter": [layer["id"] for layer in layers[:2]],
+                                            "histogram": hist["id"], "generation": 1, "sequence": 0}
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], LINKED_PROTOCOL_VERSION)
+            self._selection_event_sequence = -1
+        self._publish()
+        return SelectionLink(self, link_id)
+
+    def _ensure_unlinked_data(self, layer_id: str) -> None:
+        link = self._spec.get("selectionLink")
+        if link is not None and layer_id in [*link["scatter"], link["histogram"]]:
+            raise ValueError("Selection link member data/options are immutable; remove the link first")
+
+    def _unlink_member(self, layer_id: str) -> None:
+        link = self._spec.get("selectionLink")
+        if link is not None and layer_id in [*link["scatter"], link["histogram"]]:
+            self._spec.pop("selectionLink")
+            self._selection_event_sequence = -1
+
     def _category_key(self, panel_id: str, axis: str) -> str:
         shared = self._spec.get("layout", {}).get("share" + axis.upper(), False)
         return f"{axis}:{'shared' if shared else panel_id}"
@@ -561,15 +680,30 @@ class Figure:
         categorical.pop(axis, None)
         return _statistics.vector(value if entries is None else entries, axis)
 
-    def _validate_axis_contract(self, layers: list[dict[str, Any]], categories: dict[str, list[str]], views: dict[str, dict[str, Any]] | None = None) -> None:
+    def _validate_axis_contract(self, layers: list[dict[str, Any]], categories: dict[str, list[str]], views: dict[str, dict[str, Any]] | None = None,
+                                overrides: dict[str, dict[str, NumericData]] | None = None) -> None:
         views = self._views() if views is None else views
         modes: dict[str, bool] = {}
         for layer in layers:
             panel_id = layer.get("panelId", "main")
             view = views[panel_id]
-            if layer["kind"] in ("hist", "bar", "boxplot"):
+            calendar_axes = {axis for axis in "xy" if view[axis + "Scale"] == "time" or view.get(axis + "Format", {}).get("kind") == "date"}
+            if calendar_axes:
+                arrays = (overrides or {}).get(layer["id"])
+                if arrays is None:
+                    arrays = self._layer_arrays(layer)
+                for axis in "xy":
+                    if axis in calendar_axes and axis in arrays:
+                        if any(math.isfinite(value) and abs(value) > 8.64e15 for value in arrays[axis]):
+                            raise ValueError("Time coordinates must be epoch milliseconds within the JavaScript Date range")
+            if layer["kind"] in ("hist", "boxplot"):
                 if view["kind"] != "2d" or view["xScale"] != "linear" or view["yScale"] != "linear":
                     raise ValueError("Statistical layers require linear 2D axes")
+            if layer["kind"] == "bar":
+                position_axis = "x" if layer["options"]["orientation"] == "vertical" else "y"
+                value_axis = "y" if position_axis == "x" else "x"
+                if view["kind"] != "2d" or view[value_axis + "Scale"] != "linear" or view[position_axis + "Scale"] not in ("linear", "time"):
+                    raise ValueError("Bar layers require a linear value axis and linear or time positions in a 2D view")
             for axis in "xy":
                 key = self._category_key(panel_id, axis)
                 categorical = layer.get("categorical", {}).get(axis, False)
@@ -614,7 +748,7 @@ class Figure:
             if any(math.isfinite(value) and not math.isfinite(base + value) for base, value in zip(arrays["base"], arrays[value_axis])):
                 raise ValueError("Bar baseline plus value must remain finite")
         layers = [item for item in self._spec["layers"] if item["id"] != layer["id"]] + [layer]
-        self._validate_axis_contract(layers, categories)
+        self._validate_axis_contract(layers, categories, overrides={layer["id"]: arrays})
         self._validate_bars(layers, {layer["id"]: arrays})
 
     def _commit_layer_arrays(self, layer: dict[str, Any], arrays: dict[str, NumericData], changed: set[str], categories: dict[str, list[str]]) -> None:
@@ -744,6 +878,8 @@ class Figure:
             self._panel_view(panel_id)
             if dimension == "3d" and (self._spec.get("layout") or self._spec.get("annotations") or self._spec.get("barModes")):
                 raise ValueError("Subplots, annotations and bar modes support 2D figures only")
+            if dimension == "3d" and any(self._spec["view"].get(axis + "Scale") == "time" for axis in "xy"):
+                raise ValueError("Time scales support 2D figures only")
             if (self._spec["layers"] or self._spec.get("bookmarks")) and self._spec["view"]["kind"] != dimension:
                 raise ValueError("2D and 3D layers or bookmarks require separate figures")
             categories = copy.deepcopy(self._spec.get("categories", {}))
@@ -771,6 +907,7 @@ class Figure:
     def _update_layer_data(self, layer: dict[str, Any], args: tuple[Any, ...], values: dict[str, Any]) -> None:
         with self._lock:
             self._ensure_open()
+            self._ensure_unlinked_data(layer["id"])
             if not any(item is layer for item in self._spec["layers"]):
                 raise RuntimeError("Layer has been removed")
             kind, panel_id = layer["kind"], layer.get("panelId", "main")
@@ -889,18 +1026,38 @@ class Figure:
         self._set_panel_axes("main", options)
         return self
 
+    def set_theme(self, theme: Any) -> Figure:
+        """Set a light/dark preset or partial shared-engine theme tokens."""
+        validated = _presentation.resolve_theme(theme)
+        with self._lock:
+            self._ensure_open()
+            self._spec["theme"] = validated
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], PRESENTATION_PROTOCOL_VERSION)
+        self._publish()
+        return self
+
+    def set_axis_format(self, axis: str, format: dict[str, Any] | None, *, panel_id: str = "main") -> Figure:
+        """Set serializable x/y formatting; None restores automatic labels."""
+        if axis not in ("x", "y"):
+            raise ValueError("Formatted axis must be 'x' or 'y'")
+        self._set_panel_axes(panel_id, {axis + "format": format})
+        return self
+
     def _set_panel_axes(self, panel_id: str, options: dict[str, Any]) -> None:
         aliases = {f"{a}{s}": f"{a}{v}" for a in "xyz" for s, v in (("scale", "Scale"), ("lim", "Domain"), ("label", "Label"))}
+        aliases.update({axis + "format": axis + "Format" for axis in "xy"})
         unknown = options.keys() - aliases.keys()
         if unknown:
             raise TypeError(f"Unknown axis option(s): {', '.join(sorted(unknown))}")
         with self._lock:
             self._ensure_open()
             views = self._views()
+            if panel_id not in views:
+                raise ValueError(f"Unknown panel: {panel_id}")
             view = views[panel_id]
             for key, value in options.items():
-                if key.endswith("scale") and value not in ("linear", "log"):
-                    raise ValueError("Scale must be 'linear' or 'log'")
+                if key.endswith("scale") and value not in ("linear", "log", "time"):
+                    raise ValueError("Scale must be 'linear', 'log' or 'time'")
                 view[aliases[key]] = value
             for axis in "xyz":
                 domain_key = f"{axis}Domain"
@@ -1000,17 +1157,78 @@ class Figure:
         import warnings
         if event == "viewchange":
             self._accept_view(payload)
+        if event == "selection" and isinstance(payload, dict) and payload.get("kind") == "linked":
+            if not self._accept_selection(payload):
+                return
         for callback in tuple(self._events.get(event, ())):
             try:
                 callback(payload)
             except Exception as exc:
                 warnings.warn(f"Vesora {event} callback failed: {exc}", RuntimeWarning, stacklevel=2)
 
+    def _accept_selection(self, payload: dict[str, Any]) -> bool:
+        """Retain a current linked cohort before callbacks, without publishing."""
+        with self._lock:
+            link = self._spec.get("selectionLink")
+            generation = payload.get("generation")
+            if link is None or payload.get("linkId") != link["id"] or isinstance(generation, bool) or not isinstance(generation, int) or generation != link["generation"]:
+                return False
+            sequence = payload.get("sequence")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or not 0 <= sequence <= _MAX_SAFE_SELECTION_SEQUENCE:
+                raise ValueError("Linked selection sequence must be a nonnegative JavaScript safe integer")
+            if sequence < link["sequence"] or sequence <= self._selection_event_sequence:
+                return False
+            origin_id = payload.get("layerId")
+            if origin_id not in link["scatter"]:
+                raise ValueError("Linked selection origin must be a member scatter layer")
+            origin = next(layer for layer in self._spec["layers"] if layer["id"] == origin_id)
+            if payload.get("panelId") != origin.get("panelId", "main"):
+                raise ValueError("Linked selection origin panel does not match its layer")
+            active = payload.get("active")
+            if not isinstance(active, bool):
+                raise ValueError("Linked selection active must be a boolean")
+            total = self._layer_arrays(origin)["x"].size
+            count = payload.get("count")
+            event_total = payload.get("total")
+            if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= total or isinstance(event_total, bool) or not isinstance(event_total, int) or event_total != total:
+                raise ValueError("Linked selection counts must match the aligned row count")
+            fraction = payload.get("fraction")
+            expected_fraction = count / total if total else 0
+            if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not math.isfinite(fraction) or not math.isclose(fraction, expected_fraction, rel_tol=1e-12, abs_tol=1e-12):
+                raise ValueError("Linked selection fraction must match count/total")
+            indices = payload.get("indices")
+            truncated = payload.get("truncated")
+            if not isinstance(indices, list) or len(indices) > 10_000 or any(isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < total for index in indices) or len(set(indices)) != len(indices):
+                raise ValueError("Linked selection indices must identify at most 10000 unique source rows")
+            if not isinstance(truncated, bool) or len(indices) != min(count, 10_000) or truncated != (count > 10_000):
+                raise ValueError("Linked selection truncation must match its exact count")
+            selection = None
+            if active:
+                bounds = payload.get("bounds")
+                if not isinstance(bounds, dict) or set(bounds) != {"x", "y"}:
+                    raise ValueError("Linked selection bounds must contain x and y")
+                checked = {}
+                for axis in "xy":
+                    values = bounds[axis]
+                    if not isinstance(values, (list, tuple)) or len(values) != 2 or any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in values) or values[0] > values[1]:
+                        raise ValueError("Linked selection bounds must be finite and increasing or equal")
+                    checked[axis] = [float(value) for value in values]
+                selection = {"originLayerId": origin_id, "bounds": checked}
+            elif count or fraction or indices or truncated:
+                raise ValueError("Cleared linked selections must have zero count and no indices")
+            if selection is None:
+                link.pop("selection", None)
+            else:
+                link["selection"] = selection
+            link["sequence"] = sequence
+            self._selection_event_sequence = sequence
+            return True
+
     def _accept_view(self, payload: Any) -> None:
         """Retain browser interaction state without echoing another update to it."""
         if not isinstance(payload, dict):
             raise ValueError("viewchange payload must be an object")
-        allowed = {"kind", "camera", "pan3d"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")}
+        allowed = {"kind", "camera", "pan3d"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")} | {axis + "Format" for axis in "xy"}
         with self._lock:
             views = self._views()
             source_id = payload.get("panelId", "main")

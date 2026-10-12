@@ -2,11 +2,15 @@ import {DataRegistry,toNumericArray,validateDescriptor,describeData} from './dat
 import {validateDomain} from './scales';
 import {parseColor} from './color';
 import {FigureView} from './view';
+import {validateSelectionLink} from './linked';
+import {resolveTheme,validateTheme,validateAxisFormat} from './presentation';
+import type {AxisFormat,ThemeInput,PresentationOptions,FigureEventMap,ViewChangeEvent} from './types';
+import type {SelectionLinkSpec,LinkedSelection,Bounds} from './types';
 import {axisCategories,categoryKey,encodeAxis,isStatistical,labels,statisticalOptions,validateSemantics,validateStatisticalData} from './semantics';
 import type {AxisSeries} from './semantics';
 import type {BarMode,BarSpecOptions,BoxplotSpecOptions,HistogramSpecOptions,StatisticalOptions} from './types';
 import type {FigureSpec,FigureOptions,LayerSpec,LayerKind,LayerStyle,NumericArray,ViewSpec,ViewBookmark,ViewState,Snapshot,RepresentationInfo,PanelEntry,AnnotationSpec,AnnotationStyle,AnnotationOptions,SubplotsOptions} from './types';
-import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION} from './types';
+import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION} from './types';
 
 let serial=0;
 const id=(prefix:string)=>`${prefix}-${++serial}`;
@@ -18,21 +22,24 @@ export type HistogramOptions=LayerStyle & Partial<HistogramSpecOptions>;
 export type BarOptions=LayerStyle & {barWidth?:number;bottom?:number|Series;left?:number|Series};
 export type BoxplotOptions=LayerStyle & Partial<BoxplotSpecOptions> & {labels?:string[]};
 export type Groups=Series|readonly Series[];
-export type FigureEvent='selection'|'hover'|'viewchange'|'representation'|'error';
+export type FigureEvent=keyof FigureEventMap;
 export function defaultView(kind:'2d'|'3d'='2d'):ViewSpec{return {kind,xScale:'linear',yScale:'linear',zScale:'linear',xLabel:'',yLabel:'',zLabel:'',camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]};}
 function validateView(view:ViewSpec):void{
   if(!view||!['2d','3d'].includes(view.kind))throw new Error('Invalid view kind');
   for(const axis of ['x','y','z'] as const){
-    const scale=view[`${axis}Scale`];if(!['linear','log'].includes(scale))throw new Error('Scale must be linear or log');
-    const domain=view[`${axis}Domain`];if(domain!==undefined)validateDomain(domain,scale);
+    const scale=view[`${axis}Scale`];if(!['linear','log','time'].includes(scale))throw new Error('Scale must be linear, log or time');
+    if(scale==='time'&&(axis==='z'||view.kind==='3d'))throw new Error('Time scales require a 2D x or y axis');
+    const domain=view[`${axis}Domain`];if(domain!==undefined){validateDomain(domain,scale);if(axis!=='z'&&view[`${axis}Format`]?.kind==='date')validateDomain(domain,'time');}
     if(typeof view[`${axis}Label`]!=='string')throw new TypeError('Axis labels must be strings');
   }
+  for(const axis of ['x','y'] as const)if(view[`${axis}Format`]!==undefined)validateAxisFormat(view[`${axis}Format`]!);
   if(!view.camera||!['azimuth','elevation','distance'].every(key=>Number.isFinite(view.camera[key as keyof ViewSpec['camera']]))||view.camera.distance<=0)throw new Error('Invalid camera');
   if(view.pan3d!==undefined&&(!Array.isArray(view.pan3d)||view.pan3d.length!==2||!view.pan3d.every(Number.isFinite)))throw new Error('3D pan must contain two finite values');
 }
 function copyView(view:ViewSpec):ViewSpec{
   validateView(view);const copy=structuredClone(view);
-  for(const key of ['xDomain','yDomain','zDomain','pan3d'] as const)if(copy[key]===undefined)delete copy[key];
+  for(const key of ['xDomain','yDomain','zDomain','pan3d','xFormat','yFormat'] as const)if(copy[key]===undefined)delete copy[key];
+  for(const axis of ['x','y'] as const)if(copy[`${axis}Format`]!==undefined)copy[`${axis}Format`]=validateAxisFormat(copy[`${axis}Format`]!);
   return copy;
 }
 function bookmarkName(name:string):string{
@@ -81,7 +88,7 @@ function validateViewState(spec:FigureSpec,state:ViewState):void{
   for(const axis of ['x','y'] as const){
     if(!spec.layout?.[axis==='x'?'shareX':'shareY'])continue;
     const scale=state.view[`${axis}Scale`],domain=state.view[`${axis}Domain`];
-    for(const view of views)if(view[`${axis}Scale`]!==scale||JSON.stringify(view[`${axis}Domain`])!==JSON.stringify(domain))throw new Error('Shared axis views must have matching scales and domains');
+    for(const view of views)if(view[`${axis}Scale`]!==scale||JSON.stringify(view[`${axis}Domain`])!==JSON.stringify(domain)||JSON.stringify(view[`${axis}Format`])!==JSON.stringify(state.view[`${axis}Format`]))throw new Error('Shared axis views must have matching scales, domains and formats');
   }
 }
 function validateAnnotation(annotation:AnnotationSpec,panels:PanelEntry[]):void{
@@ -144,7 +151,13 @@ export class Layer {
   setOptions(options:Record<string,unknown>):this{this.figure.updateOptions(this.spec,options);return this;}
   setStyle(style:LayerStyle):this{validateStyle(style);Object.assign(this.spec.style,style);this.figure.changed();return this;}
   setVisible(visible:boolean):this{this.spec.visible=visible;this.figure.changed();return this;}
-  remove():void{const layer=this.spec;this.figure.spec.layers=this.figure.spec.layers.filter(l=>l.id!==this.id);for(const source of Object.values(layer.data))if(!this.figure.spec.layers.some(other=>Object.values(other.data).includes(source)))this.figure.registry.release(source);this.figure.changed();}
+  remove():void{const layer=this.spec;this.figure.unlinkLayer(this.id);this.figure.spec.layers=this.figure.spec.layers.filter(l=>l.id!==this.id);for(const source of Object.values(layer.data))if(!this.figure.spec.layers.some(other=>Object.values(other.data).includes(source)))this.figure.registry.release(source);this.figure.changed();}
+}
+export interface SelectionLinkOptions {scatter: [Layer,Layer] | Layer[]; histogram: Layer}
+export class SelectionLink {
+  constructor(readonly figure:Figure,readonly id:string){}
+  clear():void{this.figure.clearLinkedSelection(this.id);}
+  remove():void{this.figure.removeSelectionLink(this.id);}
 }
 export class Annotation {
   constructor(readonly figure:Figure,readonly id:string){}
@@ -166,6 +179,7 @@ export class Panel {
   setCategories(axis:'x'|'y',values:string[]):this{this.figure.setPanelCategories(this.id,axis,values);return this;}
   heatmap(x:Series,y:Series,z:Grid,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'heatmap',{x,y,z},options);}
   setView(options:Partial<ViewSpec>):this{this.figure.setPanelView(this.id,options);return this;}
+  setAxisFormat(axis:'x'|'y',format:AxisFormat|null):this{this.figure.setAxisFormat(axis,format,this.id);return this;}
   setTitle(title:string):this{this.figure.setPanelTitle(this.id,title);return this;}
   text(x:number,y:number,text:string,style:AnnotationStyle={}):Annotation{return this.figure.addAnnotation(this.id,'text',{x,y,text,...style});}
   axhline(y:number,style:AnnotationStyle={}):Annotation{return this.figure.addAnnotation(this.id,'hline',{y,...style});}
@@ -177,9 +191,87 @@ export class Figure {
   private view?:FigureView;
   private listeners=new Map<FigureEvent,Set<(event:any)=>void>>();
   private closed=false;
+  private pendingLink?:SelectionLinkSpec;
+  private notifiedLink='';
+  readonly presentation:Required<PresentationOptions>={tooltip:true,legend:true};
   constructor(options:FigureOptions={}){
     this.spec={protocolVersion:PROTOCOL_VERSION,id:id('figure'),title:options.title??'',width:options.width??800,height:options.height??520,view:defaultView(options.kind),layers:[]};
     if(!Number.isFinite(this.spec.width)||!Number.isFinite(this.spec.height)||this.spec.width<200||this.spec.height<180)throw new RangeError('Figure dimensions must be finite and at least 200 × 180');
+    if(options.theme!==undefined)this.setTheme(options.theme);
+  }
+  setTheme(theme:ThemeInput):this{this.assertOpen();const next=resolveTheme(theme);this.spec.theme=next;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,PRESENTATION_PROTOCOL_VERSION);this.changed();return this;}
+  setAxisFormat(axis:'x'|'y',format:AxisFormat|null,panelId='main'):this{
+    this.assertOpen();if(axis!=='x'&&axis!=='y')throw new TypeError('Axis format requires x or y');
+    const next=format===null?undefined:validateAxisFormat(format);
+    return this.setPanelView(panelId,{[`${axis}Format`]:next});
+  }
+  setPresentation(options:PresentationOptions):this{
+    this.assertOpen();if(!options||typeof options!=='object')throw new TypeError('Presentation options must be an object');
+    for(const [key,value]of Object.entries(options))if(!['tooltip','legend'].includes(key)||typeof value!=='boolean')throw new TypeError('Presentation options must contain tooltip/legend booleans');
+    Object.assign(this.presentation,options);this.changed();return this;
+  }
+  setSize(options:{width?:number;height?:number}):this{
+    this.assertOpen();if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='width'&&key!=='height'))throw new TypeError('Size options must contain width/height');const width=options.width??this.spec.width,height=options.height??this.spec.height;
+    if(!Number.isFinite(width)||width<200||!Number.isFinite(height)||height<180)throw new RangeError('Figure dimensions must be finite and at least 200 × 180');
+    this.spec.width=width;this.spec.height=height;this.changed();return this;
+  }
+  /** Detach browser resources while retaining data, subscribers and completed state. */
+  unmount():this{this.assertOpen();this.view?.dispose();this.view=undefined;this.pendingLink=undefined;return this;}
+  linkSelection(options:SelectionLinkOptions):SelectionLink{
+    this.assertOpen();
+    if(this.spec.selectionLink)throw new Error('A figure supports one selection link. Remove it before relinking.');
+    if(!options||!Array.isArray(options.scatter)||options.scatter.length!==2||!options.histogram)throw new Error('Link two scatter layers and one histogram.');
+    for(const layer of [...options.scatter,options.histogram])if(!(layer instanceof Layer)||layer.figure!==this)throw new Error('Linked layers must belong to this figure.');
+    const link:SelectionLinkSpec={id:id('link'),scatter:[options.scatter[0].spec.id,options.scatter[1].spec.id],histogram:options.histogram.spec.id,generation:1,sequence:0};
+    const draft={...this.spec,protocolVersion:Math.max(this.spec.protocolVersion,LINKED_PROTOCOL_VERSION),selectionLink:link};
+    validateSelectionLink(draft,this.registry);
+    this.isolateSelectionSources(draft,this.registry);this.view?.invalidateData();
+    this.spec.selectionLink=link;this.spec.protocolVersion=draft.protocolVersion;this.pendingLink=undefined;this.notifiedLink='';this.changed();
+    return new SelectionLink(this,link.id);
+  }
+  /** Linked sources own their storage: sorting a caller's TypedArray must not
+   * change a cohort or its exported data without a versioned API update. */
+  private isolateSelectionSources(spec:FigureSpec,registry:DataRegistry):void{
+    const link=spec.selectionLink;if(!link)return;
+    const members=new Set([...link.scatter,link.histogram]);
+    const ids=new Set(spec.layers.filter(layer=>members.has(layer.id)).flatMap(layer=>Object.values(layer.data)));
+    // Allocate every copy first so allocation failure leaves the registry intact.
+    // Values are identical; retaining their versions preserves scene parity.
+    const copies=Array.from(ids,id=>{const entry=registry.get(id);return [id,{descriptor:structuredClone(entry.descriptor),values:entry.values.slice() as NumericArray}] as const;});
+    for(const [id,entry] of copies)registry.store.set(id,entry);
+  }
+  /** Internal viewer entry point; the completed predicate alone enters snapshots. */
+  selectLinked(layerId:string,bounds:Bounds):void{
+    this.assertOpen();const link=this.selectionRequest();
+    if(!link||!link.scatter.includes(layerId))throw new Error('Selection must originate in a linked scatter.');
+    const next={...structuredClone(link),sequence:link.sequence+1,selection:{originLayerId:layerId,bounds:structuredClone(bounds)}};
+    validateSelectionLink({...this.spec,selectionLink:next},this.registry);
+    if(!this.view)throw new Error('Mount the figure before selecting observations.');
+    this.pendingLink=next;this.changed();
+  }
+  selectionRequest():SelectionLinkSpec|undefined{return this.pendingLink??this.spec.selectionLink;}
+  clearLinkedSelection(linkId:string):void{
+    this.assertOpen();const link=this.selectionRequest();if(!link||link.id!==linkId)throw new Error('Selection link has been removed.');
+    if(!link.selection)return;
+    const next=structuredClone(link);next.sequence++;delete next.selection;
+    validateSelectionLink({...this.spec,selectionLink:next},this.registry);
+    if(this.view)this.pendingLink=next;else this.spec.selectionLink=next;
+    this.changed();
+  }
+  removeSelectionLink(linkId:string):void{
+    this.assertOpen();if(this.spec.selectionLink?.id!==linkId)throw new Error('Selection link has been removed.');
+    delete this.spec.selectionLink;this.pendingLink=undefined;this.notifiedLink='';this.changed();
+  }
+  unlinkLayer(layerId:string):void{const link=this.spec.selectionLink;if(link&&(link.scatter.includes(layerId)||link.histogram===layerId))this.removeSelectionLink(link.id);}
+  private assertMutableLayer(layerId:string):void{
+    const link=this.spec.selectionLink;
+    if(link&&(link.scatter.includes(layerId)||link.histogram===layerId))throw new Error('Linked data and histogram options are fixed. Remove the selection link before updating.');
+  }
+  commitLinkedSelection(link:SelectionLinkSpec,event:LinkedSelection):void{
+    const current=this.selectionRequest();if(!current||current.id!==link.id||current.generation!==link.generation||current.sequence!==link.sequence)return;
+    this.spec.selectionLink=structuredClone(link);this.pendingLink=undefined;
+    const token=`${link.id}:${link.generation}:${link.sequence}`;
+    if(token!==this.notifiedLink){this.notifiedLink=token;this.emit('selection',event);}
   }
   private allocateId(prefix:'layer'|'annotation'):string{
     // Imported snapshots can contain IDs generated by another runtime, or arbitrary
@@ -245,6 +337,7 @@ export class Figure {
   }
   private layerValues(layer:LayerSpec):Record<string,NumericArray>{return Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,this.registry.get(source).values]));}
   updateOptions(layer:LayerSpec,options:Record<string,unknown>):void{
+    this.assertMutableLayer(layer.id);
     this.assertOpen();const next=statisticalOptions(layer.kind,{...layer.options,...options});
     if('orientation' in next&&next.orientation!==(layer.options as BarSpecOptions).orientation)throw new Error('Layer orientation cannot be changed');
     const candidate={...layer,options:next},draft=structuredClone(this.spec);draft.layers=draft.layers.map(item=>item.id===layer.id?candidate:item);
@@ -281,6 +374,7 @@ export class Figure {
     if(index<0)throw new Error('Annotation has been removed');this.spec.annotations!.splice(index,1);if(!this.spec.annotations!.length)delete this.spec.annotations;this.changed();
   }
   updateData(layer:LayerSpec,data:Record<string,unknown>,notify=true):void{
+    this.assertMutableLayer(layer.id);
     this.assertOpen();
     if(!data||typeof data!=='object'||Array.isArray(data))throw new TypeError('Data must be an object');
     const candidate=structuredClone(layer),draft=structuredClone(this.spec),inputs={...data};
@@ -388,7 +482,7 @@ export class Figure {
     const previous=this.panelView(panelId),next=copyView({...previous,...options});
     this.assertDimension(next,previous);
     const state=this.captureViews();this.replacePanelView(state,panelId,next);
-    for(const axis of ['x','y'] as const)if(`${axis}Scale` in options||`${axis}Domain` in options)this.shareAxis(state,panelId,axis);
+    for(const axis of ['x','y'] as const)if(`${axis}Scale` in options||`${axis}Domain` in options||`${axis}Format` in options)this.shareAxis(state,panelId,axis);
     this.applyViews(state);return this;
   }
   private assertDimension(next:ViewSpec,previous:ViewSpec):void{
@@ -405,6 +499,7 @@ export class Figure {
     for(const view of [state.view,...Object.values(state.panelViews??{})]){
       view[`${axis}Scale`]=source[`${axis}Scale`];
       const domain=source[`${axis}Domain`];if(domain===undefined)delete view[`${axis}Domain`];else view[`${axis}Domain`]=[...domain];
+      const format=source[`${axis}Format`];if(format===undefined)delete view[`${axis}Format`];else view[`${axis}Format`]=structuredClone(format);
     }
   }
   private applyViews(state:ViewState):void{
@@ -412,6 +507,7 @@ export class Figure {
     const draft=structuredClone(this.spec);draft.view=copyView(state.view);
     for(const panel of draft.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
     validateSemantics(draft,layer=>this.layerValues(layer));
+    if([draft.view,...(draft.panels??[]).flatMap(panel=>panel.view?[panel.view]:[])].some(view=>view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,PRESENTATION_PROTOCOL_VERSION);
     this.spec.view=copyView(state.view);
     for(const panel of this.spec.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
     this.changed();
@@ -435,7 +531,7 @@ export class Figure {
   emitViewChange(panelId='main'):void{
     this.panelView(panelId);
     const wireView=(input:ViewSpec)=>{const view=structuredClone(input);return {...view,xDomain:view.xDomain??null,yDomain:view.yDomain??null,zDomain:view.zDomain??null,pan3d:view.pan3d??[0,0]};};
-    const payload:{[key:string]:unknown}=wireView(this.spec.view);
+    const payload:ViewChangeEvent=wireView(this.spec.view);
     if(this.spec.layout){payload.panelId=panelId;payload.panelViews=Object.fromEntries(this.panelEntries().filter(panel=>panel.id!=='main').map(panel=>[panel.id,wireView(panel.view)]));}
     this.emit('viewchange',payload);
   }
@@ -459,20 +555,25 @@ export class Figure {
   }
   setTitle(title:string):this{this.spec.title=title;this.changed();return this;}
   mount(container:HTMLElement):this{
-    this.assertOpen();if(!container)throw new Error('A mount element is required');this.view?.dispose();this.view=new FigureView(this,container);this.changed();return this;
+    this.assertOpen();if(!container)throw new Error('A mount element is required');this.unmount();try{this.view=new FigureView(this,container);}catch(error){this.emit('error',{message:error instanceof Error?error.message:String(error)});throw error;}this.changed();return this;
   }
   async ready():Promise<void>{this.assertOpen();if(this.view)await this.view.ready();}
   async savefig():Promise<Blob>{this.assertOpen();if(!this.view)throw new Error('Mount the figure before exporting');await this.ready();return this.view.exportPNG();}
   inspect():Array<RepresentationInfo&{layerId:string;panelId?:string}>{return this.view?.inspect()??[];}
-  on(event:FigureEvent,callback:(event:any)=>void):()=>void{let handlers=this.listeners.get(event);if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);return ()=>handlers!.delete(callback);}
-  emit(event:FigureEvent,payload:any):void{for(const callback of this.listeners.get(event)??[])callback(payload);}
+  on<K extends FigureEvent>(event:K,callback:(event:FigureEventMap[K])=>void):()=>void{let handlers=this.listeners.get(event);if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);return ()=>handlers!.delete(callback);}
+  emit<K extends FigureEvent>(event:K,payload:FigureEventMap[K]):void{
+    for(const callback of [...(this.listeners.get(event)??[])])try{callback(payload);}catch(error){try{console.error(`Vesora ${event} callback failed`,error);}catch{/* Diagnostics cannot interrupt ready/error settlement. */}}
+  }
   changed():void{this.assertOpen();this.view?.schedule();}
   snapshot():Snapshot{this.assertOpen();return {figure:structuredClone(this.spec),sources:Array.from(this.registry.entries(),([,entry])=>structuredClone(entry.descriptor))};}
   applySnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>):void{
     // Clone before touching live storage; even a non-cloneable incoming field
     // must leave the previous scene and its source registry intact.
     this.assertOpen();const spec=structuredClone(snapshot.figure);
-    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
+    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
+    const presentationViews=[spec.view,...(spec.panels??[]).flatMap(panel=>panel.view?[panel.view]:[]),...(spec.bookmarks??[]).flatMap(bookmark=>[bookmark.view,...Object.values(bookmark.panelViews??{})])];
+    if(spec.theme!==undefined)validateTheme(spec.theme);
+    if(spec.protocolVersion<PRESENTATION_PROTOCOL_VERSION&&(spec.theme!==undefined||presentationViews.some(view=>view&&(view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))))throw new Error('Themes, time scales and axis formats require protocol version 5');
     if(!Array.isArray(spec.layers)||!Array.isArray(snapshot.sources))throw new TypeError('Snapshot layers and sources must be arrays');
     if(spec.protocolVersion===PROTOCOL_VERSION&&(spec.layout!==undefined||spec.panels!==undefined||spec.annotations!==undefined||spec.layers.some(layer=>layer.panelId!==undefined)||spec.bookmarks?.some(bookmark=>bookmark.panelViews!==undefined)))throw new Error('Panels and annotations require protocol version 2');
     if(spec.protocolVersion<STATISTICS_PROTOCOL_VERSION&&(spec.categories!==undefined||spec.barModes!==undefined||spec.layers.some(layer=>isStatistical(layer.kind)||layer.options!==undefined||layer.categorical!==undefined)))throw new Error('Statistics and categories require protocol version 3');
@@ -505,8 +606,10 @@ export class Figure {
       if(layer.kind==='heatmap'||layer.kind==='surface'){const shape=next.get(layer.data.z).descriptor.shape;if(shape[0]!==values.y.length||shape[1]!==values.x.length)throw new Error('Grid source shape does not match coordinates');}
     }
     validateSemantics(spec,layer=>Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,next.get(source).values])));
+    validateSelectionLink(spec,next);
+    this.isolateSelectionSources(spec,next);
     this.registry.clear();for(const [,entry]of next.entries())this.registry.set(entry.descriptor.id,entry.values,entry.descriptor.shape,entry.descriptor.version);
-    this.spec=spec;this.view?.invalidateData();this.view?.clearInteraction();this.changed();
+    this.spec=spec;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
   }
   close():void{if(this.closed)return;this.view?.dispose();this.view=undefined;this.registry.clear();this.listeners.clear();this.closed=true;}
   private assertOpen():void{if(this.closed)throw new Error('Figure is closed');}
@@ -517,7 +620,7 @@ export function subplots(options:SubplotsOptions):Figure{
   if(!Number.isSafeInteger(rows)||!Number.isSafeInteger(cols)||rows<1||cols<1||!Number.isSafeInteger(rows*cols))throw new RangeError('Grid rows and cols must be positive safe integers');
   if(typeof shareX!=='boolean'||typeof shareY!=='boolean')throw new TypeError('Shared axis options must be booleans');
   const result=figure({...figureOptions,kind:'2d'});
-  result.spec.protocolVersion=EXTENDED_PROTOCOL_VERSION;result.spec.layout={rows,cols,shareX,shareY};result.spec.panels=[];
+  result.spec.protocolVersion=Math.max(result.spec.protocolVersion,EXTENDED_PROTOCOL_VERSION);result.spec.layout={rows,cols,shareX,shareY};result.spec.panels=[];
   for(let row=0;row<rows;row++)for(let col=0;col<cols;col++)result.spec.panels.push(row===0&&col===0?{id:'main',row,col,title:''}:{id:`panel-${row}-${col}`,row,col,title:'',view:defaultView()});
   return result;
 }

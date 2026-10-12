@@ -2,8 +2,9 @@ import { figure, subplots, Layer, downloadHTML } from '../../packages/core/dist/
 import { examples as originalExamples } from './scenarios.js';
 import { comparisonExamples } from './comparison-scenarios.js';
 import { statisticsExamples } from './statistics-scenarios.js';
+import { linkedExamples } from './linked-scenarios.js';
 
-const examples = document.body.dataset.gallery === 'comparison' ? comparisonExamples : document.body.dataset.gallery === 'statistics' ? statisticsExamples : originalExamples;
+const examples = document.body.dataset.gallery === 'comparison' ? comparisonExamples : document.body.dataset.gallery === 'statistics' ? statisticsExamples : document.body.dataset.gallery === 'linked' ? linkedExamples : originalExamples;
 
 const number = new Intl.NumberFormat('en-US');
 const parameterNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
@@ -137,6 +138,10 @@ async function mountExample(entry) {
     const options = { width: Math.max(200, chart.clientWidth), height: example.layout ? 640 : 380 };
     fig = example.layout ? subplots({ ...options, ...example.layout }) : figure(options);
     const controller = example.create(fig);
+    if (controller?.link) {
+      const reset = card.querySelector('[data-action="reset"]');
+      reset.textContent = '↺ Reset view'; reset.title = 'Restore the initial view while preserving the selected cohort';
+    }
     const initialView = fig.captureViews();
     const initialVisibility = fig.spec.layers.map(layer => layer.visible);
     const layerHandles = fig.spec.layers.map(layer => new Layer(fig, layer.id));

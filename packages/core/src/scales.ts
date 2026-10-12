@@ -5,8 +5,8 @@ export function transform(value: number, kind: ScaleKind = 'linear'): number {
 }
 
 export function validateDomain(domain: Domain, kind: ScaleKind = 'linear'): Domain {
-  if (kind !== 'linear' && kind !== 'log') throw new RangeError(`Unsupported scale kind: ${kind}`);
-  if (domain.length !== 2 || !domain.every(Number.isFinite) || domain[0] >= domain[1] || (kind === 'log' && domain[0] <= 0)) {
+  if (!['linear','log','time'].includes(kind)) throw new RangeError(`Unsupported scale kind: ${kind}`);
+  if (domain.length !== 2 || !domain.every(Number.isFinite) || domain[0] >= domain[1] || (kind === 'log' && domain[0] <= 0) || kind==='time'&&domain.some(value=>Math.abs(value)>8.64e15)) {
     throw new RangeError(`${kind} scale requires a finite increasing domain${kind === 'log' ? ' with positive values' : ''}.`);
   }
   return domain;
@@ -17,7 +17,7 @@ export function extent(values: ArrayLike<number> | NumericArray, kind: ScaleKind
   for (let start = 0; start < values.length; start += 65_536) {
     for (let i = start, end = Math.min(start + 65_536, values.length); i < end; i++) {
       const value = values[i];
-      if (!Number.isFinite(value) || (kind === 'log' && value <= 0)) continue;
+      if (!Number.isFinite(value) || (kind === 'log' && value <= 0) || kind==='time'&&Math.abs(value)>8.64e15) continue;
       if (value < min) min = value;
       if (value > max) max = value;
     }
@@ -25,7 +25,8 @@ export function extent(values: ArrayLike<number> | NumericArray, kind: ScaleKind
   if (min === Infinity) return kind === 'log' ? [1, 10] : [0, 1];
   if (min === max) {
     if (kind === 'log') return [Math.max(Number.MIN_VALUE, min / 2), Math.min(Number.MAX_VALUE, max * 2)];
-    const padding = Math.max(Math.abs(min) * 0.05, 1);
+    const padding = kind==='time'?86_400_000:Math.max(Math.abs(min) * 0.05, 1);
+    if(kind==='time')return [Math.max(-8.64e15,min-padding),Math.min(8.64e15,max+padding)];
     return [Math.max(-Number.MAX_VALUE, min - padding), Math.min(Number.MAX_VALUE, max + padding)];
   }
   return [min, max];
@@ -33,7 +34,7 @@ export function extent(values: ArrayLike<number> | NumericArray, kind: ScaleKind
 
 /** Subtract in float64 before converting coordinates for the GPU. */
 export function normalize(value: number, domain: Domain, kind: ScaleKind = 'linear'): number {
-  if (!Number.isFinite(value) || (kind === 'log' && value <= 0)) return NaN;
+  if (!Number.isFinite(value) || (kind === 'log' && value <= 0) || kind==='time'&&Math.abs(value)>8.64e15) return NaN;
   if (kind === 'log') {
     const span = Math.log(domain[1] / domain[0]);
     return Number.isFinite(span) ? Math.log(value / domain[0]) / span : (Math.log(value) - Math.log(domain[0])) / (Math.log(domain[1]) - Math.log(domain[0]));
@@ -64,6 +65,7 @@ export function invert(pixel: number, domain: Domain, range: Domain, kind: Scale
 export function ticks(domain: Domain, kind: ScaleKind = 'linear', count = 6): number[] {
   validateDomain(domain, kind);
   count = Math.max(2, Math.min(100, Math.floor(count)));
+  if(kind==='time')return timeTicks(domain,count);
   if (kind === 'log') {
     const first = Math.ceil(Math.log10(domain[0])), last = Math.floor(Math.log10(domain[1]));
     if (last >= first) {
@@ -87,6 +89,29 @@ export function ticks(domain: Domain, kind: ScaleKind = 'linear', count = 6): nu
     if (value >= domain[0] && (result.length === 0 || value !== result[result.length - 1])) result.push(Object.is(value, -0) ? 0 : value);
   }
   return result.length >= 2 ? result : [domain[0], domain[1]];
+}
+
+/** UTC calendar ticks use real month lengths rather than a fixed 30-day interval. */
+export function timeTicks(domain:Domain,count=6):number[] {
+  validateDomain(domain,'time');count=Math.max(2,Math.min(100,Math.floor(count)));
+  const day=86_400_000,rough=(domain[1]-domain[0])/(count-1);
+  const fixed=[1,5,10,50,100,250,500,1000,5000,15000,30000,60000,300000,900000,1800000,3600000,10800000,21600000,43200000,day,2*day,7*day];
+  const result:number[]=[];
+  if(rough<=7*day){
+    const step=fixed.find(value=>value>=rough)??7*day;
+    const anchor=step===7*day?4*day:0; // Monday, 1970-01-05.
+    const first=anchor+Math.ceil((domain[0]-anchor)/step)*step;
+    for(let i=0;i<100;i++){const value=first+i*step;if(value>domain[1])break;if(value>=domain[0])result.push(value);}
+  }else{
+    const months=rough/(30.4375*day),step=months<=1?1:months<=3?3:months<=6?6:12*Math.max(1,Math.ceil(months/12));
+    const date=new Date(domain[0]),absolute=date.getUTCFullYear()*12+date.getUTCMonth();
+    let month=Math.floor(absolute/step)*step;
+    for(let i=0;i<102;i++,month+=step){
+      const tick=new Date(0);tick.setUTCFullYear(Math.floor(month/12),((month%12)+12)%12,1);tick.setUTCHours(0,0,0,0);
+      const value=tick.getTime();if(!Number.isFinite(value)||value>domain[1])break;if(value>=domain[0])result.push(value);
+    }
+  }
+  return result.length>=2?result:[domain[0],domain[1]];
 }
 
 export function formatTick(value: number, span?: number): string {

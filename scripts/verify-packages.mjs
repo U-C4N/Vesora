@@ -87,6 +87,71 @@ async function verifyHTML(browser, name, htmlPath, outputDirectory) {
   }
 }
 
+async function verifyLinkedHTML(browser, name, htmlPath, outputDirectory) {
+  const context=await browser.newContext({viewport:{width:1500,height:900},offline:true,acceptDownloads:true});
+  const page=await context.newPage(),errors=[],network=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  page.on('request',request=>{if(/^https?:/i.test(request.url()))network.push(request.url());});
+  try {
+    await page.goto(pathToFileURL(htmlPath).href);
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]',{timeout:45_000});
+    const payload=JSON.parse(await page.locator('#vesora-payload').textContent());
+    assert.equal(payload.snapshot.figure.protocolVersion,4);
+    assert.equal(payload.snapshot.figure.selectionLink.scatter.length,2);
+    const summary=page.locator('#vesora-selection-summary'),clear=page.locator('#vesora-clear-selection');
+    assert.equal(await clear.isDisabled(),true);
+    const canvas=await page.locator('#vesora-chart canvas').last().boundingBox();
+    assert.ok(canvas,'Linked canvas is missing');
+    await page.keyboard.down('Shift');
+    await page.mouse.move(canvas.x+90,canvas.y+115);await page.mouse.down();
+    await page.mouse.move(canvas.x+305,canvas.y+405,{steps:12});await page.mouse.up();
+    await page.keyboard.up('Shift');
+    await page.waitForFunction(()=>document.querySelector('#vesora-selection-summary')?.textContent?.includes('Selected'));
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]');
+    assert.equal(await clear.isDisabled(),false);
+    const selected=await summary.textContent();
+    await page.getByRole('button',{name:'Reset view',exact:true}).click();
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]');
+    assert.equal(await summary.textContent(),selected,'Reset view must preserve the cohort');
+    const downloadPromise=page.waitForEvent('download');
+    await page.getByRole('button',{name:'Download PNG',exact:true}).click();
+    const download=await downloadPromise,png=join(outputDirectory,`${name}-linked.png`);await download.saveAs(png);
+    assert.equal(await download.failure(),null);
+    await clear.click();await page.waitForSelector('#vesora-viewer[data-ready="ready"]');
+    await page.waitForFunction(()=>document.querySelector('#vesora-clear-selection')?.disabled===true);
+    await page.screenshot({path:join(outputDirectory,`${name}-linked-viewer.png`),fullPage:true});
+    assert.deepEqual(network,[]);assert.deepEqual(errors,[]);
+    console.log(`${name}: installed linked API, offline selection, reset preservation, clear and PNG passed.`);
+    return {html:htmlPath,png};
+  } finally {await context.close();}
+}
+
+async function verifyPresentationHTML(browser, name, path, outputDirectory) {
+  const context = await browser.newContext({offline: true, acceptDownloads: true});
+  const page = await context.newPage(), errors = [], network = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => {if (/^https?:/i.test(request.url())) network.push(request.url());});
+  try {
+    await page.goto(pathToFileURL(path).href);
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]');
+    const payload = JSON.parse(await page.locator('#vesora-payload').textContent());
+    assert.equal(payload.snapshot.figure.protocolVersion, 5);
+    assert.equal(payload.snapshot.figure.view.xScale, 'time');
+    assert.equal(payload.snapshot.figure.view.yFormat.kind, 'currency');
+    assert.equal(payload.snapshot.figure.theme.background, '#0f172a');
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Download PNG', exact: true}).click();
+    const download = await downloadPromise;
+    const png = join(outputDirectory, `${name}-presentation.png`);
+    await download.saveAs(png);
+    assert.equal(await download.failure(), null);
+    assert.ok((await readFile(png)).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+    assert.deepEqual(errors, []);assert.deepEqual(network, []);
+    console.log(`${name}: installed protocol 5, offline theme/time/currency and PNG passed.`);
+    return {html: path, png};
+  } finally {await context.close();}
+}
+
 async function main() {
   if (process.argv.length > 3) throw new Error('Usage: node scripts/verify-packages.mjs [release-directory]');
   const files = await readdir(archiveDirectory);
@@ -97,6 +162,7 @@ async function main() {
   const expectedVersion = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8')).version;
   const wheel = join(archiveDirectory, wheels[0]), tarball = join(archiveDirectory, tarballs[0]);
   workspace = await mkdtemp(join(tmpdir(), 'vesora-packages-'));
+  environment.npm_config_cache = process.env.VESORA_NPM_CACHE ?? join(workspace, 'npm-cache');
   assert.ok(!isWithin(checkout, workspace), 'Package verification must run outside the checkout.');
   const pythonDirectory = join(workspace, 'python-consumer'), npmDirectory = join(workspace, 'npm-consumer'), outputDirectory = join(workspace, 'outputs');
   await Promise.all([pythonDirectory, npmDirectory, outputDirectory].map(path => mkdir(path)));
@@ -110,6 +176,8 @@ async function main() {
   const isolatedPython = join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   run(isolatedPython, ['-I', '-m', 'pip', '--isolated', 'install', '--disable-pip-version-check', '--no-deps', '--no-index', wheel], pythonDirectory, 'Installing the wheel without dependencies or network access…');
   const pythonHTML = join(outputDirectory, 'python-figure.html');
+  const pythonLinkedHTML = join(outputDirectory, 'python-linked.html');
+  const pythonPresentationHTML = join(outputDirectory, 'python-presentation.html');
   const pythonScript = join(pythonDirectory, 'verify.py');
   await writeFile(pythonScript, `import json
 import sys
@@ -153,13 +221,31 @@ for dependency in ("PySide6", "aiohttp", "numpy", "anywidget"):
     assert not any(name == dependency or name.startswith(dependency + ".") for name in sys.modules), f"HTML export unexpectedly imported {dependency}"
 fig.close()
 assert Path(sys.argv[2]).is_file()
+linked = vs.subplots(1, 3, title="Installed Python linked observations", width=1200, height=520)
+a = linked.panel(0, 0).scatter([0, 1, 2, 3], [.1, .2, 3, .1])
+b = linked.panel(0, 1).scatter([.1, .2, .9, .3], [.1, .2, 3, .1])
+h = linked.panel(0, 2).hist([.1, .2, 3, .1], bins=[0, 1, 2, 4])
+link = linked.link_selection(scatter=[a, b], histogram=h)
+assert linked.snapshot()['figure']['protocolVersion'] == 4
+linked.save_html(sys.argv[4])
+link.remove()
+a.set_data(y=[.2, .3, 4, .2])
+linked.close()
+presentation = vs.figure(theme='dark', title='Installed Python presentation', width=900, height=420)
+presentation.plot([0., 86400000.], [1200., 1500.], label='Revenue')
+presentation.set_axes(xscale='time')
+presentation.set_axis_format('y', {'kind': 'currency', 'currency': 'USD'})
+presentation.save_html(sys.argv[5])
+presentation.close()
 print(json.dumps({"version": vs.__version__, "module": str(module), "html": sys.argv[2]}))
 `, 'utf8');
-  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, expectedVersion], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
+  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, expectedVersion, pythonLinkedHTML, pythonPresentationHTML], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
 
   await writeFile(join(npmDirectory, 'package.json'), JSON.stringify({ name: 'vesora-release-consumer', version: '1.0.0', private: true, type: 'module' }, null, 2), 'utf8');
   run(process.execPath, [npmCLI(), 'install', '--global=false', '--prefix', npmDirectory, '--ignore-scripts', '--no-audit', '--no-fund', '--offline', tarball], npmDirectory, 'Installing the npm tarball in a clean offline consumer…');
   const javascriptHTML = join(outputDirectory, 'javascript-figure.html');
+  const javascriptLinkedHTML = join(outputDirectory, 'javascript-linked.html');
+  const javascriptPresentationHTML = join(outputDirectory, 'javascript-presentation.html');
   const javascriptScript = join(npmDirectory, 'verify.mjs');
   await writeFile(javascriptScript, `import assert from 'node:assert/strict';
 import { readFile, realpath, writeFile } from 'node:fs/promises';
@@ -199,6 +285,20 @@ fig.bookmark('Focus', { note: 'A saved view from the installed tarball.' });
 fig.restoreBookmark('Overview');
 await writeFile(${JSON.stringify(javascriptHTML)}, toHTML(fig), 'utf8');
 fig.close();
+const linked = subplots({rows: 1, cols: 3, title: 'Installed JavaScript linked observations', width: 1200, height: 520});
+const a = linked.panel(0, 0).scatter([0, 1, 2, 3], [.1, .2, 3, .1]);
+const b = linked.panel(0, 1).scatter([.1, .2, .9, .3], [.1, .2, 3, .1]);
+const h = linked.panel(0, 2).hist([.1, .2, 3, .1], {bins: [0, 1, 2, 4]});
+const link = linked.linkSelection({scatter: [a, b], histogram: h});
+assert.equal(linked.snapshot().figure.protocolVersion, 4);
+await writeFile(${JSON.stringify(javascriptLinkedHTML)}, toHTML(linked), 'utf8');
+link.remove();a.setData({y: [.2, .3, 4, .2]});linked.close();
+const presentation = figure({theme: 'dark', title: 'Installed JavaScript presentation', width: 900, height: 420});
+presentation.plot([0, 86400000], [1200, 1500], {label: 'Revenue'});
+presentation.setView({xScale: 'time'});
+presentation.setAxisFormat('y', {kind: 'currency', currency: 'USD'});
+await writeFile(${JSON.stringify(javascriptPresentationHTML)}, toHTML(presentation), 'utf8');
+presentation.close();
 console.log(JSON.stringify({ version: packageJSON.version, module: modulePath, html: ${JSON.stringify(javascriptHTML)} }));
 `, 'utf8');
   run(process.execPath, [javascriptScript], npmDirectory, 'Verifying installed ESM import and HTML export without a DOM…');
@@ -229,6 +329,12 @@ stats.panel(1, 0).barh(['A', 'B'], [2, -1], {left: [1, 2]});
 stats.panel(1, 1).boxplot([new Float64Array([1, 2]), [2, 3, 40]], {labels: ['A', 'B'], whis: 1.5, showfliers: true, boxWidth: .6}).setData({groups: [[1], [3, 5]], labels: ['B', 'C']}).setOptions({showfliers: false});
 stats.setBarMode('overlay');
 toHTML(stats);stats.close();
+const linked: Figure = subplots({rows: 1, cols: 3});
+const a = linked.panel(0, 0).scatter([0, 1], [1, 2]);
+const b = linked.panel(0, 1).scatter([2, 3], [1, 2]);
+const h = linked.panel(0, 2).hist([1, 2]);
+const link = linked.linkSelection({scatter: [a, b], histogram: h});
+link.clear();link.remove();linked.close();
 `, 'utf8');
   run(process.execPath, [join(checkout, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022,DOM', typeScript], npmDirectory, 'Type-checking installed declarations with NodeNext resolution…');
 
@@ -240,6 +346,10 @@ toHTML(stats);stats.close();
     outputs = {
       python: await verifyHTML(browser, 'python', pythonHTML, outputDirectory),
       javascript: await verifyHTML(browser, 'javascript', javascriptHTML, outputDirectory),
+      pythonLinked: await verifyLinkedHTML(browser, 'python', pythonLinkedHTML, outputDirectory),
+      javascriptLinked: await verifyLinkedHTML(browser, 'javascript', javascriptLinkedHTML, outputDirectory),
+      pythonPresentation: await verifyPresentationHTML(browser, 'python', pythonPresentationHTML, outputDirectory),
+      javascriptPresentation: await verifyPresentationHTML(browser, 'javascript', javascriptPresentationHTML, outputDirectory),
     };
   } finally {
     await browser.close();

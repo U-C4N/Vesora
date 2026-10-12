@@ -1,9 +1,12 @@
-export {Figure,Layer,Panel,Annotation,figure,subplots,plot,scatter,scatter3d,heatmap,surface,hist,bar,barh,boxplot,defaultView} from './figure';
+export {Figure,Layer,Panel,Annotation,SelectionLink,figure,subplots,plot,scatter,scatter3d,heatmap,surface,hist,bar,barh,boxplot,defaultView} from './figure';
 export {toHTML,downloadHTML} from './html-export';
-export type {Series,Grid,AxisSeries,Groups,LayerOptions,HistogramOptions,BarOptions,BoxplotOptions,FigureEvent} from './figure';
+export type {Series,Grid,AxisSeries,Groups,LayerOptions,HistogramOptions,BarOptions,BoxplotOptions,FigureEvent,SelectionLinkOptions} from './figure';
 export {DataRegistry,toNumericArray,decodeData,describeData} from './data';
 export {planScatter,planLine} from './planning';
 export {QueryScheduler} from './scheduler';
 export {extent,normalize,project,invert,ticks} from './scales';
-export {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION} from './types';
+export {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION} from './types';
+export {LIGHT_THEME,DARK_THEME,resolveTheme,validateTheme,validateAxisFormat,formatValue,formatTimeTick} from './presentation';
+export {timeTicks} from './scales';
+export {setWorkerURL} from './scheduler';
 export type * from './types';

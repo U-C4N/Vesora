@@ -6,7 +6,7 @@ import type {PreparedStatistics} from './statistics';
 
 /** Triangle-only statistics rendering reuses the existing renderer and PNG path. */
 export function buildStatisticsGeometry(prepared: PreparedStatistics, bounds: Bounds, view: ViewSpec, width: number, height: number, style: LayerStyle): Geometry {
-  if (view.xScale !== 'linear' || view.yScale !== 'linear') throw new Error('Statistical layers require linear value axes');
+  if (view.xScale === 'log' || view.yScale === 'log' || prepared.kind!=='bar'&&(view.xScale!=='linear'||view.yScale!=='linear')) throw new Error('Statistical layers require linear value axes; bar positions may use time');
   const budget = 2_000_000;
   let count = 0, capacity = 1024, positions = new Float32Array(capacity * 3), colors = new Float32Array(capacity * 4);
   const fill = parseColor(style.color, style.opacity ?? 1);

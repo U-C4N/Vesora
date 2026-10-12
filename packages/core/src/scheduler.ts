@@ -1,12 +1,14 @@
 import {DataRegistry} from './data';
 import {lineSteps, runSteps, scatterSteps} from './planning';
 import {statisticsBytes, statisticsSteps} from './statistics';
+import {linkedSteps, maskedScatterSteps} from './linked';
+import type {LinkedResult} from './linked';
 import type {PreparedStatistics} from './statistics';
-import type {DataStore, LayerSpec, LineResult, PointPlan, Query} from './types';
+import type {DataStore, LayerSpec, LineResult, PointPlan, Query, SelectionLinkSpec} from './types';
 import type {WorkerRequest, WorkerResponse} from './worker';
 
 type Plan = PointPlan | LineResult;
-type QueryResult = Plan | PreparedStatistics;
+type QueryResult = Plan | PreparedStatistics | LinkedResult;
 let defaultWorkerURL: string | URL | undefined;
 /** Notebook hosts can supply a blob URL when the engine itself is an inline module. */
 export function setWorkerURL(url: string | URL | undefined): void {defaultWorkerURL = url;}
@@ -33,6 +35,8 @@ export class QueryScheduler {
   private cache = new Map<string, Cached>();
   private cacheBytes = 0;
   private maxCacheBytes: number;
+  private objectIds = new WeakMap<object, number>();
+  private objectSequence = 0;
 
   constructor(options: SchedulerOptions = {}) {
     this.maxCacheBytes = options.maxCacheBytes ?? 32 * 1024 * 1024;
@@ -70,6 +74,28 @@ export class QueryScheduler {
     const snapshot = structuredClone(layer), ids = Object.values(snapshot.data);
     return this.submit<PreparedStatistics>(key, ids, ['statistics', snapshot.kind, snapshot.id, snapshot.data, snapshot.options], registry,
       store => statisticsSteps(snapshot, store), requestId => ({type: 'statistics', requestId, key, layer: snapshot}));
+  }
+
+  /** A selection depends on fixed sources, the rectangle and all-data bin edges. */
+  queryLinked(key: string, link: SelectionLinkSpec, layers: LayerSpec[], baseline: PreparedStatistics, registry: DataRegistry | DataStore): Promise<LinkedResult> {
+    const snapshot = structuredClone(link), members = structuredClone(layers.filter(layer => snapshot.scatter.includes(layer.id) || layer.id === snapshot.histogram));
+    const ids = members.flatMap(layer => Object.values(layer.data));
+    return this.submit<LinkedResult>(key, ids, ['linked', snapshot, members, this.objectId(baseline)], registry,
+      store => linkedSteps(snapshot, members, store, baseline), requestId => ({type: 'linked', requestId, key, link: snapshot, layers: members, baseline}));
+  }
+
+  /** Mask transport is bounded to ceil(rows/8) bytes, never a source-array copy. */
+  querySelectedScatter(key: string, xId: string, yId: string, mask: Uint8Array, query: Query, registry: DataRegistry | DataStore): Promise<PointPlan> {
+    const maskId = this.objectId(mask), snapshot = mask.slice();
+    return this.submit<PointPlan>(key, [xId, yId], ['selected-scatter', maskId, query], registry,
+      store => maskedScatterSteps(store.get(xId)!.values, store.get(yId)!.values, snapshot, query),
+      requestId => ({type: 'selected-scatter', requestId, key, xId, yId, mask: snapshot, query}));
+  }
+
+  private objectId(value: object): number {
+    let id = this.objectIds.get(value);
+    if (id === undefined) {id = ++this.objectSequence; this.objectIds.set(value, id);}
+    return id;
   }
 
   private submit<T extends QueryResult>(key: string, dependencies: string[], identity: unknown[], registry: DataRegistry | DataStore,
@@ -150,7 +176,8 @@ export class QueryScheduler {
   private complete(task: Pending, result: QueryResult): void {
     if (task.cancelled || this.disposed || this.keys.get(task.key) !== task.requestId) return;
     this.pending.delete(task.requestId); this.keys.delete(task.key);
-    const bytes = 'marks' in result ? statisticsBytes(result) : 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
+    const bytes = result.kind === 'linked' ? 256 + result.mask.byteLength + result.preview.byteLength + statisticsBytes(result.histogram)
+      : 'marks' in result ? statisticsBytes(result) : 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
     if (bytes <= this.maxCacheBytes) {
       const previous = this.cache.get(task.cacheKey);
       if (previous) {this.cacheBytes -= previous.bytes; this.cache.delete(task.cacheKey);}

@@ -77,7 +77,7 @@ def test_websocket_update_readiness_events_and_png(live_host):
                         break
                     await asyncio.sleep(.01)
                 assert host.ready.is_set()
-                await socket.send_json({"type": "event", "event": "selection", "payload": {"kind": "density", "count": 10}})
+                await socket.send_json({"type": "event", "event": "selection", "revision": message["revision"], "payload": {"kind": "density", "count": 10}})
                 future = host.export()
                 export = await socket.receive_json(timeout=3)
                 png = b"\x89PNG\r\n\x1a\n" + b"transport fixture"

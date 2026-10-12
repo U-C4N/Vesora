@@ -9,10 +9,15 @@ import { fileURLToPath } from 'node:url';
 import { figure, subplots, toHTML } from '../packages/core/dist/index.js';
 import { examples } from '../examples/web/scenarios.js';
 import { comparisonExamples } from '../examples/web/comparison-scenarios.js';
+import { linkedExamples } from '../examples/web/linked-scenarios.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const pkg = JSON.parse(await readFile(resolve(root, 'packages/core/package.json'), 'utf8'));
 const version = pkg.version;
+const reactPackage = JSON.parse(await readFile(resolve(root, 'packages/react/package.json'), 'utf8'));
+assert.equal(reactPackage.version, version, 'Core and React release versions must match');
+assert.equal(pkg.license, 'MIT');
+assert.equal(reactPackage.license, 'MIT');
 const output = resolve(root, 'dist', `release-v${version}`);
 const localPython = resolve(root, process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python');
 const python = process.env.VESORA_PYTHON ?? process.env.PYTHON ?? (existsSync(localPython) ? localPython : 'python');
@@ -24,7 +29,8 @@ execFileSync(python, ['-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation',
 // npm_execpath is supplied by npm run; invoking its JS entry avoids Windows shell quoting.
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error('Run this script with npm run package:release.');
-execFileSync(process.execPath, [npm, 'pack', './packages/core', '--pack-destination', output], { cwd: root, stdio: 'inherit', windowsHide: true });
+execFileSync(process.execPath, [npm, 'pack', './packages/core', '--pack-destination', output, '--cache', process.env.VESORA_NPM_CACHE ?? resolve(root, 'artifacts', 'npm-cache')], { cwd: root, stdio: 'inherit', windowsHide: true });
+execFileSync(process.execPath, [npm, 'pack', './packages/react', '--pack-destination', output, '--cache', process.env.VESORA_NPM_CACHE ?? resolve(root, 'artifacts', 'npm-cache')], { cwd: root, stdio: 'inherit', windowsHide: true });
 
 const demo = examples.find(example => example.id === 'density');
 assert.ok(demo, 'The discovery demo must be present in the gallery');
@@ -52,7 +58,23 @@ try {
   statisticsFigure.bookmark('Overview');distribution.setView({xDomain:[-.5,.5]});statisticsFigure.bookmark('Detail',{note:'Bins and quartiles remain unchanged when zooming.'});statisticsFigure.restoreBookmark('Overview');
   await writeFile(resolve(output,'vesora-statistics-demo.html'),toHTML(statisticsFigure),'utf8');
 } finally { statisticsFigure.close(); }
-const files = [`vesora-${version}-py3-none-any.whl`, `vesora-core-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html'];
+const linked = linkedExamples[0];
+const linkedFigure = subplots({...linked.layout, title: linked.title, width: 1200, height: 520});
+try {
+  linked.create(linkedFigure);
+  await writeFile(resolve(output, 'vesora-linked-demo.html'), toHTML(linkedFigure), 'utf8');
+} finally { linkedFigure.close(); }
+const saasFigure = figure({ title: 'SaaS revenue', width: 1000, height: 460, theme: 'dark' });
+try {
+  const start = Date.UTC(2026, 9, 1);
+  saasFigure.plot(Array.from({length: 12}, (_, i) => start + i * 86400000), Array.from({length: 12}, (_, i) => 4200 + i * 310 + Math.sin(i) * 250), {label: 'Revenue'});
+  saasFigure.setView({xScale: 'time'});
+  saasFigure.setAxisFormat('x', {kind: 'date', locale: 'en-US', timeZone: 'UTC'});
+  saasFigure.setAxisFormat('y', {kind: 'currency', currency: 'USD', locale: 'en-US'});
+  saasFigure.bookmark('Overview');
+  await writeFile(resolve(output, 'vesora-saas-demo.html'), toHTML(saasFigure), 'utf8');
+} finally { saasFigure.close(); }
+const files = [`vesora-${version}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html'];
 const sums = [];
 for (const name of files) {
   const bytes = await readFile(resolve(output, name));

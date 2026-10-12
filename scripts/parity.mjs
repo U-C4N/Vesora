@@ -126,4 +126,60 @@ importedStatistics.applySnapshot(statisticsResult.snapshot,new Map(Object.entrie
 assert.equal(statisticsResult.snapshot.figure.protocolVersion,3);
 assert.deepEqual(normalize(importedStatistics),normalize(statistics),'Python and JavaScript statistical scenes must agree');
 statistics.close();importedStatistics.close();
-console.log('Python and JavaScript produce equivalent v1/v2/v3 scenes, categorical/statistical defaults, dtypes, raw buffers, updates and package versions.');
+const linkedCode=`import json,base64
+import vesora as vs
+fig=vs.subplots(1,3,title='Linked parity',width=1200,height=520)
+a=fig.panel(0,0).scatter([0.,1.,2.,3.],[.1,.2,3.,.1])
+b=fig.panel(0,1).scatter([.1,.2,.9,.3],[.1,.2,3.,.1])
+h=fig.panel(0,2).hist([.1,.2,3.,.1],bins=[0.,1.,2.,4.])
+link=fig.link_selection(scatter=[a,b],histogram=h)
+s=fig.snapshot()
+print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']}}))
+fig.close()
+`;
+const linkedResult=JSON.parse(execFileSync(python,['-X','utf8','-c',linkedCode],{env:{...process.env,PYTHONPATH:resolve('python')},encoding:'utf8'}));
+const linked=subplots({rows:1,cols:3,title:'Linked parity',width:1200,height:520});
+const la=linked.panel(0,0).scatter([0,1,2,3],[.1,.2,3,.1]);
+const lb=linked.panel(0,1).scatter([.1,.2,.9,.3],[.1,.2,3,.1]);
+const lh=linked.panel(0,2).hist([.1,.2,3,.1],{bins:[0,1,2,4]});
+linked.linkSelection({scatter:[la,lb],histogram:lh});
+const importedLinked=figure();
+importedLinked.applySnapshot(linkedResult.snapshot,new Map(Object.entries(linkedResult.buffers).map(([id,value])=>{const b=Buffer.from(value,'base64');return [id,b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength)];})));
+function normalizeLinked(fig){
+  const scene=normalize(fig),ids=fig.spec.layers.map(layer=>layer.id),{id,...link}=scene.selectionLink;
+  scene.selectionLink={...link,scatter:link.scatter.map(id=>ids.indexOf(id)),histogram:ids.indexOf(link.histogram)};
+  return scene;
+}
+assert.equal(linkedResult.snapshot.figure.protocolVersion,4);
+assert.deepEqual(normalizeLinked(importedLinked),normalizeLinked(linked),'Python and JavaScript linked scenes must agree');
+linked.close();importedLinked.close();
+const presentationCode=`import json,base64
+import vesora as vs
+fig=vs.subplots(1,2,sharex=True,theme='dark',title='Presentation parity',width=900,height=420)
+for column in range(2):
+    fig.panel(0,column).plot([0.,86400000.],[1.,2.],label='Revenue')
+right=fig.panel(0,1)
+right.set_axes(xscale='time')
+right.set_axis_format('x',{'kind':'date','locale':'en-US','timeZone':'UTC','options':{'month':'short','day':'numeric'}})
+fig.set_axis_format('y',{'kind':'currency','currency':'usd','locale':'en-US','options':{'maximumFractionDigits':2}})
+fig.bookmark('Overview')
+right.set_axes(xlim=(0.,43200000.))
+fig.bookmark('Detail')
+fig.restore_bookmark('Overview')
+s=fig.snapshot()
+print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']}}))
+fig.close()
+`;
+const presentationResult=JSON.parse(execFileSync(python,['-X','utf8','-c',presentationCode],{env:{...process.env,PYTHONPATH:resolve('python')},encoding:'utf8'}));
+const presentation=subplots({rows:1,cols:2,shareX:true,theme:'dark',title:'Presentation parity',width:900,height:420});
+for(let col=0;col<2;col++)presentation.panel(0,col).plot([0,86400000],[1,2],{label:'Revenue'});
+const right=presentation.panel(0,1);right.setView({xScale:'time'});
+right.setAxisFormat('x',{kind:'date',locale:'en-US',timeZone:'UTC',options:{month:'short',day:'numeric'}});
+presentation.setAxisFormat('y',{kind:'currency',currency:'usd',locale:'en-US',options:{maximumFractionDigits:2}});
+presentation.bookmark('Overview');right.setView({xDomain:[0,43200000]});presentation.bookmark('Detail');presentation.restoreBookmark('Overview');
+const importedPresentation=figure();
+importedPresentation.applySnapshot(presentationResult.snapshot,new Map(Object.entries(presentationResult.buffers).map(([id,value])=>{const bytes=Buffer.from(value,'base64');return [id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)];})));
+assert.equal(presentationResult.snapshot.figure.protocolVersion,5);
+assert.deepEqual(normalize(importedPresentation),normalize(presentation),'Python and JavaScript presentation scenes must agree');
+presentation.close();importedPresentation.close();
+console.log('Python and JavaScript produce equivalent v1–v5 scenes, themes, formats, time axes, linked groups, categorical/statistical defaults, dtypes, raw buffers, updates and package versions.');

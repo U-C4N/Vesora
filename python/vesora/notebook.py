@@ -42,7 +42,7 @@ def make_widget(figure: Any) -> Any:
 
         def _receive(self, widget: Any, content: Any, buffers: Any) -> None:
             if isinstance(content, dict) and content.get("type") == "event":
-                if content.get("event") in ("viewchange", "error") and content.get("revision") != self.revision:
+                if content.get("event") in ("viewchange", "selection", "click", "error") and content.get("revision") != self.revision:
                     return
                 figure._emit(str(content.get("event", "")), content.get("payload"))
             elif isinstance(content, dict) and content.get("type") in ("export", "export-error"):

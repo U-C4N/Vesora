@@ -1,18 +1,22 @@
 import {DataRegistry} from './data';
 import {lineSteps, runSteps, scatterSteps} from './planning';
 import {statisticsSteps} from './statistics';
+import {linkedSteps, maskedScatterSteps} from './linked';
+import type {LinkedResult} from './linked';
 import type {PreparedStatistics} from './statistics';
-import type {DataEntry, DataStore, LayerSpec, LineResult, PointPlan, Query} from './types';
+import type {DataEntry, DataStore, LayerSpec, LineResult, PointPlan, Query, SelectionLinkSpec} from './types';
 
 export type WorkerRequest =
   | {type: 'register'; entry: DataEntry}
   | {type: 'release'; id: string}
   | {type: 'query'; requestId: number; key: string; kind: 'scatter' | 'line'; xId: string; yId: string; query: Query}
   | {type: 'statistics'; requestId: number; key: string; layer: LayerSpec}
+  | {type: 'linked'; requestId: number; key: string; link: SelectionLinkSpec; layers: LayerSpec[]; baseline: PreparedStatistics}
+  | {type: 'selected-scatter'; requestId: number; key: string; xId: string; yId: string; mask: Uint8Array; query: Query}
   | {type: 'cancel'; requestId: number}
   | {type: 'dispose'};
 export type WorkerResponse =
-  | {type: 'result'; requestId: number; result: PointPlan | LineResult | PreparedStatistics}
+  | {type: 'result'; requestId: number; result: PointPlan | LineResult | PreparedStatistics | LinkedResult}
   | {type: 'error'; requestId: number; name: string; message: string};
 
 const registry = new DataRegistry();
@@ -42,7 +46,8 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
     registry.clear(); scope.close(); return;
   }
   const {requestId} = message;
-  const task = {cancelled: false, ids: message.type === 'statistics' ? Object.values(message.layer.data) : [message.xId, message.yId]};
+  const task = {cancelled: false, ids: message.type === 'statistics' ? Object.values(message.layer.data)
+    : message.type === 'linked' ? [...new Set(message.layers.flatMap(layer => Object.values(layer.data)))] : [message.xId, message.yId]};
   requests.set(requestId, task);
   void (async () => {
     try {
@@ -51,11 +56,14 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
       // immutable source/version snapshot.
       const captured: DataStore = new Map(task.ids.map(id => [id, registry.get(id)]));
       const steps = message.type === 'statistics' ? statisticsSteps(message.layer, captured)
-        : message.kind === 'line' ? lineSteps(registry.get(message.xId).values, registry.get(message.yId).values, message.query)
-          : scatterSteps(registry.get(message.xId).values, registry.get(message.yId).values, message.query);
-      const result = await runSteps<PointPlan | LineResult | PreparedStatistics>(steps, () => task.cancelled || disposed);
+        : message.type === 'linked' ? linkedSteps(message.link, message.layers, captured, message.baseline)
+          : message.type === 'selected-scatter' ? maskedScatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.mask, message.query)
+            : message.kind === 'line' ? lineSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.query)
+              : scatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.query);
+      const result = await runSteps<PointPlan | LineResult | PreparedStatistics | LinkedResult>(steps, () => task.cancelled || disposed);
       if (task.cancelled || disposed) return;
-      const transfer: Transferable[] = 'marks' in result ? [] : result.kind === 'points' ? [result.indices.buffer] : result.kind === 'density' ? [result.counts.buffer] : result.segments.map(segment => segment.buffer);
+      const transfer: Transferable[] = result.kind === 'linked' ? [result.mask.buffer, result.preview.buffer]
+        : 'marks' in result ? [] : result.kind === 'points' ? [result.indices.buffer] : result.kind === 'density' ? [result.counts.buffer] : result.segments.map(segment => segment.buffer);
       scope.postMessage({type: 'result', requestId, result}, transfer);
     } catch (error) {
       if (!task.cancelled && !disposed) scope.postMessage({type: 'error', requestId, name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error)});

@@ -1,6 +1,38 @@
 # API and usage
 
-Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. A figure contains either 2D or 3D layers; mixing them in one figure raises an error. v0.4 adds statistical charts and categorical coordinates to the existing fixed 2D panels, annotations and exports. Installation dependencies are unchanged.
+Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. A figure contains either 2D or 3D layers; mixing them in one figure raises an error. v0.6 adds themes, time axes, declarative formats and a separate [React adapter](../packages/react/README.md). Python installation dependencies are unchanged.
+
+## Themes, dates and number formats
+
+Themes apply to WebGL backgrounds, Canvas axes/labels/tooltips, viewer controls and exports. Choose `light`, `dark`, or partial tokens: `background`, `foreground`, `muted`, `grid`, `axis`, `tooltipBackground`, `tooltipForeground`, `selection`, `error`, `fontFamily`, `fontSize` and `palette`. Explicit layer colors override the theme palette. The default remains light.
+
+```typescript
+import { figure } from '@vesora/core';
+
+const fig = figure({ theme: 'dark', title: 'Revenue' });
+fig.plot([Date.UTC(2026, 9, 1), Date.UTC(2026, 9, 2)], [4200, 5100], { label: 'Revenue' });
+fig.setView({ xScale: 'time' });
+fig.setAxisFormat('x', { kind: 'date', locale: 'en-US', timeZone: 'UTC' });
+fig.setAxisFormat('y', { kind: 'currency', currency: 'USD', locale: 'en-US' });
+fig.mount(document.getElementById('chart')!);
+```
+
+```python
+import vesora as vs
+
+fig = vs.figure(theme="dark", title="Revenue")
+fig.plot([1790812800000, 1790899200000], [4200, 5100], label="Revenue")
+fig.set_axes(xscale="time")
+fig.set_axis_format("x", {"kind": "date", "locale": "en-US", "timeZone": "UTC"})
+fig.set_axis_format("y", {"kind": "currency", "currency": "USD", "locale": "en-US"})
+fig.save_html("revenue.html")
+```
+
+Time coordinates are numeric UTC epoch milliseconds; locale and timezone affect labels, not observation identity or geometry. Calendar ticks use UTC boundaries and adapt to the visible interval. Use `kind: 'number' | 'percent' | 'currency' | 'date'`; percentage values are fractions, and currency requires a three-letter code. Optional `options` contains supported JSON-safe Intl settings. Date formatting defaults to `en-US` and `UTC`; explicit Intl date options override automatic tick formatting. Time axes are for numeric 2D data; existing statistical and categorical restrictions remain enforced.
+
+Use `setTheme(...)` / `set_theme(...)` to change a theme. Panel handles also provide axis formatting. Theme/time/format features promote snapshots to protocol 5; readers retain protocols 1–4. Invalid options fail before changing the current valid scene. Declarative formats survive offline HTML, while application callbacks remain in the host.
+
+JavaScript `fig.on(...)` callbacks use `FigureEventMap`. Hover includes original source indices when a point is identifiable, plus local/client pointer positions; `null` clears a previous hover. Click carries the same hit information. Density hover identifies a bin rather than an individual record. Consumer callback exceptions are reported to the console and isolated from rendering and readiness. The returned unsubscribe function removes the subscription.
 
 ## Create a figure
 
@@ -93,7 +125,7 @@ Shared axes use the union of valid data extents from visible layers in the linke
 
 Existing `fig.plot`, `fig.scatter`, `fig.heatmap`, `fig.set_axes` and `fig.setView` address the top-left panel. They still participate in configured sharing. `fig.set_title` / `fig.setTitle` changes the whole-figure title. `fig.panel(0, 0)` also works for an ordinary single-panel figure.
 
-Grid shape is fixed at creation. This version has no panel spans, nested layouts, dynamic panel insertion, 3D panels, or linked selection highlighting. Existing single-panel 3D figures remain supported.
+Grid shape is fixed at creation. This version has no panel spans, nested layouts, dynamic panel insertion or 3D panels. One explicit selection link can highlight two numeric scatter layers and compare a count histogram in three distinct panels; see [linked observations](#follow-observations-across-views). Existing single-panel 3D figures remain supported.
 
 Grid cells have a minimum size of 360 × 260 CSS pixels, plus space for a figure title. A smaller mount area scrolls without rearranging the grid. PNG export includes the complete drawing area, including portions outside the visible scroll area.
 
@@ -132,7 +164,7 @@ Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. T
 
 Supported Python inputs include lists, tuples, `array.array`, and supported numeric buffers. When installed, NumPy `ndarray` inputs are accepted through the buffer protocol. This uses the same data adapter and visualization engine.
 
-For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.4.0/vesora-0.4.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
+For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
 
 This example supplies Float32 buffers using the Python standard library:
 
@@ -182,7 +214,48 @@ unsubscribe();
 
 JavaScript's `fig.inspect()` returns `kind`, `total`, `visible`, `rendered`, `exact`, `method`, and `layerId` for each layer, with `panelId` for grid results. For density, `exact: true` means the counts are exact; it does not mean every point is drawn separately. After a view update, use `await fig.ready()` before reading the completed result. Python does not expose `fig.inspect()`; subscribe to the `representation` event or use the exported viewer's inspector.
 
-JavaScript event names are `hover`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward `selection`, `viewchange`, `representation`, and `error`; `hover` is currently JavaScript-only. A point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. A density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. A selection does not highlight or filter another panel. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
+JavaScript event names are `hover`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward `selection`, `viewchange`, `representation`, and `error`; `hover` is currently JavaScript-only. An unlinked point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. An unlinked density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. Without an explicit selection link, selection does not highlight or filter another panel. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
+
+## Follow observations across views
+
+Link exactly two numeric scatter layers and one count histogram in three distinct 2D panels of the same figure. Every coordinate and histogram channel must have the same row count and order. **Row ordinal is observation identity**; Vesora cannot infer alignment or perform joins. One figure supports one selection link.
+
+```python
+import vesora as vs
+
+fig = vs.subplots(1, 3, width=1200, title="Inspect observations")
+x, y, feature = [0, 1, 2, 3], [0.1, 0.2, 3, 0.1], [0.1, 0.2, 0.9, 0.3]
+a = fig.panel(0, 0).scatter(x, y)
+b = fig.panel(0, 1).scatter(feature, y)
+h = fig.panel(0, 2).hist(y, bins=[0, 1, 2, 4])
+link = fig.link_selection(scatter=[a, b], histogram=h)
+fig.show()
+# link.clear() clears the cohort; link.remove() permits data/options updates.
+fig.save_html("observations.html")
+```
+
+```javascript
+import { subplots } from '@vesora/core';
+
+const fig = subplots({rows: 1, cols: 3, width: 1200, title: 'Inspect observations'});
+const x = [0, 1, 2, 3], y = [.1, .2, 3, .1], feature = [.1, .2, .9, .3];
+const a = fig.panel(0, 0).scatter(x, y);
+const b = fig.panel(0, 1).scatter(feature, y);
+const h = fig.panel(0, 2).hist(y, {bins: [0, 1, 2, 4]});
+const link = fig.linkSelection({scatter: [a, b], histogram: h});
+fig.mount(document.querySelector('#chart'));
+// link.clear() clears the cohort; link.remove() permits data/options updates.
+```
+
+Shift + drag in either linked scatter creates an inclusive data-coordinate rectangle; a new rectangle replaces the cohort. Original finite x/y coordinates determine membership, independently of point/density display. The same row mask highlights both scatters and contributes to the selected histogram. A dense selected cohort may use count aggregation. Histogram selection does not create a cohort; linked lines, lasso, joins and selection set operations are outside v0.5.
+
+The full histogram retains its original bins and counts. The selected overlay uses the same edges and **raw counts**. `density=True` or `cumulative=True` is rejected when linking. Zoom, pan, Reset view and view bookmarks preserve the cohort. Clear selection removes the active predicate; it does not select every row. An active rectangle matching zero rows is displayed as a zero cohort rather than a cleared selection.
+
+The summary reports selected rows / total aligned rows and percentage. Target scatter invalid coordinates omit marks without changing membership. Selected histogram non-finite values and samples outside the configured range are excluded from its bins and reported separately. Thus histogram-included samples can be fewer than selected rows. Membership is complete even when the `selection` event's index preview is truncated at 10,000 entries. A linked event has `kind: "linked"`, `linkId`, `generation`, `sequence`, `layerId`, `active`, `count`, `total`, `fraction`, `indices`, `truncated` and, for an active predicate, `bounds`. Events are emitted after the complete current cohort has rendered.
+
+JavaScript link creation and linked-scene import isolate member numeric buffers from caller-owned TypedArrays without changing descriptor versions or values; caller mutations do not alter the linked records. This isolation adds buffer copies. Linked layer source arrays and histogram options are immutable until `link.remove()`; attempted changes fail atomically. Styles and views may change. Removing a member layer removes its link. Re-link explicitly after replacing or reordering data. Protocol `4` scenes store the link and completed rectangle, not a viewport-specific list of drawn points. Existing protocol 1/2/3 scenes remain readable. An exported file recomputes the exact cohort from the embedded original sources and opens with the completed export-time selection. PNG includes the highlight, count comparison and cohort summary; view bookmarks continue to store views only.
+
+See [the 200,000-row example](../examples/web/linked.html), [v0.5 limits](releases/v0.5.0.md) and [the pilot protocol](pilot-v0.5.md).
 
 ## Share an interactive figure
 
@@ -317,9 +390,9 @@ Numeric viewport limits and annotation coordinates refer to ordinal slots (0, 1,
 
 ### Inspect, interact and share
 
-Statistical charts require linear 2D axes in v0.4. New layers and categorical scenes use protocol 3, including when combined with v0.3 panels or annotations. Existing v1/v2 scenes remain readable. Invalid data/options updates leave the previous valid scene intact.
+Histograms and boxplots require linear 2D axes. Bars permit linear or time positions with a linear value axis; bar widths use position units, including milliseconds. Statistical layers and categorical scenes use protocol 3 unless newer features promote them: links require protocol 4 and presentation/time require protocol 5. Existing scenes remain readable. Invalid data/options updates leave the previous valid scene intact.
 
-Hover displays bar values/baselines, histogram bin edges/counts/displayed heights, or box quartiles/whiskers/outliers. Rectangle selection emits `kind: 'bars' | 'bins' | 'boxes'`, with layer/panel IDs, selected row/bin/group `indices`, `count`, and `truncated` (at most 10,000 returned indices). Bin/group indices are not raw sample indices. Selecting a box means selecting a group, not filtering its raw samples. Linked highlighting remains outside this release.
+Hover displays bar values/baselines, histogram bin edges/counts/displayed heights, or box quartiles/whiskers/outliers. Rectangle selection emits `kind: 'bars' | 'bins' | 'boxes'`, with layer/panel IDs, selected row/bin/group `indices`, `count`, and `truncated` (at most 10,000 returned indices). Bin/group indices are not raw sample indices. Selecting a box means selecting a group, not filtering its raw samples. Histogram/bin selection remains independent; linked highlighting begins in a scatter of an explicit selection link.
 
 The inspector's `total` counts source values; `valid` counts finite values, `omitted` counts non-finite values, and `rangeExcluded` counts histogram samples outside the range. `rendered` counts intersecting bars/bins/groups, not GPU triangles. `visible` for histograms/boxes counts samples in intersecting bins/groups, **not** a raw point-in-viewport query; `method` states this distinction. Summary exactness is independent of viewport clipping.
 

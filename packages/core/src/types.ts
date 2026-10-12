@@ -1,8 +1,38 @@
 export const PROTOCOL_VERSION = 1;
 export const EXTENDED_PROTOCOL_VERSION = 2;
 export const STATISTICS_PROTOCOL_VERSION = 3;
+export const LINKED_PROTOCOL_VERSION = 4;
+export const PRESENTATION_PROTOCOL_VERSION = 5;
 export type NumericArray = Float64Array | Float32Array | Int32Array | Uint32Array | Int16Array | Uint16Array | Int8Array | Uint8Array;
-export type ScaleKind = "linear" | "log";
+export type ScaleKind = "linear" | "log" | "time";
+export interface ThemeTokens {
+  background: string; foreground: string; muted: string; grid: string; axis: string;
+  tooltipBackground: string; tooltipForeground: string; selection: string; error: string;
+  fontFamily: string; fontSize: number; palette: string[];
+}
+export type ThemeInput = 'light' | 'dark' | Partial<ThemeTokens>;
+export type AxisFormat =
+  | {kind: 'number' | 'percent'; locale?: string; options?: Intl.NumberFormatOptions}
+  | {kind: 'currency'; currency: string; locale?: string; options?: Intl.NumberFormatOptions}
+  | {kind: 'date'; locale?: string; timeZone?: string; options?: Intl.DateTimeFormatOptions};
+export interface PresentationOptions {tooltip?: boolean; legend?: boolean}
+export interface PointerPosition {x: number; y: number; clientX: number; clientY: number}
+export interface HoverEvent {
+  kind: 'point' | 'bar' | 'bin' | 'box' | 'outlier' | 'density' | 'cell';
+  layerId: string; panelId?: string; index?: number; sourceIndex?: number;
+  x?: number | string; y?: number | string; category?: number | string; value?: number;
+  position?: number; pointerPosition: PointerPosition; [key: string]: unknown;
+}
+export interface ViewChangeEvent extends Omit<ViewSpec,'xDomain'|'yDomain'|'zDomain'> {
+  xDomain: Domain | null; yDomain: Domain | null; zDomain: Domain | null;
+  panelId?: string; panelViews?: Record<string, Omit<ViewSpec,'xDomain'|'yDomain'|'zDomain'> & {xDomain:Domain|null;yDomain:Domain|null;zDomain:Domain|null}>;
+}
+export interface FigureEventMap {
+  selection: Selection; hover: HoverEvent | null; click: HoverEvent;
+  viewchange: ViewChangeEvent;
+  representation: Array<RepresentationInfo & {layerId: string; panelId?: string}>;
+  error: {message: string};
+}
 export type Domain = [number, number];
 export type LayerKind = "line" | "scatter" | "heatmap" | "surface" | "scatter3d" | "hist" | "bar" | "boxplot";
 export type Orientation = 'vertical' | 'horizontal';
@@ -33,6 +63,7 @@ export interface ViewSpec {
   xLabel: string; yLabel: string; zLabel: string;
   camera: {azimuth: number; elevation: number; distance: number};
   pan3d?: [number, number];
+  xFormat?: AxisFormat; yFormat?: AxisFormat;
 }
 export interface ViewState {view: ViewSpec; panelViews?: Record<string, ViewSpec>}
 export interface ViewBookmark extends ViewState {name: string; note?: string}
@@ -56,6 +87,19 @@ export interface FigureSpec {
   /** Axis identity is data semantics, not bookmark state. Keys are axis:panel or axis:shared. */
   categories?: Record<string, string[]>;
   barModes?: Record<string, BarMode>;
+  selectionLink?: SelectionLinkSpec;
+  theme?: ThemeTokens;
+}
+/** Observation identity is the fixed, explicitly aligned source row ordinal. */
+export interface SelectionLinkSpec {
+  id: string; scatter: [string, string]; histogram: string;
+  generation: number; sequence: number;
+  selection?: {originLayerId: string; bounds: Bounds};
+}
+export interface LinkedSelection {
+  kind: 'linked'; linkId: string; generation: number; sequence: number;
+  layerId: string; panelId?: string; bounds?: Bounds; active: boolean;
+  count: number; total: number; fraction: number; indices: number[]; truncated: boolean;
 }
 export interface Snapshot {figure: FigureSpec; sources: DataDescriptor[]}
 export interface DataEntry {descriptor: DataDescriptor; values: NumericArray}
@@ -75,9 +119,10 @@ export interface DensityResult {kind: "density"; counts: Uint32Array; columns: n
 export interface LineResult {kind: "line"; segments: Uint32Array[]; info: RepresentationInfo}
 export type PointPlan = PointsResult | DensityResult;
 export type Selection =
+  | LinkedSelection
   | {kind: "points"; layerId: string; panelId?: string; indices: number[]; count: number; truncated: boolean}
   | {kind: "density"; layerId: string; panelId?: string; bounds: Bounds; count: number}
   | {kind: "bars" | "bins" | "boxes"; layerId: string; panelId?: string; indices: number[]; count: number; truncated: boolean};
 export interface BackendCapabilities {name: string; supports3d: boolean; rasterExport: boolean; vectorExport: boolean}
-export interface FigureOptions {title?: string; width?: number; height?: number; kind?: "2d" | "3d"}
+export interface FigureOptions {title?: string; width?: number; height?: number; kind?: "2d" | "3d"; theme?: ThemeInput}
 export interface SubplotsOptions extends Omit<FigureOptions, 'kind'> {rows: number; cols: number; shareX?: boolean; shareY?: boolean}

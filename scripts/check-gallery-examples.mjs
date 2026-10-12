@@ -9,14 +9,16 @@ import { figure, subplots } from '../packages/core/dist/index.js';
 import { examples as originalExamples } from '../examples/web/scenarios.js';
 import { comparisonExamples } from '../examples/web/comparison-scenarios.js';
 import { statisticsExamples } from '../examples/web/statistics-scenarios.js';
-const examples = [...originalExamples, ...comparisonExamples, ...statisticsExamples];
+import { linkedExamples } from '../examples/web/linked-scenarios.js';
+const examples = [...originalExamples, ...comparisonExamples, ...statisticsExamples, ...linkedExamples];
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const expected = ['multi-line', 'training-loss', 'benchmark-score', 'quality-latency', 'signal', 'scatter', 'density', 'heatmap', 'precision', 'spectrum', 'phase', 'surface', 'scatter3d', 'lorenz', 'interference', 'peaks'];
 expected.push('signal-comparison', 'shared-distributions', 'heatmap-comparison');
 expected.push(...statisticsExamples.map(example => example.id));
+expected.push(...linkedExamples.map(example => example.id));
 assert.deepEqual(examples.map(example => example.id), expected);
-assert.equal(examples.filter(example => example.dimension === '2d').length, 20);
+assert.equal(examples.filter(example => example.dimension === '2d').length, 21);
 assert.equal(examples.filter(example => example.dimension === '3d').length, 5);
 
 function shapeSummary(snapshot) {
@@ -84,6 +86,11 @@ for (const example of examples) {
     const fig = figures[0], snapshot = fig.snapshot();
     assert.equal(snapshot.figure.view.kind, example.dimension, `${example.id}: incorrect dimension`);
     assert.ok(snapshot.figure.layers.length > 0, `${example.id}: empty scene`);
+    if (example.id === 'linked-model-errors') {
+      assert.equal(snapshot.figure.protocolVersion, 4);
+      assert.deepEqual(snapshot.figure.selectionLink.scatter, snapshot.figure.layers.slice(0, 2).map(layer => layer.id));
+      assert.equal(snapshot.figure.selectionLink.histogram, snapshot.figure.layers[2].id);
+    }
     if (expected.slice(0, 4).includes(example.id)) {
       assert.equal(example.synthetic, true);
       assert.match(example.dataNote, /Synthetic data/);
@@ -145,6 +152,10 @@ for example in json.load(sys.stdin):
         snapshot = figure.snapshot()
         assert snapshot['figure']['view']['kind'] == example['dimension']
         assert snapshot['figure']['layers'], example['id'] + ': empty scene'
+        if example['id'] == 'linked-model-errors':
+            assert snapshot['figure']['protocolVersion'] == 4
+            assert snapshot['figure']['selectionLink']['scatter'] == [layer['id'] for layer in snapshot['figure']['layers'][:2]]
+            assert snapshot['figure']['selectionLink']['histogram'] == snapshot['figure']['layers'][2]['id']
         sources = {source['id']: source for source in snapshot['sources']}
         for source in sources.values():
             assert len(figure._data_bytes(source['id'], source['version'])) == source['byteLength']

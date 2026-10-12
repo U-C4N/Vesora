@@ -1,10 +1,10 @@
 """Vesora: Python data APIs backed by one shared TypeScript visualization engine."""
 from __future__ import annotations
 from typing import Any
-from .figure import Figure, Layer, Panel, Annotation, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION
+from .figure import Figure, Layer, Panel, Annotation, SelectionLink, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION
 
-__version__ = "0.4.0"
-__all__ = ["Figure", "Layer", "Panel", "Annotation", "figure", "subplots", "plot", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
+__version__ = "0.6.0"
+__all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "figure", "subplots", "plot", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
 _last_figure: Figure | None = None
 
 

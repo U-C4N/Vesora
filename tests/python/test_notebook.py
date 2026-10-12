@@ -65,7 +65,7 @@ def test_widget_revision_protects_bookmark_restore_and_preserves_selection():
         fig.on("selection", selections.append)
         widget._receive(widget, {"type": "event", "event": "error", "revision": stale,
                                  "payload": {"message": "obsolete"}}, [])
-        widget._receive(widget, {"type": "event", "event": "selection", "payload": {"count": 1}}, [])
+        widget._receive(widget, {"type": "event", "event": "selection", "revision": current, "payload": {"count": 1}}, [])
         assert errors == [] and selections == [{"count": 1}]
     finally:
         widget.close()

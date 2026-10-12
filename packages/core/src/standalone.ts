@@ -130,6 +130,18 @@ async function start():Promise<void> {
   try{
     const {snapshot,buffers}=decodePayload(JSON.parse(element('vesora-payload').textContent||''));
     fig=figure();fig.applySnapshot(snapshot,buffers);
+    if(fig.spec.theme){
+      const theme=fig.spec.theme,root=document.documentElement;
+      for(const key of ['background','foreground','muted','grid','axis','selection','error'] as const)root.style.setProperty(`--vesora-${key}`,theme[key]);
+      document.body.style.fontFamily=theme.fontFamily;document.body.style.background=theme.background;document.body.style.color=theme.foreground;
+      const style=document.createElement('style');style.textContent=`
+        .plot-panel,.panel,button,select{background:var(--vesora-background);color:var(--vesora-foreground);border-color:var(--vesora-axis)}
+        .topbar,.interaction-help,.metric{border-color:var(--vesora-grid)}
+        .panel-intro,.interaction-help,.statusline,.footer,.metric dt,.method,.representation-note,.eyebrow,.bookmark-number,.local-label{color:var(--vesora-muted)}
+        .metric dd{color:var(--vesora-foreground)}button:hover:not(:disabled),.bookmark[aria-pressed="true"]{background:var(--vesora-grid);color:var(--vesora-foreground);border-color:var(--vesora-axis)}
+        .error{background:var(--vesora-background);color:var(--vesora-error);border-color:var(--vesora-error)}`;
+      document.head.append(style);
+    }
     const entryView=fig.captureViews();
     const bookmarks=fig.spec.bookmarks??[];
     document.title=fig.spec.title?`${fig.spec.title} — Vesora`:'Vesora — Interactive figure';
@@ -171,6 +183,7 @@ async function start():Promise<void> {
       }).catch(error=>{if(current===readiness)fail(error);});
     });
     fig.on('representation',next=>{updateInspector(next);ready();});
+    chart.addEventListener('vesora-selection-pending',()=>{busy();const current=++readiness;void fig!.ready().then(()=>{if(!disposed&&current===readiness){updateInspector(fig!.inspect());ready();}}).catch(error=>{if(current===readiness)fail(error);});});
     fig.on('error',error=>fail(error?.message??error));
     png.addEventListener('click',async()=>{
       if(!fig||exporting||disposed)return;
@@ -187,6 +200,8 @@ async function start():Promise<void> {
     workerURL=URL.createObjectURL(new Blob([__VESORA_WORKER_SOURCE__],{type:'text/javascript'}));
     setWorkerURL(workerURL);
     try{fig.mount(chart);}finally{setWorkerURL(undefined);}
+    const clearSelection=chart.querySelector<HTMLButtonElement>('.vesora-clear-selection'),selectionSummary=chart.querySelector<HTMLSpanElement>('.vesora-selection-summary');
+    if(clearSelection)clearSelection.id='vesora-clear-selection';if(selectionSummary)selectionSummary.id='vesora-selection-summary';
     await fig.ready();
   }catch(error){fail(error);fig?.close();if(workerURL){URL.revokeObjectURL(workerURL);workerURL=undefined;}}
 }

@@ -11,7 +11,7 @@ let applying=Promise.resolve();
 let currentRevision=0, renderFailure=null, applyingView=true;
 const endpoint=(path)=>`${path}${path.includes('?')?'&':'?'}token=${encodeURIComponent(token??'')}`;
 const send=(message)=>{if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));};
-for(const event of ['selection','viewchange','representation','error'])fig.on(event,payload=>{
+for(const event of ['selection','click','viewchange','representation','error'])fig.on(event,payload=>{
   if(event==='viewchange'&&applyingView)return;
   send({type:'event',event,payload,revision:currentRevision});
 });

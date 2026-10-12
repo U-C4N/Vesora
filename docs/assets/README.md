@@ -1,6 +1,30 @@
 # README figure provenance
 
-The four PNGs in this directory are exported by Vesora itself through the Python API and its bundled TypeScript/WebGL2 engine. The SVG banner is a decorative wordmark, not a data plot.
+The scientific PNGs in this directory are exported by Vesora itself through the Python API and its bundled TypeScript/WebGL2 engine. Signal Studio PNGs are browser screenshots of the production React starter. The SVG banner is a decorative wordmark, not a data plot.
+
+## Signal Studio screenshots
+
+From the repository root:
+
+```bash
+npm ci
+npm run build
+npx playwright install chromium
+npm run capture:readme
+```
+
+The capture command builds the Vite application, waits for all three charts to finish rendering, and saves light/dark desktop views at 1440 CSS pixels and a full mobile view at 390 CSS pixels. Desktop frames include the trend, subscription bars and account scatter. The same browser run checks API refresh, keyboard legend, PNG export, API-error recovery and mobile overflow. Installed Chrome is used when available; otherwise Playwright Chromium is used.
+
+| File | View |
+| --- | --- |
+| `signal-studio-light.png` | Light workspace with the dark trend canvas, period-peak insight and subscription/activity charts. |
+| `signal-studio-dark.png` | The same initial 30-day snapshot in dark mode. |
+| `signal-studio-mobile.png` | The initial light workspace at 390 px, including the application-owned account table. |
+| `signal-studio-mobile-preview.png` | A 390 × 940 px viewport centered on the revenue chart, used as a readable README thumbnail linking to the full mobile view. |
+
+All data is deterministic and synthetic. The account sample contains 24 rows; the subscription bars use a separate aggregate sample. Orbit dots group accounts by plan; their positions are decorative. These screenshots demonstrate the working interface and do not represent customer results or performance measurements. The capture code is in [`starter.spec.mjs`](../../tests/saas/starter.spec.mjs).
+
+## Scientific figures
 
 From the repository root, with a working QtWebEngine graphics environment:
 
