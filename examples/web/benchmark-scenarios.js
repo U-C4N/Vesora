@@ -8,6 +8,7 @@ function addSeries(fig, records, markers = false) {
     fig.plot(x, y, { color, width: 2.2, label });
     if (markers) fig.scatter(x, y, { color, size: 6, representation: 'points' });
   }
+  fig.setHoverMode('x');
 }
 
 function multiLine(fig) {
@@ -95,7 +96,7 @@ function javascript(create) {
 function python(body) {
   return 'import math\nimport vesora as vs\n\n'
     + '# Synthetic data: Not measured results or real model outputs.\n'
-    + body.trim() + '\n\nvs.show()';
+    + body.trim() + '\nfig.set_hover_mode("x")\n\nvs.show()';
 }
 
 function modelSeries(markers = false) {
@@ -107,7 +108,7 @@ export const benchmarkExamples = [
     id: 'multi-line', dimension: '2d', category: 'line', title: 'One day, three temperature curves', type: 'LINE / MULTIPLE SERIES',
     description: 'Synthetic · Three temperature sensors over 24 hours, sampled every 15 minutes.',
     tags: ['3 series', '24 hours', 'Temperature · °C'], synthetic: true, dataNote,
-    insight: 'Compare indoor and outdoor temperature ranges on the same axes in this synthetic daily cycle.',
+    insight: 'Hover to compare all three synthetic temperature curves at the nearest source sample.',
     series: ['Indoor', 'Laboratory', 'Outdoor'].map((label, i) => ({ label, color: modelColors[i], layerIndices: [i] })),
     create: multiLine, javascript: javascript(multiLine),
     python: python(`fig = vs.figure()
@@ -128,7 +129,7 @@ fig.set_axes(xlim=(0, 24), ylim=(9, 26), xlabel="Hour", ylabel="Temperature (°C
     id: 'training-loss', dimension: '2d', category: 'ai', title: 'Training loss over time', type: 'AI / LEARNING CURVES',
     description: 'Synthetic · Three fictional models, 20,000 training steps, and a logarithmic loss axis.',
     tags: ['Model A / B / C', 'Log loss', 'Lower is better'], synthetic: true, dataNote,
-    insight: 'In these synthetic curves, the fastest initial improvement does not necessarily yield the lowest final loss.',
+    insight: 'Hover to compare source loss values at one training step. These synthetic curves illustrate how the fastest initial improvement can differ from the lowest final loss.',
     series: modelSeries(), create: trainingLoss, javascript: javascript(trainingLoss),
     python: python(`fig = vs.figure()
 steps = [i*50 for i in range(401)]
@@ -148,7 +149,7 @@ fig.set_axes(xlim=(0, 20000), yscale="log", xlabel="Training step", ylabel="Loss
     id: 'benchmark-score', dimension: '2d', category: 'ai', title: 'Success versus token budget', type: 'AI / BUDGET–SUCCESS CURVE',
     description: 'Synthetic · Three fictional models and seven inference budgets; these are not real benchmark results.',
     tags: ['128–8,192 tokens', 'Lines + markers', 'Success · %'], synthetic: true, dataNote,
-    insight: 'The synthetic ranking changes with budget; markers show sample values and lines connect them.',
+    insight: 'The synthetic ranking changes with budget; shared x hover reports source values at the nearest sampled budget.',
     series: modelSeries(true), create: benchmarkScore, javascript: javascript(benchmarkScore),
     python: python(`fig = vs.figure()
 tokens = [128, 256, 512, 1024, 2048, 4096, 8192]
@@ -167,7 +168,7 @@ fig.set_axes(xscale="log", xlim=(100, 10000), ylim=(0, 100),
     id: 'quality-latency', dimension: '2d', category: 'ai', title: 'Quality versus latency', type: 'AI / QUALITY–LATENCY CURVE',
     description: 'Synthetic · Seven budget settings per model; latency values are not measured timings.',
     tags: ['3 fictional models', 'Latency · ms', 'Quality · 0–100'], synthetic: true, dataNote,
-    insight: 'The upper left means higher quality and shorter latency; use this synthetic example to compare the trade-off.',
+    insight: 'The upper left means higher quality and shorter latency. Hover reports each curve’s nearest source sample with its own latency; values are not interpolated between budgets.',
     series: modelSeries(true), create: qualityLatency, javascript: javascript(qualityLatency),
     python: python(`fig = vs.figure()
 # Each series follows token budgets of 128, 256, 512, 1024, 2048, 4096, and 8192, in that order.

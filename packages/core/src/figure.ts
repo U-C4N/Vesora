@@ -3,14 +3,19 @@ import {validateDomain} from './scales';
 import {parseColor} from './color';
 import {FigureView} from './view';
 import {validateSelectionLink} from './linked';
-import {resolveTheme,validateTheme,validateAxisFormat} from './presentation';
-import type {AxisFormat,ThemeInput,PresentationOptions,FigureEventMap,ViewChangeEvent} from './types';
+import {hasTypography,resolveTheme,validateTheme,validateAxisFormat} from './presentation';
+import {validateBandData,validateBandStyle} from './band';
+import {validateExportPNGOptions} from './export-options';
+import {validateInspectionX} from './inspection';
+import {appendEntry,lastValue,streamEntry,streamError,validateStreamingOptions,validateStreamState} from './streaming';
+import type {DataEntry,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions} from './types';
+import type {AxisFormat,ThemeInput,PresentationOptions,FigureEventMap,ViewChangeEvent,FillBetweenOptions,HoverMode,ExportPNGOptions} from './types';
 import type {SelectionLinkSpec,LinkedSelection,Bounds} from './types';
 import {axisCategories,categoryKey,encodeAxis,isStatistical,labels,statisticalOptions,validateSemantics,validateStatisticalData} from './semantics';
 import type {AxisSeries} from './semantics';
 import type {BarMode,BarSpecOptions,BoxplotSpecOptions,HistogramSpecOptions,StatisticalOptions} from './types';
 import type {FigureSpec,FigureOptions,LayerSpec,LayerKind,LayerStyle,NumericArray,ViewSpec,ViewBookmark,ViewState,Snapshot,RepresentationInfo,PanelEntry,AnnotationSpec,AnnotationStyle,AnnotationOptions,SubplotsOptions} from './types';
-import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION} from './types';
+import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION} from './types';
 
 let serial=0;
 const id=(prefix:string)=>`${prefix}-${++serial}`;
@@ -136,7 +141,9 @@ function validateBookmarks(bookmarks:ViewBookmark[]|undefined,spec:FigureSpec):v
 }
 function flatten(values:Grid):NumericArray{return toNumericArray(Array.isArray(values)&&Array.isArray(values[0])?(values as number[][]).flat():values as Series);}
 export function validateStyle(style:LayerStyle):void{
-  for(const key of Object.keys(style))if(!['color','size','width','opacity','label','colormap','representation','colorDomain'].includes(key))throw new TypeError(`Unknown style option ${key}`);
+  if(!style||typeof style!=='object'||Array.isArray(style))throw new TypeError('Style must be an object');
+  for(const key of Object.keys(style))if(!['color','size','width','opacity','label','colormap','representation','colorDomain','colorbarLabel'].includes(key))throw new TypeError(`Unknown style option ${key}`);
+  for(const key of ['label','colorbarLabel'] as const)if(style[key]!==undefined&&typeof style[key]!=='string')throw new TypeError(`${key} must be a string`);
   if(style.color!==undefined)parseColor(style.color);
   for(const key of ['width','size'] as const)if(style[key]!==undefined&&(!Number.isFinite(style[key])||style[key]!<=0))throw new RangeError(`${key} must be finite and positive`);
   if(style.opacity!==undefined&&(!Number.isFinite(style.opacity)||style.opacity<0||style.opacity>1))throw new RangeError('opacity must be between 0 and 1');
@@ -148,10 +155,13 @@ export class Layer {
   constructor(readonly figure:Figure,readonly id:string){}
   get spec():LayerSpec{const layer=this.figure.spec.layers.find(l=>l.id===this.id);if(!layer)throw new Error('Layer has been removed');return layer;}
   setData(data:Record<string,unknown>):this{this.figure.updateData(this.spec,data);return this;}
+  enableStreaming(options:StreamingOptions):this{this.figure.enableStreaming(this,options);return this;}
+  appendData(data:Record<string,unknown>):Promise<void>{return this.figure.appendDataBatch([{layer:this,data}]);}
+  disableStreaming():this{this.figure.disableStreaming(this.id);return this;}
   setOptions(options:Record<string,unknown>):this{this.figure.updateOptions(this.spec,options);return this;}
-  setStyle(style:LayerStyle):this{validateStyle(style);Object.assign(this.spec.style,style);this.figure.changed();return this;}
-  setVisible(visible:boolean):this{this.spec.visible=visible;this.figure.changed();return this;}
-  remove():void{const layer=this.spec;this.figure.unlinkLayer(this.id);this.figure.spec.layers=this.figure.spec.layers.filter(l=>l.id!==this.id);for(const source of Object.values(layer.data))if(!this.figure.spec.layers.some(other=>Object.values(other.data).includes(source)))this.figure.registry.release(source);this.figure.changed();}
+  setStyle(style:LayerStyle):this{this.figure.updateStyle(this.spec,style);return this;}
+  setVisible(visible:boolean):this{this.figure.updateVisibility(this.spec,visible);return this;}
+  remove():void{const layer=this.spec;this.figure.disableStreaming(this.id);this.figure.unlinkLayer(this.id);this.figure.spec.layers=this.figure.spec.layers.filter(l=>l.id!==this.id);for(const source of Object.values(layer.data))if(!this.figure.spec.layers.some(other=>Object.values(other.data).includes(source)))this.figure.registry.release(source);this.figure.changed();}
 }
 export interface SelectionLinkOptions {scatter: [Layer,Layer] | Layer[]; histogram: Layer}
 export class SelectionLink {
@@ -170,6 +180,7 @@ export class Panel {
   constructor(readonly figure:Figure,readonly id:string){}
   get view():ViewSpec{return this.figure.panelView(this.id);}
   plot(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'line',{x,y},options);}
+  fillBetween(x:Series,lower:Series,upper:Series,options:FillBetweenOptions={}):Layer{return this.figure.addToPanel(this.id,'band',{x,lower,upper},{...options,opacity:options.opacity===undefined?.18:options.opacity});}
   scatter(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'scatter',{x,y},options);}
   hist(samples:Series,options:HistogramOptions={}):Layer{return this.figure.addHistogram(this.id,samples,options);}
   bar(x:AxisSeries,values:Series,options:BarOptions={}):Layer{return this.figure.addBar(this.id,x,values,options,'vertical');}
@@ -187,6 +198,11 @@ export class Panel {
 }
 export class Figure {
   readonly registry=new DataRegistry();
+  readonly streams=new Map<string,StreamState>();
+  readonly runtime:Readonly<RuntimeOptions>;
+  private streamWaiters=new Set<{ids:Set<string>;reject:(error:Error)=>void}>();
+  private semanticChecks=new WeakMap<DataEntry,Set<string>>();
+  private semanticScans=0;
   spec:FigureSpec;
   private view?:FigureView;
   private listeners=new Map<FigureEvent,Set<(event:any)=>void>>();
@@ -194,12 +210,139 @@ export class Figure {
   private pendingLink?:SelectionLinkSpec;
   private notifiedLink='';
   readonly presentation:Required<PresentationOptions>={tooltip:true,legend:true};
+  private knownStreamIds=new Set<string>();
   constructor(options:FigureOptions={}){
+    const runtime={...options.runtime};
+    for(const value of Object.values(runtime))if(!Number.isSafeInteger(value)||value!<1)throw new RangeError('Runtime limits must be positive safe integers');
+    this.runtime=Object.freeze(runtime);
     this.spec={protocolVersion:PROTOCOL_VERSION,id:id('figure'),title:options.title??'',width:options.width??800,height:options.height??520,view:defaultView(options.kind),layers:[]};
     if(!Number.isFinite(this.spec.width)||!Number.isFinite(this.spec.height)||this.spec.width<200||this.spec.height<180)throw new RangeError('Figure dimensions must be finite and at least 200 × 180');
     if(options.theme!==undefined)this.setTheme(options.theme);
   }
-  setTheme(theme:ThemeInput):this{this.assertOpen();const next=resolveTheme(theme);this.spec.theme=next;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,PRESENTATION_PROTOCOL_VERSION);this.changed();return this;}
+  getStreamingState(layerId:string):StreamState|undefined{const state=this.streams.get(layerId);return state?{...state}:undefined;}
+  private nextStreamId():string{
+    let candidate:string|undefined;try{const uuid=globalThis.crypto?.randomUUID?.();if(uuid)candidate=`stream-${uuid}`;}catch{/* Some hosts do not expose secure-context randomness. */}
+    candidate??=id('stream');
+    while(this.knownStreamIds.has(candidate)||[...this.streams.values()].some(state=>state.streamId===candidate))candidate=id('stream');
+    this.knownStreamIds.add(candidate);return candidate;
+  }
+  private validateCurrentSemantics(spec:FigureSpec):void{
+    const validate=(layer:LayerSpec,axis:'x'|'y',kind:string,values:NumericArray)=>{
+      const entry=this.registry.get(layer.data[axis]);let checked=this.semanticChecks.get(entry);
+      if(checked?.has(kind))return;
+      if(kind==='inspection')validateInspectionX(values);
+      else if(values.some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be epoch milliseconds within the JavaScript Date range');
+      this.semanticScans++;if(!checked){checked=new Set();this.semanticChecks.set(entry,checked);}checked.add(kind);
+    };
+    validateSemantics(spec,layer=>this.layerValues(layer),{inspection:(layer,values)=>validate(layer,'x','inspection',values),time:(layer,axis,values)=>validate(layer,axis,'time',values)});
+  }
+  private assertStreamingLayer(layer:LayerSpec):void{
+    this.assertMutableLayer(layer.id);
+    if(!['line','scatter'].includes(layer.kind)||this.panelView(layer.panelId??'main').kind!=='2d'||layer.categorical||layer.data.z)
+      throw new TypeError('Streaming requires a numeric 2D line or scatter without z coordinates');
+  }
+  private checkSourceBudget(writes:Map<string,DataEntry>,replace=false,released:ReadonlySet<string>=new Set()):void{
+    const maximum=this.runtime.maxSourceBytes;if(maximum===undefined)return;
+    let bytes=0;if(!replace)for(const [source,entry] of this.registry.entries())if(!writes.has(source)&&!released.has(source))bytes+=entry.descriptor.byteLength;
+    for(const entry of writes.values())bytes+=entry.descriptor.byteLength;
+    if(bytes>maximum)throw streamError('SOURCE_BUDGET_EXCEEDED',`Sources require ${bytes} bytes, exceeding maxSourceBytes=${maximum}`);
+  }
+  private rejectStreamWaiters(layerId?:string):void{
+    for(const waiter of [...this.streamWaiters])if(layerId===undefined||waiter.ids.has(layerId)){this.streamWaiters.delete(waiter);waiter.reject(streamError('STREAM_RESET','Streaming was reset, disabled, or detached before rendering completed'));}
+  }
+  enableStreaming(layer:Layer,options:StreamingOptions):void{
+    this.assertOpen();validateStreamingOptions(options);if(layer.figure!==this)throw new Error('Layer belongs to another figure');
+    const spec=layer.spec;this.assertStreamingLayer(spec);
+    const previous=this.streams.get(layer.id);if(previous){if(previous.maxPoints!==options.maxPoints)throw new Error('Disable streaming before changing maxPoints');return;}
+    const count=this.registry.get(spec.data.x).descriptor.shape[0],writes=new Map<string,DataEntry>(),data={...spec.data};
+    for(const [channel,source]of Object.entries(data)){
+      const old=this.registry.get(source);let target=source;
+      if(this.spec.layers.some(other=>Object.entries(other.data).some(([key,value])=>value===source&&(other.id!==layer.id||key!==channel)))){
+        target=`${layer.id}-${channel}-stream`;while(this.registry.has(target)||writes.has(target))target+='-new';
+      }
+      const entry=streamEntry(old,options.maxPoints,old.descriptor.version+1);
+      entry.descriptor.id=target;writes.set(target,entry);data[channel]=target;
+    }
+    const referenced=new Set(this.spec.layers.flatMap(item=>Object.values(item===spec?data:item.data))),released=new Set(Object.values(spec.data).filter(source=>!referenced.has(source)));
+    this.checkSourceBudget(writes,false,released);
+    for(const [source,entry]of writes)this.registry.store.set(source,entry);
+    spec.data=data;for(const source of released)this.registry.release(source);this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:options.maxPoints,nextSequence:count,revision:0,retained:Math.min(count,options.maxPoints),evicted:Math.max(0,count-options.maxPoints)});
+    this.changed();
+  }
+  disableStreaming(layerId:string):void{
+    this.assertOpen();if(!this.streams.has(layerId))return;this.rejectStreamWaiters(layerId);this.streams.delete(layerId);this.changed();
+  }
+  /** Restore transport metadata after an ordinary retained-window snapshot.
+   * Metadata stays outside FigureSpec, preserving scene protocols 1–6. */
+  restoreStreaming(states:Record<string,StreamState>):void{
+    this.assertOpen();if(!states||typeof states!=='object'||Array.isArray(states))throw new TypeError('Stream metadata must be an object');
+    const restored=new Map<string,StreamState>(),writes=new Map<string,DataEntry>();
+    for(const [layerId,state]of Object.entries(states)){
+      const layer=this.spec.layers.find(item=>item.id===layerId);if(!layer)throw new Error('Stream metadata references an unknown layer');this.assertStreamingLayer(layer);
+      validateStreamState(state,this.registry.get(layer.data.x).descriptor.shape[0]);
+      for(const source of Object.values(layer.data)){
+        if(this.spec.layers.some(other=>other.id!==layerId&&Object.values(other.data).includes(source)))throw new Error('Streaming sources cannot be shared across layers');
+        writes.set(source,streamEntry(this.registry.get(source),state.maxPoints));
+      }
+      restored.set(layerId,{...state});
+    }
+    this.checkSourceBudget(writes);this.rejectStreamWaiters();this.streams.clear();
+    for(const [layerId,state]of restored){this.streams.set(layerId,state);this.knownStreamIds.add(state.streamId);}
+    for(const [source,entry]of writes)this.registry.store.set(source,entry);
+    this.changed(true);
+  }
+  /** Validate every layer/channel before publishing a multi-series append. */
+  appendDataBatch(updates:Array<{layer:Layer;data:Record<string,unknown>}>):Promise<void>{
+    try{
+      this.assertOpen();if(!Array.isArray(updates))throw new TypeError('Append updates must be an array');
+      if(this.streamWaiters.size>=64)throw streamError('STREAM_BACKPRESSURE','Too many pending appends; await appendData before submitting more data');
+      const writes=new Map<string,DataEntry>(),states=new Map<string,StreamState>(),seen=new Set<string>();
+      for(const {layer,data}of updates){
+        if(!(layer instanceof Layer)||layer.figure!==this||seen.has(layer.id))throw new Error('Append each layer of this figure at most once');seen.add(layer.id);
+        const spec=layer.spec,state=this.streams.get(layer.id);if(!state)throw new Error('Enable streaming before appending');this.assertStreamingLayer(spec);
+        const channels=Object.keys(spec.data);
+        if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).length!==channels.length||channels.some(channel=>!Object.hasOwn(data,channel)))throw new TypeError('Append must supply every existing channel exactly once');
+        const nextEntries=new Map<string,DataEntry>(),added:Record<string,NumericArray>={};
+        for(const channel of channels){const source=spec.data[channel],prepared=appendEntry(this.registry.get(source),data[channel] as Series,state.maxPoints);nextEntries.set(source,prepared.entry);added[channel]=prepared.added;}
+        const count=added.x.length;if(channels.some(channel=>added[channel].length!==count))throw new RangeError('Append channels must have equal lengths');
+        if(!count)continue;
+        const view=this.panelView(spec.panelId??'main');
+        if(this.spec.hoverMode==='x'&&spec.kind==='line'&&spec.visible){
+          let previous=lastValue(this.registry.get(spec.data.x));
+          for(const value of added.x){if(!Number.isFinite(value)||previous!==undefined&&value<=previous)throw new RangeError('X inspection requires finite, strictly increasing x coordinates');previous=value;}
+        }
+        for(const axis of ['x','y']as const)if((view[`${axis}Scale`]==='time'||view[`${axis}Format`]?.kind==='date')&&added[axis].some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be within the JavaScript Date range');
+        const nextSequence=state.nextSequence+count,retained=Math.min(state.maxPoints,state.retained+count),revision=state.revision+1;
+        if(!Number.isSafeInteger(nextSequence)||!Number.isSafeInteger(revision))throw new RangeError('Streaming sequence exceeds the safe integer range');
+        states.set(layer.id,{...state,nextSequence,revision,retained,evicted:nextSequence-retained});
+        for(const [source,entry]of nextEntries)writes.set(source,entry);
+      }
+      if(!states.size)return Promise.resolve();this.checkSourceBudget(writes);
+      for(const [source,entry]of writes)this.registry.store.set(source,entry);
+      for(const [layerId,state]of states)this.streams.set(layerId,state);
+      this.changed(true);
+      if(!this.view)return Promise.resolve();
+      const view=this.view,ids=new Set(states.keys());
+      return new Promise<void>((resolve,reject)=>{
+        const waiter={ids,reject};this.streamWaiters.add(waiter);
+        void view.ready().then(()=>{if(this.streamWaiters.delete(waiter))resolve();},error=>{if(this.streamWaiters.delete(waiter))reject(error);});
+      });
+    }catch(error){return Promise.reject(error);}
+  }
+  setTheme(theme:ThemeInput):this{this.assertOpen();const next=resolveTheme(theme);this.spec.theme=next;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,hasTypography(next)?QUALITY_PROTOCOL_VERSION:PRESENTATION_PROTOCOL_VERSION);this.changed();return this;}
+  setHoverMode(mode:HoverMode):this{
+    this.assertOpen();if(!['nearest','x'].includes(mode))throw new TypeError('Hover mode must be nearest or x');const draft={...this.spec,hoverMode:mode};this.validateCurrentSemantics(draft);
+    this.spec.hoverMode=mode;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);this.view?.clearInteraction();this.changed();return this;
+  }
+  updateStyle(layer:LayerSpec,style:LayerStyle):void{
+    this.assertOpen();validateStyle(style);if(layer.kind==='band')validateBandStyle(style);
+    Object.assign(layer.style,style);if(style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);this.changed();
+  }
+  updateVisibility(layer:LayerSpec,visible:boolean):void{
+    this.assertOpen();if(typeof visible!=='boolean')throw new TypeError('Layer visibility must be a boolean');
+    const draft={...this.spec,layers:this.spec.layers.map(item=>item===layer?{...item,visible}:item)};
+    this.validateCurrentSemantics(draft);layer.visible=visible;this.changed();
+  }
   setAxisFormat(axis:'x'|'y',format:AxisFormat|null,panelId='main'):this{
     this.assertOpen();if(axis!=='x'&&axis!=='y')throw new TypeError('Axis format requires x or y');
     const next=format===null?undefined:validateAxisFormat(format);
@@ -216,12 +359,13 @@ export class Figure {
     this.spec.width=width;this.spec.height=height;this.changed();return this;
   }
   /** Detach browser resources while retaining data, subscribers and completed state. */
-  unmount():this{this.assertOpen();this.view?.dispose();this.view=undefined;this.pendingLink=undefined;return this;}
+  unmount():this{this.assertOpen();this.rejectStreamWaiters();this.view?.dispose();this.view=undefined;this.pendingLink=undefined;return this;}
   linkSelection(options:SelectionLinkOptions):SelectionLink{
     this.assertOpen();
     if(this.spec.selectionLink)throw new Error('A figure supports one selection link. Remove it before relinking.');
     if(!options||!Array.isArray(options.scatter)||options.scatter.length!==2||!options.histogram)throw new Error('Link two scatter layers and one histogram.');
     for(const layer of [...options.scatter,options.histogram])if(!(layer instanceof Layer)||layer.figure!==this)throw new Error('Linked layers must belong to this figure.');
+    for(const layer of [...options.scatter,options.histogram])if(this.streams.has(layer.id))throw new Error('Disable streaming before attaching a selection link.');
     const link:SelectionLinkSpec={id:id('link'),scatter:[options.scatter[0].spec.id,options.scatter[1].spec.id],histogram:options.histogram.spec.id,generation:1,sequence:0};
     const draft={...this.spec,protocolVersion:Math.max(this.spec.protocolVersion,LINKED_PROTOCOL_VERSION),selectionLink:link};
     validateSelectionLink(draft,this.registry);
@@ -285,6 +429,7 @@ export class Figure {
     return candidate;
   }
   plot(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Layer{return this.add('line',{x,y},options);}
+  fillBetween(x:Series,lower:Series,upper:Series,options:FillBetweenOptions={}):Layer{return this.add('band',{x,lower,upper},{...options,opacity:options.opacity===undefined?.18:options.opacity});}
   scatter(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Layer{return this.add('scatter',{x,y},options);}
   hist(samples:Series,options:HistogramOptions={}):Layer{return this.addHistogram('main',samples,options);}
   bar(x:AxisSeries,values:Series,options:BarOptions={}):Layer{return this.addBar('main',x,values,options,'vertical');}
@@ -302,6 +447,7 @@ export class Figure {
     this.assertOpen();const view=this.panelView(panelId),dimension=kind==='surface'||kind==='scatter3d'?'3d':'2d';
     if(this.spec.layout&&dimension!=='2d')throw new Error('Grid panels support 2D layers only');
     if((this.spec.layers.length||this.spec.bookmarks?.length||this.spec.annotations?.length)&&view.kind!==dimension)throw new Error('2D and 3D layers need separate figures');
+    if(kind==='band')validateBandStyle(options);
     const {values,...style}=options;validateStyle(style);if(values)data={...data,color:values};
     const layer:LayerSpec={id:this.allocateId('layer'),kind,data:{},style,visible:true};
     if(statOptions)layer.options=statisticalOptions(kind,statOptions);
@@ -324,7 +470,7 @@ export class Figure {
   }
   setPanelBarMode(panelId:string,mode:BarMode):this{
     this.panelView(panelId);const draft=structuredClone(this.spec);(draft.barModes??={})[panelId]=mode;
-    validateSemantics(draft,layer=>this.layerValues(layer));this.spec.barModes=draft.barModes;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);this.changed();return this;
+    this.validateCurrentSemantics(draft);this.spec.barModes=draft.barModes;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);this.changed();return this;
   }
   setPanelCategories(panelId:string,axis:'x'|'y',input:string[]):this{
     this.panelView(panelId);if(!['x','y'].includes(axis))throw new Error('Category axis must be x or y');
@@ -333,7 +479,7 @@ export class Figure {
     const next=labels(input),previous=this.spec.categories?.[key]??[];
     if(previous.some((value,index)=>next[index]!==value))throw new Error('Category order is append-only');
     const draft=structuredClone(this.spec);(draft.categories??={})[key]=next;
-    validateSemantics(draft,layer=>this.layerValues(layer));this.spec.categories=draft.categories;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);this.changed();return this;
+    this.validateCurrentSemantics(draft);this.spec.categories=draft.categories;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);this.changed();return this;
   }
   private layerValues(layer:LayerSpec):Record<string,NumericArray>{return Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,this.registry.get(source).values]));}
   updateOptions(layer:LayerSpec,options:Record<string,unknown>):void{
@@ -341,7 +487,7 @@ export class Figure {
     this.assertOpen();const next=statisticalOptions(layer.kind,{...layer.options,...options});
     if('orientation' in next&&next.orientation!==(layer.options as BarSpecOptions).orientation)throw new Error('Layer orientation cannot be changed');
     const candidate={...layer,options:next},draft=structuredClone(this.spec);draft.layers=draft.layers.map(item=>item.id===layer.id?candidate:item);
-    validateSemantics(draft,item=>this.layerValues(item));layer.options=next;this.changed();
+    this.validateCurrentSemantics(draft);layer.options=next;this.changed();
   }
   panelEntries():PanelEntry[]{this.assertOpen();return panelEntries(this.spec);}
   panelView(panelId='main'):ViewSpec{this.assertOpen();const panel=panelEntries(this.spec).find(item=>item.id===panelId);if(!panel)throw new Error(`Unknown panel: ${panelId}`);return panel.view;}
@@ -405,7 +551,7 @@ export class Figure {
           inputs.base=inputs[alias];delete inputs[alias];
         }
       }
-      const allowed=layer.kind==='hist'?['samples']:layer.kind==='bar'?['x','y','base']:['x','y','z','color'];
+      const allowed=layer.kind==='hist'?['samples']:layer.kind==='bar'?['x','y','base']:layer.kind==='band'?['x','lower','upper']:['x','y','z','color'];
       for(const [key,input]of Object.entries(inputs)){
         if(!allowed.includes(key))throw new Error(`Unknown data channel ${key}`);
         if(key==='base')continue;
@@ -449,6 +595,8 @@ export class Figure {
       view.kind=layer.kind==='surface'||layer.kind==='scatter3d'?'3d':'2d';
     }else draft.layers[index]=candidate;
     validateSemantics(draft,item=>item.id===candidate.id?values:this.layerValues(item));
+    const streaming=this.streams.get(layer.id),streamCount=values.x?.length??0;
+    if(streaming){this.assertStreamingLayer(candidate);for(const channel of Object.keys(values))modified.add(channel);}
     // Prevalidate every descriptor too: an overflowing imported version must not
     // leave the first channel committed and the second channel unchanged.
     const writes=Array.from(modified,key=>{
@@ -456,15 +604,23 @@ export class Figure {
       const shape=key==='z'&&(layer.kind==='surface'||layer.kind==='heatmap')?[values.y.length,values.x.length]:[values[key].length];
       return {key,descriptor:describeData(source,values[key],shape,(old?.descriptor.version??0)+1)};
     });
-    for(const {key,descriptor} of writes)this.registry.set(descriptor.id,values[key],descriptor.shape,descriptor.version);
+    const entries=new Map<string,DataEntry>(writes.map(({key,descriptor})=>{
+      const entry:DataEntry={descriptor,values:values[key]};return [descriptor.id,streaming?streamEntry(entry,streaming.maxPoints):entry];
+    }));
+    this.checkSourceBudget(entries);
+    if(streaming)this.rejectStreamWaiters(layer.id);
+    for(const [source,entry]of entries)this.registry.store.set(source,entry);
     const released=Object.values(layer.data).filter(source=>!Object.values(candidate.data).includes(source));
     Object.assign(layer,candidate);
     if(draft.categories!==undefined)this.spec.categories=draft.categories;
     if(isStatistical(layer.kind)||layer.categorical)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);
+    if(layer.kind==='band'||layer.style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);
     for(const source of released)if(!this.spec.layers.some(item=>Object.values(item.data).includes(source)))this.registry.release(source);
+    if(streaming)this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:streaming.maxPoints,nextSequence:streamCount,revision:0,retained:Math.min(streamCount,streaming.maxPoints),evicted:Math.max(0,streamCount-streaming.maxPoints)});
     if(notify)this.changed();
   }
   private validateLayerData(kind:LayerKind,v:Record<string,NumericArray>):void{
+    if(kind==='band'){validateBandData(v);return;}
     if(!v.x||!v.y)throw new Error('x and y are required');
     if(kind==='heatmap'||kind==='surface'){
       if(!v.x.length||!v.y.length)throw new Error('Grid requires at least a 1 × 1 grid');
@@ -506,7 +662,7 @@ export class Figure {
     validateViewState(this.spec,state);
     const draft=structuredClone(this.spec);draft.view=copyView(state.view);
     for(const panel of draft.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
-    validateSemantics(draft,layer=>this.layerValues(layer));
+    this.validateCurrentSemantics(draft);
     if([draft.view,...(draft.panels??[]).flatMap(panel=>panel.view?[panel.view]:[])].some(view=>view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,PRESENTATION_PROTOCOL_VERSION);
     this.spec.view=copyView(state.view);
     for(const panel of this.spec.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
@@ -557,24 +713,37 @@ export class Figure {
   mount(container:HTMLElement):this{
     this.assertOpen();if(!container)throw new Error('A mount element is required');this.unmount();try{this.view=new FigureView(this,container);}catch(error){this.emit('error',{message:error instanceof Error?error.message:String(error)});throw error;}this.changed();return this;
   }
-  async ready():Promise<void>{this.assertOpen();if(this.view)await this.view.ready();}
-  async savefig():Promise<Blob>{this.assertOpen();if(!this.view)throw new Error('Mount the figure before exporting');await this.ready();return this.view.exportPNG();}
+  async ready(options:ReadyOptions={}):Promise<void>{this.assertOpen();if(options.signal?.aborted)throw new DOMException('Waiting for the figure was aborted','AbortError');if(options.timeoutMs!==undefined&&(!Number.isFinite(options.timeoutMs)||options.timeoutMs<=0))throw new RangeError('timeoutMs must be positive');if(this.view)await this.view.ready(options);}
+  async savefig(options:ExportPNGOptions={}):Promise<Blob>{
+    this.assertOpen();const validated=validateExportPNGOptions(options),view=this.view;
+    if(!view)throw new Error('Mount the figure before exporting');
+    // The view owns its ready/capture transaction. Retain that owner across an
+    // unmount/remount instead of reading this.view again after an async wait.
+    return view.exportPNG(validated);
+  }
+  /** Transport export of an invocation-time snapshot using the mounted GPU. */
+  async savefigSnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>,options:ExportPNGOptions={}):Promise<Blob>{
+    this.assertOpen();if(!this.view)throw new Error('Mount the figure before exporting');
+    return this.view.exportSnapshotPNG(snapshot,buffers,validateExportPNGOptions(options));
+  }
   inspect():Array<RepresentationInfo&{layerId:string;panelId?:string}>{return this.view?.inspect()??[];}
+  diagnostics(){return {sourceBytes:Array.from(this.registry.entries(),([,entry])=>entry.descriptor.byteLength).reduce((sum,bytes)=>sum+bytes,0),semanticScans:this.semanticScans,pendingAppends:this.streamWaiters.size,streams:Object.fromEntries(Array.from(this.streams,([key,state])=>[key,{...state}])),...this.view?.diagnostics()};}
   on<K extends FigureEvent>(event:K,callback:(event:FigureEventMap[K])=>void):()=>void{let handlers=this.listeners.get(event);if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);return ()=>handlers!.delete(callback);}
   emit<K extends FigureEvent>(event:K,payload:FigureEventMap[K]):void{
     for(const callback of [...(this.listeners.get(event)??[])])try{callback(payload);}catch(error){try{console.error(`Vesora ${event} callback failed`,error);}catch{/* Diagnostics cannot interrupt ready/error settlement. */}}
   }
-  changed():void{this.assertOpen();this.view?.schedule();}
+  changed(streaming=false):void{this.assertOpen();this.view?.schedule(streaming);}
   snapshot():Snapshot{this.assertOpen();return {figure:structuredClone(this.spec),sources:Array.from(this.registry.entries(),([,entry])=>structuredClone(entry.descriptor))};}
   applySnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>):void{
     // Clone before touching live storage; even a non-cloneable incoming field
     // must leave the previous scene and its source registry intact.
     this.assertOpen();const spec=structuredClone(snapshot.figure);
-    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
+    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
     const presentationViews=[spec.view,...(spec.panels??[]).flatMap(panel=>panel.view?[panel.view]:[]),...(spec.bookmarks??[]).flatMap(bookmark=>[bookmark.view,...Object.values(bookmark.panelViews??{})])];
     if(spec.theme!==undefined)validateTheme(spec.theme);
     if(spec.protocolVersion<PRESENTATION_PROTOCOL_VERSION&&(spec.theme!==undefined||presentationViews.some(view=>view&&(view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))))throw new Error('Themes, time scales and axis formats require protocol version 5');
     if(!Array.isArray(spec.layers)||!Array.isArray(snapshot.sources))throw new TypeError('Snapshot layers and sources must be arrays');
+    if(spec.protocolVersion<QUALITY_PROTOCOL_VERSION&&(spec.hoverMode!==undefined||spec.theme&&hasTypography(spec.theme)||spec.layers.some(layer=>layer.kind==='band'||layer.style?.colorbarLabel!==undefined)))throw new Error('Bands, x inspection, role typography and colorbar labels require protocol version 6');
     if(spec.protocolVersion===PROTOCOL_VERSION&&(spec.layout!==undefined||spec.panels!==undefined||spec.annotations!==undefined||spec.layers.some(layer=>layer.panelId!==undefined)||spec.bookmarks?.some(bookmark=>bookmark.panelViews!==undefined)))throw new Error('Panels and annotations require protocol version 2');
     if(spec.protocolVersion<STATISTICS_PROTOCOL_VERSION&&(spec.categories!==undefined||spec.barModes!==undefined||spec.layers.some(layer=>isStatistical(layer.kind)||layer.options!==undefined||layer.categorical!==undefined)))throw new Error('Statistics and categories require protocol version 3');
     const next=new DataRegistry();const known=new Set<string>();
@@ -593,12 +762,13 @@ export class Figure {
     for(const layer of spec.layers){
       if(typeof layer.id!=='string'||!layer.id)throw new Error('Layer id must be a nonempty string');
       if(layerIds.has(layer.id))throw new Error('Duplicate layer id');layerIds.add(layer.id);
-      if(!['line','scatter','scatter3d','heatmap','surface','hist','bar','boxplot'].includes(layer.kind))throw new Error('Unknown layer kind');
+      if(!['line','scatter','scatter3d','heatmap','surface','hist','bar','boxplot','band'].includes(layer.kind))throw new Error('Unknown layer kind');
+      if(typeof layer.visible!=='boolean')throw new TypeError('Layer visibility must be a boolean');
       if(layer.panelId!==undefined&&(typeof layer.panelId!=='string'||!layer.panelId))throw new TypeError('Layer panelId must be a nonempty string');
       const panel=panels.find(item=>item.id===(layer.panelId??'main'));if(!panel)throw new Error('Layer references an unknown panel');
       if((layer.kind==='surface'||layer.kind==='scatter3d'?'3d':'2d')!==panel.view.kind)throw new Error('Layer dimensionality does not match view');
-      validateStyle(layer.style);const values:Record<string,NumericArray>={};for(const [key,source] of Object.entries(layer.data)){
-        if(!isStatistical(layer.kind)&&!['x','y','z','color'].includes(key))throw new Error('Unknown data channel');
+      validateStyle(layer.style);if(layer.kind==='band')validateBandStyle(layer.style);const values:Record<string,NumericArray>={};for(const [key,source] of Object.entries(layer.data)){
+        if(!isStatistical(layer.kind)&&!(layer.kind==='band'?['x','lower','upper']:['x','y','z','color']).includes(key))throw new Error('Unknown data channel');
         const entry=next.get(source);const grid=key==='z'&&(layer.kind==='heatmap'||layer.kind==='surface');
         if(entry.descriptor.shape.length!==(grid?2:1))throw new Error('Invalid source dimensions');values[key]=entry.values;
       }
@@ -608,10 +778,11 @@ export class Figure {
     validateSemantics(spec,layer=>Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,next.get(source).values])));
     validateSelectionLink(spec,next);
     this.isolateSelectionSources(spec,next);
+    this.checkSourceBudget(new Map(next.entries()),true);this.rejectStreamWaiters();this.streams.clear();
     this.registry.clear();for(const [,entry]of next.entries())this.registry.set(entry.descriptor.id,entry.values,entry.descriptor.shape,entry.descriptor.version);
     this.spec=spec;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
   }
-  close():void{if(this.closed)return;this.view?.dispose();this.view=undefined;this.registry.clear();this.listeners.clear();this.closed=true;}
+  close():void{if(this.closed)return;this.rejectStreamWaiters();this.streams.clear();this.view?.dispose();this.view=undefined;this.registry.clear();this.listeners.clear();this.closed=true;}
   private assertOpen():void{if(this.closed)throw new Error('Figure is closed');}
 }
 export function figure(options:FigureOptions={}):Figure{return new Figure(options);}
@@ -625,6 +796,7 @@ export function subplots(options:SubplotsOptions):Figure{
   return result;
 }
 export function plot(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Figure{const f=figure();f.plot(x,y,options);return f;}
+export function fillBetween(x:Series,lower:Series,upper:Series,options:FillBetweenOptions={}):Figure{const f=figure();f.fillBetween(x,lower,upper,options);return f;}
 export function scatter(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Figure{const f=figure();f.scatter(x,y,options);return f;}
 export function heatmap(x:Series,y:Series,z:Grid,options:LayerOptions={}):Figure{const f=figure();f.heatmap(x,y,z,options);return f;}
 export function surface(x:Series,y:Series,z:Grid,options:LayerOptions={}):Figure{const f=figure();f.surface(x,y,z,options);return f;}

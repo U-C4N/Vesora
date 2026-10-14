@@ -47,16 +47,28 @@ export function prepareData<Row extends object>(data: readonly Row[], xKey: Extr
   if (category && numeric) throw new TypeError('The x column cannot mix numbers and category strings.');
   let hasValues = false;
   const values = new Map<string, Float64Array>();
+  const bands = new Map<string, {lower: Float64Array; upper: Float64Array}>();
+  const numericColumn = (key: Extract<keyof Row, string>) => Float64Array.from(data, (row, index) => {
+    const value = row[key];
+    if (value === null || value === undefined) return NaN;
+    if (typeof value !== 'number') throw new TypeError(`Row ${index}: ${key} must be a number or null.`);
+    if (dates(yAxis) && Number.isFinite(value) && Math.abs(value) > 8.64e15) throw new RangeError(`Row ${index}: ${key} exceeds the Date range.`);
+    return value;
+  });
   for (const item of series) {
-    const y = Float64Array.from(data, (row, index) => {
-      const value = row[item.key];
-      if (value === null || value === undefined) return NaN;
-      if (typeof value !== 'number') throw new TypeError(`Row ${index}: ${item.key} must be a number or null.`);
-      if (dates(yAxis) && Number.isFinite(value) && Math.abs(value) > 8.64e15) throw new RangeError(`Row ${index}: ${item.key} exceeds the Date range.`);
-      if (Number.isFinite(value)) hasValues = true;
-      return value;
-    });
+    const y = numericColumn(item.key);
+    if (y.some(Number.isFinite)) hasValues = true;
     values.set(item.key, y);
+    if (item.band) {
+      if (!item.band.lowerKey || !item.band.upperKey) throw new TypeError('Band lowerKey and upperKey must be nonempty column keys.');
+      const lower = numericColumn(item.band.lowerKey), upper = numericColumn(item.band.upperKey);
+      for (let index = 0; index < lower.length; index++) {
+        if (!Number.isFinite(lower[index]) || !Number.isFinite(upper[index])) continue;
+        if (lower[index] > upper[index]) throw new RangeError(`Row ${index}: band lower value must not exceed its upper value.`);
+        hasValues = true;
+      }
+      bands.set(item.key, {lower, upper});
+    }
   }
-  return {x: x as AxisSeries, values, empty: !data.length || !series.length || !hasValues};
+  return {x: x as AxisSeries, values, bands, empty: !data.length || !series.length || !hasValues};
 }

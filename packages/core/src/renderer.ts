@@ -18,14 +18,35 @@ export class WebGLRenderer {
   private program: WebGLProgram;
   private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array}>();
   private lost: (event: Event)=>void;
+  private restored: ()=>void;
+  private disposed=false;
   private frameHeight=0;
   private frameDpr=1;
   private frameItems=new Set<string>();
-  constructor(canvas: HTMLCanvasElement, onError:(message:string)=>void) {
+  private framebuffer?:WebGLFramebuffer;
+  private colorTarget?:WebGLTexture;
+  private depthTarget?:WebGLRenderbuffer;
+  private multisampleColor?:WebGLRenderbuffer;
+  private resolveFramebuffer?:WebGLFramebuffer;
+  constructor(canvas: HTMLCanvasElement, onError:(message:string)=>void,private sharedGL?:WebGL2RenderingContext,onRestored?:()=>void) {
     this.canvas=canvas;
-    const gl=canvas.getContext('webgl2',{alpha:false,antialias:true,preserveDrawingBuffer:true});
+    const gl=sharedGL??canvas.getContext('webgl2',{alpha:false,antialias:true,preserveDrawingBuffer:true});
     if (!gl) throw new Error('Vesora requires WebGL2. Enable hardware acceleration or use a WebGL2-capable host.');
     this.gl=gl;
+    this.program=this.createProgram();
+    this.lost=(event)=>{event.preventDefault();onError('WebGL context lost. Waiting for the browser to restore GPU resources.');};
+    this.restored=()=>{
+      if(this.disposed)return;
+      try{
+        this.buffers.clear();this.framebuffer=undefined;this.colorTarget=undefined;this.depthTarget=undefined;this.multisampleColor=undefined;this.resolveFramebuffer=undefined;
+        this.program=this.createProgram();onRestored?.();
+      }catch(error){onError(error instanceof Error?error.message:String(error));}
+    };
+    canvas.addEventListener('webglcontextlost',this.lost);
+    canvas.addEventListener('webglcontextrestored',this.restored);
+  }
+  private createProgram():WebGLProgram {
+    const gl=this.gl;
     const vertex=`#version 300 es
       in vec3 aPosition; in vec4 aColor; uniform mat4 uMatrix; uniform float uSize;
       out vec4 vColor; void main(){gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=uSize;vColor=aColor;}`;
@@ -37,18 +58,52 @@ export class WebGLRenderer {
       if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS)){const error=gl.getShaderInfoLog(shader);gl.deleteShader(shader);throw new Error(error??'Shader compilation failed');}return shader;
     };
     const vs=compile(gl.VERTEX_SHADER,vertex),fs=compile(gl.FRAGMENT_SHADER,fragment);
-    this.program=gl.createProgram()!;gl.attachShader(this.program,vs);gl.attachShader(this.program,fs);gl.linkProgram(this.program);
+    const program=gl.createProgram()!;gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
     gl.deleteShader(vs);gl.deleteShader(fs);
-    if(!gl.getProgramParameter(this.program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(this.program)??'Shader link failed');
-    this.lost=(event)=>{event.preventDefault();onError('WebGL context lost. Remount the figure to restore GPU resources.');};
-    canvas.addEventListener('webglcontextlost',this.lost);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS)){const message=gl.getProgramInfoLog(program)??'Shader link failed';gl.deleteProgram(program);throw new Error(message);}
+    return program;
   }
   /** Clear once for the whole figure; resources survive between panel draws. */
+  validateRasterSize(width:number,height:number):void {
+    const gl=this.gl,viewport=gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array;
+    const maximum=Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    if(width>Math.min(maximum,viewport[0])||height>Math.min(maximum,viewport[1]))throw new RangeError('PNG raster exceeds this GPU\'s viewport/renderbuffer limits');
+  }
   beginFrame(width:number,height:number,dpr:number,background:readonly number[]=[1,1,1,1]):void {
     const gl=this.gl,w=Math.round(width*dpr),h=Math.round(height*dpr);
     if(gl.isContextLost())throw new Error('WebGL context lost. Remount the figure to restore GPU resources.');
     this.frameHeight=height;this.frameDpr=dpr;this.frameItems.clear();
     if(this.canvas.width!==w||this.canvas.height!==h){this.canvas.width=w;this.canvas.height=h;}
+    if(this.sharedGL){
+      this.validateRasterSize(w,h);
+      const previous=gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      try{
+      if(!this.framebuffer){this.framebuffer=gl.createFramebuffer()!;this.colorTarget=gl.createTexture()!;this.depthTarget=gl.createRenderbuffer()!;}
+      gl.bindTexture(gl.TEXTURE_2D,this.colorTarget!);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      const samples=Math.min(4,gl.getParameter(gl.MAX_SAMPLES));
+      if(samples>0){
+        this.resolveFramebuffer??=gl.createFramebuffer()!;this.multisampleColor??=gl.createRenderbuffer()!;
+        gl.bindFramebuffer(gl.FRAMEBUFFER,this.resolveFramebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.colorTarget!,0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer);
+        gl.bindRenderbuffer(gl.RENDERBUFFER,this.multisampleColor);gl.renderbufferStorageMultisample(gl.RENDERBUFFER,samples,gl.RGBA8,w,h);
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.RENDERBUFFER,this.multisampleColor);
+        gl.bindRenderbuffer(gl.RENDERBUFFER,this.depthTarget!);gl.renderbufferStorageMultisample(gl.RENDERBUFFER,samples,gl.DEPTH_COMPONENT16,w,h);
+      }else{
+      gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.colorTarget!,0);
+      gl.bindRenderbuffer(gl.RENDERBUFFER,this.depthTarget!);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,w,h);
+      }
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,this.depthTarget!);
+      if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)throw new Error('PNG render target allocation failed');
+      const allocationError=gl.getError();if(allocationError!==gl.NO_ERROR)throw new Error(`PNG render target allocation failed (${allocationError})`);
+      }catch(error){
+        // An export allocation failure must not poison the next live frame.
+        for(let attempt=0;attempt<32&&gl.getError()!==gl.NO_ERROR;attempt++){}
+        gl.bindFramebuffer(gl.FRAMEBUFFER,previous);throw error;
+      }
+    }else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     gl.disable(gl.SCISSOR_TEST);gl.viewport(0,0,w,h);gl.clearColor(background[0],background[1],background[2],background[3]);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   }
   drawPanel(items:Geometry[],rect:PlotRect,matrix:Float32Array=identity,threeD=false):void {
@@ -56,7 +111,7 @@ export class WebGLRenderer {
     gl.viewport(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     gl.enable(gl.SCISSOR_TEST);gl.scissor(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     if(threeD) gl.enable(gl.DEPTH_TEST);else gl.disable(gl.DEPTH_TEST);
-    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.program);gl.uniformMatrix4fv(gl.getUniformLocation(this.program,'uMatrix'),false,matrix);
     for(const item of items){
       this.frameItems.add(item.id);let buffer=this.buffers.get(item.id);
@@ -85,11 +140,30 @@ export class WebGLRenderer {
   draw(items:Geometry[],rect:PlotRect,width:number,height:number,dpr:number,matrix:Float32Array=identity,threeD=false):void {
     this.beginFrame(width,height,dpr);this.drawPanel(items,rect,matrix,threeD);this.endFrame();
   }
+  rasterCanvas():HTMLCanvasElement {
+    if(!this.sharedGL)return this.canvas;
+    const gl=this.gl,w=this.canvas.width,h=this.canvas.height,previous=gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    if(gl.isContextLost())throw new Error('WebGL context lost during PNG export');
+    try{
+      if(this.resolveFramebuffer){
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER,this.framebuffer!);gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,this.resolveFramebuffer);
+        gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.NEAREST);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER,this.resolveFramebuffer??this.framebuffer!);const pixels=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+      if(gl.getError()!==gl.NO_ERROR)throw new Error('PNG pixel readback failed');
+      const ctx=this.canvas.getContext('2d')!,output=ctx.createImageData(w,h);
+      for(let row=0;row<h;row++)output.data.set(pixels.subarray((h-row-1)*w*4,(h-row)*w*4),row*w*4);
+      ctx.putImageData(output,0,0);return this.canvas;
+    }finally{gl.bindFramebuffer(gl.FRAMEBUFFER,previous);}
+  }
   dispose():void {
+    if(this.disposed)return;this.disposed=true;
     const gl=this.gl;for(const b of this.buffers.values()){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);}
-    this.buffers.clear();gl.deleteProgram(this.program);this.canvas.removeEventListener('webglcontextlost',this.lost);
+    this.buffers.clear();if(gl.getParameter(gl.CURRENT_PROGRAM)===this.program)gl.useProgram(null);gl.deleteProgram(this.program);this.canvas.removeEventListener('webglcontextlost',this.lost);this.canvas.removeEventListener('webglcontextrestored',this.restored);
+    if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.colorTarget)gl.deleteTexture(this.colorTarget);if(this.depthTarget)gl.deleteRenderbuffer(this.depthTarget);
+    if(this.resolveFramebuffer)gl.deleteFramebuffer(this.resolveFramebuffer);if(this.multisampleColor)gl.deleteRenderbuffer(this.multisampleColor);
     // A detached canvas can retain its GPU context until GC. Release it now so
     // remounting galleries cannot evict another figure's still-active context.
-    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    if(!this.sharedGL)gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

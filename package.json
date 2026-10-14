@@ -1,7 +1,7 @@
 {
   "name": "vesora-workspace",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.8.0",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -30,7 +30,9 @@
     "package:release": "node scripts/package-release.mjs",
     "test:packages": "node scripts/verify-packages.mjs && node scripts/verify-react-consumers.mjs",
     "test:consumers": "node scripts/verify-react-consumers.mjs",
-    "publish:packages": "npm publish --workspace @vesora/core --access public --tag beta && npm publish --workspace @vesora/react --access public --tag beta"
+    "publish:packages": "npm publish --workspace @vesora/core --access public --tag beta && npm publish --workspace @vesora/react --access public --tag beta",
+    "test:release": "node scripts/verify-release.mjs",
+    "benchmark:streaming": "node scripts/benchmark-v08.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

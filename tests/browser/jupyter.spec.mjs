@@ -149,12 +149,128 @@ assert presentation_widget._vesora_closed and not presentation.snapshot()["sourc
 print("VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED")`,
     ];
     notebook.cells.push(...presentationCells.map((source, index) => ({cell_type:'code', id:`vesora-presentation-${index}`, execution_count:null, metadata:{}, source, outputs:[]})));
+    const qualityCells = [
+      `import struct
+quality = vs.figure(title="Real notebook interval", width=800, height=460,
+                    theme={"titleFontSize":20,"tickFontSize":14,"labelFontSize":16,"legendFontSize":14})
+quality_band = quality.fill_between([0,1,2,3,4], [1]*5, [3]*5, color="#ef4444", opacity=.3)
+quality.plot([0,1,2,3,4], [2]*5, color="#3569c8", label="Source samples")
+quality.set_axes(xlim=(0,4), ylim=(0,5))
+quality.set_hover_mode("x")
+quality_before = quality.snapshot()
+quality.show()
+for scale in (2,4):
+    await quality.savefig_async(f"quality-scale-{scale}.png", width=800, height=500, scale=scale, timeout=45)
+    payload = Path(f"quality-scale-{scale}.png").read_bytes()
+    assert struct.unpack(">II", payload[16:24]) == (800*scale,500*scale)
+    assert quality.snapshot() == quality_before
+assert quality_before["figure"]["protocolVersion"] == 6
+print("VESORA_QUALITY_SIZED_EXPORTS_READY")`,
+      `quality_band.set_data(upper=[4]*5)
+await quality.savefig_async("quality-updated.png", width=800, height=500, scale=2, timeout=45)
+assert Path("quality-updated.png").read_bytes() != Path("quality-scale-2.png").read_bytes()
+quality.save_html("quality.html")
+quality_widget = quality._widget
+quality.close()
+assert quality_widget._vesora_closed and not quality.snapshot()["sources"]
+print("VESORA_QUALITY_UPDATED_EXPORTED_CLEANED")`,
+    ];
+    notebook.cells.push(...qualityCells.map((source,index)=>({cell_type:'code',id:`vesora-quality-${index}`,execution_count:null,metadata:{},source,outputs:[]})));
+    const streamingCells = [
+      `import time
+streaming = vs.figure(title="Notebook bounded telemetry", width=800, height=460)
+streaming_line = streaming.plot([0.,1.,2.,3.], [2.,3.,4.,5.], color="#3569c8").enable_streaming(max_points=8)
+streaming.set_axes(xlim=(0,104), ylim=(0,110))
+streaming.show()
+await streaming.savefig_async("stream-initial.png", width=800, height=500, scale=1, timeout=45)
+assert streaming._widget._views, "The real widget must negotiate binary transport"
+stream_packets = []
+original_send = streaming._widget.send
+def record_stream(message, buffers=None):
+    stream_packets.append((message, buffers))
+    original_send(message, buffers=buffers)
+streaming._widget.send = record_stream
+frozen_export = asyncio.create_task(streaming.savefig_async("stream-frozen.png", width=800, height=500, scale=1, timeout=45))
+await asyncio.sleep(0)
+stream_started = time.perf_counter()
+for sample in range(4,104):
+    streaming_line.append_data(x=[float(sample)], y=[float(sample+2)])
+await frozen_export
+for attempt in range(600):
+    if all(q.acknowledged == streaming._widget.revision for q in streaming._widget._views.values()):
+        break
+    await asyncio.sleep(.01)
+assert all(q.acknowledged == streaming._widget.revision for q in streaming._widget._views.values())
+assert list(streaming._layer_arrays(streaming_line._spec())["x"]) == list(range(96,104))
+assert streaming._streams[streaming_line.id]["nextSequence"] == 104
+assert any(m["type"] == "stream-delta" for m,b in stream_packets)
+assert not any(m["type"] == "stream-snapshot" for m,b in stream_packets), "Valid append packets must not trigger resync"
+assert Path("stream-frozen.png").read_bytes() == Path("stream-initial.png").read_bytes(), "A queued export must keep its invocation data"
+Path("jupyter-stream-timing.json").write_text(json.dumps({"scenario":"100 queued single-row appends, one series, retention8", "append_to_latest_ack_ms":(time.perf_counter()-stream_started)*1000}))
+await streaming.savefig_async("stream-latest.png", width=800, height=500, scale=2, timeout=45)
+assert struct.unpack(">II", Path("stream-latest.png").read_bytes()[16:24]) == (1600,1000)
+print("VESORA_STREAM_READY_FROZEN_EXPORTED")`,
+      `old_stream_widget = streaming._widget
+old_stream_widget.close()
+streaming.show()
+assert streaming._widget is not old_stream_widget and len(streaming._listeners) == 1
+await streaming.savefig_async("stream-redisplayed.png", timeout=45)
+streaming.close()
+assert not streaming._listeners and not streaming.snapshot()["sources"]
+print("VESORA_STREAM_REDISPLAYED_CLEANED")`,
+      `from array import array
+import platform, math
+bench = vs.figure(title="Notebook streaming latency", width=900, height=520)
+count, samples, batch_size, requested_hz = 100000, 100, 100, 20
+def curve_value(index, series):
+    return (series + 1) * .15 + 3 * math.exp(-index / 2000) + .08 * math.sin(index * .07 + series)
+curves = [bench.plot(array("d", range(count)), array("d", (curve_value(index, series) for index in range(count))), label=f"Channel {series}").enable_streaming(max_points=count) for series in range(3)]
+bench.show()
+await bench.savefig_async("jupyter-benchmark-initial.png", timeout=45)
+for attempt in range(600):
+    if bench._widget._views and all(q.acknowledged == bench._widget.revision for q in bench._widget._views.values()):
+        break
+    await asyncio.sleep(.01)
+assert bench._widget._views and all(q.acknowledged == bench._widget.revision for q in bench._widget._views.values())
+timings, pending = [None] * samples, []
+def collect_timings():
+    acknowledged = max((q.acknowledged or -1 for q in tuple(bench._widget._views.values())), default=-1)
+    completed = time.perf_counter()
+    for index, begin, revision in pending:
+        if timings[index] is None and revision <= acknowledged:
+            timings[index] = (completed - begin) * 1000
+benchmark_start = time.perf_counter()
+for sample in range(samples):
+    target = benchmark_start + sample / requested_hz
+    while time.perf_counter() < target:
+        await asyncio.sleep(min(.001, target - time.perf_counter()))
+        collect_timings()
+    begin = time.perf_counter()
+    indexes = range(count + sample * batch_size, count + (sample + 1) * batch_size)
+    for series, curve in enumerate(curves):
+        curve.append_data(x=array("d", indexes), y=array("d", (curve_value(index, series) for index in indexes)))
+    pending.append((sample, begin, bench._widget.revision))
+    collect_timings()
+producer_duration = time.perf_counter() - benchmark_start
+deadline = time.perf_counter() + 30
+while any(value is None for value in timings):
+    assert time.perf_counter() < deadline, "Notebook ACK deadline exceeded"
+    await asyncio.sleep(.001)
+    collect_timings()
+duration = time.perf_counter() - benchmark_start
+ordered = sorted(timings)
+report = {"scenario":"Python append to notebook renderer ACK", "platform":platform.platform(), "python":platform.python_version(), "series":3, "retention_per_series":count, "batch_rows_per_series":batch_size, "samples":samples, "requested_hz":requested_hz, "observed_hz":samples/duration, "producer_duration_seconds":producer_duration, "duration_seconds":duration, "p50_ms":ordered[49], "p95_ms":ordered[94], "max_ms":ordered[-1], "latency_ms":timings, "retained_source_bytes":sum(source[0]["byteLength"] for source in bench._sources.values()), "scope":"Includes Python validation, notebook binary comms, JS append, worker planning, GPU draw and ACK; excludes initial construction and PNG."}
+assert all(state["retained"] == count and state["nextSequence"] == count + samples * batch_size for state in bench._streams.values())
+Path("jupyter-streaming-benchmark.json").write_text(json.dumps(report, indent=2))
+print("VESORA_STREAM_BENCHMARK_READY")`,
+    ];
+    notebook.cells.push(...streamingCells.map((source,index)=>({cell_type:'code',id:`vesora-stream-${index}`,execution_count:null,metadata:{},source,outputs:[]})));
     const savedNotebook = await request.put(notebookURL, { headers, data: { type: 'notebook', format: 'json', content: notebook } });
     expect(savedNotebook.ok()).toBe(true);
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.goto(`${metadata.url}/lab/tree/vesora-host-test.ipynb?token=${encodeURIComponent(metadata.token)}`);
     const cells = page.locator('.jp-NotebookPanel .jp-CodeCell');
-    await expect(cells).toHaveCount(11, { timeout: 45_000 });
+    await expect(cells).toHaveCount(16, { timeout: 45_000 });
     await expect.poll(async () => {
       const response = await request.get(`${metadata.url}/api/kernels`, {headers});
       if (!response.ok()) return false;
@@ -167,6 +283,7 @@ print("VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED")`,
       await page.getByRole('button', {name: 'Run this cell and advance (Shift+Enter)', exact: true}).click();
       await expect(cell.locator('.jp-OutputArea')).toContainText(marker, { timeout: 60_000 });
       await expect(cell.locator('.jp-OutputArea-error')).toHaveCount(0);
+      console.log(`Real Jupyter cell ${index}: ${marker}`);
     }
     await run(0, 'VESORA_WIDGET_READY');
     const figure = page.locator('.vesora-figure');
@@ -244,11 +361,34 @@ print("VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED")`,
       };
     });
     const linkedBox = await linkedFigure.locator('canvas').last().boundingBox();
-    const plotWidth = linkedBox.width / 3 - 155, plotHeight = linkedBox.height - 70 - 28 - 82 - 36;
+    // Text measurement changes panel margins. Derive native brushing coordinates
+    // from the actual first-panel points, without assuming any layout constants.
+    const marks = await linkedFigure.locator('canvas').first().evaluate(canvas => {
+      const gl=canvas.getContext('webgl2'),pixels=new Uint8Array(canvas.width*canvas.height*4);
+      gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+      const groups=[];let group;
+      for(let x=0;x<Math.floor(canvas.width/3);x++){
+        let minY=Infinity,maxY=-Infinity;
+        for(let y=0;y<canvas.height;y++){
+          const i=(y*canvas.width+x)*4;
+          if(pixels[i]<100&&pixels[i+1]>120&&pixels[i+2]>180){const top=canvas.height-1-y;minY=Math.min(minY,top);maxY=Math.max(maxY,top);}
+        }
+        if(Number.isFinite(minY)){
+          if(!group){group={left:x,right:x,top:minY,bottom:maxY};groups.push(group);}
+          group.right=x;group.top=Math.min(group.top,minY);group.bottom=Math.max(group.bottom,maxY);
+        }else group=undefined;
+      }
+      const box=canvas.getBoundingClientRect();
+      return groups.map(g=>({left:g.left*box.width/canvas.width,right:g.right*box.width/canvas.width,
+        top:g.top*box.height/canvas.height,bottom:g.bottom*box.height/canvas.height}));
+    });
+    expect(marks).toHaveLength(4);
+    const brush={left:Math.min(marks[1].left,marks[2].left)-3,right:Math.max(marks[1].right,marks[2].right)+3,
+      top:Math.min(marks[1].top,marks[2].top)-3,bottom:Math.max(marks[1].bottom,marks[2].bottom)+3};
     await page.keyboard.down('Shift');
-    await page.mouse.move(linkedBox.x + 70 + .15 * plotWidth, linkedBox.y + 98 + .85 * plotHeight);
+    await page.mouse.move(linkedBox.x+brush.left,linkedBox.y+brush.top);
     await page.mouse.down();
-    await page.mouse.move(linkedBox.x + 70 + .35 * plotWidth, linkedBox.y + 98 + .65 * plotHeight, {steps: 8});
+    await page.mouse.move(linkedBox.x+brush.right,linkedBox.y+brush.bottom,{steps:8});
     await page.mouse.up();
     await page.keyboard.up('Shift');
     await expect(linkedFigure.locator('.vesora-selection-summary')).toHaveText('Selected 2 / 4 (50.00%)');
@@ -299,6 +439,33 @@ print("VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED")`,
     await testInfo.attach('jupyter-presentation-dark', {body:darkPNG,contentType:'image/png'});
     await run(10, 'VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED');
     await expect(page.locator('.vesora-figure')).toHaveCount(0);
+    await run(11, 'VESORA_QUALITY_SIZED_EXPORTS_READY');
+    await expect(page.locator('.vesora-figure')).toHaveCount(1);
+    for(const scale of [2,4]){
+      const png=await readFile(join(metadata.workspace,`quality-scale-${scale}.png`));
+      expect(png.readUInt32BE(16)).toBe(800*scale);expect(png.readUInt32BE(20)).toBe(500*scale);
+      await testInfo.attach(`jupyter-quality-scale-${scale}`,{body:png,contentType:'image/png'});
+    }
+    await run(12, 'VESORA_QUALITY_UPDATED_EXPORTED_CLEANED');
+    await expect(page.locator('.vesora-figure')).toHaveCount(0);
+    await run(13, 'VESORA_STREAM_READY_FROZEN_EXPORTED');
+    await expect(page.locator('.vesora-figure')).toHaveCount(1);
+    const streamPNG=await readFile(join(metadata.workspace,'stream-latest.png'));
+    await testInfo.attach('jupyter-stream-latest',{body:streamPNG,contentType:'image/png'});
+    const streamTiming=await readFile(join(metadata.workspace,'jupyter-stream-timing.json'));
+    await writeFile(testInfo.outputPath('jupyter-stream-timing.json'),streamTiming);
+    await testInfo.attach('jupyter-stream-timing',{body:streamTiming,contentType:'application/json'});
+    await run(14, 'VESORA_STREAM_REDISPLAYED_CLEANED');
+    await expect(page.locator('.vesora-figure')).toHaveCount(0);
+    await run(15, 'VESORA_STREAM_BENCHMARK_READY');
+    const benchmark=JSON.parse(await readFile(join(metadata.workspace,'jupyter-streaming-benchmark.json'),'utf8'));
+    benchmark.renderer=await page.locator('.vesora-figure canvas').first().evaluate(canvas=>{
+      const gl=canvas.getContext('webgl2'),extension=gl.getExtension('WEBGL_debug_renderer_info');
+      return extension?gl.getParameter(extension.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+    });
+    await writeFile(testInfo.outputPath('jupyter-streaming-benchmark.json'),JSON.stringify(benchmark,null,2));
+    await testInfo.attach('jupyter-streaming-benchmark',{body:JSON.stringify(benchmark,null,2),contentType:'application/json'});
+    console.log(`Jupyter streaming p50=${benchmark.p50_ms.toFixed(2)}ms p95=${benchmark.p95_ms.toFixed(2)}ms`);
     const offlineContext = await browser.newContext({offline:true});
     try {
       const offline = await offlineContext.newPage();
@@ -313,6 +480,13 @@ print("VESORA_PRESENTATION_UPDATED_EXPORTED_CLEANED")`,
       expect(presentationPayload.snapshot.figure.protocolVersion).toBe(5);
       expect(presentationPayload.snapshot.figure.theme.background).toBe('#ffffff');
       expect(presentationPayload.snapshot.figure.view.xScale).toBe('time');
+      await offline.goto(pathToFileURL(join(metadata.workspace,'quality.html')).href);
+      await expect(offline.locator('#vesora-viewer')).toHaveAttribute('data-ready','ready');
+      const qualityPayload=JSON.parse(await offline.locator('#vesora-payload').textContent());
+      expect(qualityPayload.snapshot.figure.protocolVersion).toBe(6);
+      expect(qualityPayload.snapshot.figure.hoverMode).toBe('x');
+      expect(qualityPayload.snapshot.figure.layers.some(layer=>layer.kind==='band')).toBe(true);
+      expect(qualityPayload.snapshot.figure.theme.tickFontSize).toBe(14);
     } finally {
       await offlineContext.close();
     }

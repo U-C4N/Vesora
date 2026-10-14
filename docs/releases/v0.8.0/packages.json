@@ -1,0 +1,45 @@
+{
+  "version": "0.8.0",
+  "wheel": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-0.8.0-py3-none-any.whl",
+  "tarball": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-core-0.8.0.tgz",
+  "archiveHashes": {
+    "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-0.8.0-py3-none-any.whl": "fdc80a03700d05b51c0e0c97d7428c03aafabe79b5d18a2c3ba3614885afc8b3",
+    "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-core-0.8.0.tgz": "ab36142c084f0b33236e47d248c5ff9ab81bf4b4ef0e0c2bd4f7216aa2af9bb8"
+  },
+  "recordedAt": "2026-10-14T19:08:13.829Z",
+  "workspace": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5",
+  "outputs": {
+    "python": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-figure.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python.png"
+    },
+    "javascript": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-figure.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript.png"
+    },
+    "pythonLinked": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-linked.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-linked.png"
+    },
+    "javascriptLinked": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-linked.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-linked.png"
+    },
+    "pythonPresentation": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-presentation.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-presentation.png"
+    },
+    "javascriptPresentation": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-presentation.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-presentation.png"
+    },
+    "pythonQuality": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-quality.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\python-quality.png"
+    },
+    "javascriptQuality": {
+      "html": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-quality.html",
+      "png": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-rYhFJ5\\outputs\\javascript-quality.png"
+    }
+  }
+}

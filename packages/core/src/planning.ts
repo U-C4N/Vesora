@@ -79,7 +79,7 @@ function intersects(ax: number, ay: number, bx: number, by: number): boolean {
 }
 
 /** Reduce consecutive pixel-column runs, retaining extrema in source order. */
-export function* lineSteps(x: NumericArray, y: NumericArray, query: Query): Generator<void, LineResult> {
+export function* lineSteps(x: NumericArray, y: NumericArray, query: Query, sorted = false): Generator<void, LineResult> {
   validateInputs(x, y, query);
   const segments: Uint32Array[] = [];
   let segment: number[] = [];
@@ -111,8 +111,13 @@ export function* lineSteps(x: NumericArray, y: NumericArray, query: Query): Gene
     if (py > maxY) {max = index; maxY = py;}
   }
   let previous = -1, previousX = NaN, previousY = NaN;
-  for (let start = 0; start < x.length; start += CHUNK_SIZE) {
-    const end = Math.min(start + CHUNK_SIZE, x.length);
+  let begin=0,limit=x.length;
+  if(sorted){
+    const bound=(value:number,upper:boolean)=>{let lo=0,hi=x.length;while(lo<hi){const mid=lo+Math.floor((hi-lo)/2);if(x[mid]<value||upper&&x[mid]===value)lo=mid+1;else hi=mid;}return lo;};
+    begin=Math.max(0,bound(query.bounds.x[0],false)-1);limit=Math.min(x.length,bound(query.bounds.x[1],true)+1);
+  }
+  for (let start = begin; start < limit; start += CHUNK_SIZE) {
+    const end = Math.min(start + CHUNK_SIZE, limit);
     for (let i = start; i < end; i++) {
       const px = normalize(x[i], query.bounds.x, query.xScale), py = normalize(y[i], query.bounds.y, query.yScale);
       if (!Number.isFinite(px) || !Number.isFinite(py)) {finishSegment(); previous = -1; continue;}

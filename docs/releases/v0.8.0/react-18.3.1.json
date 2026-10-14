@@ -1,0 +1,15 @@
+{
+  "version": "0.8.0",
+  "reactVersion": "18.3.1",
+  "archives": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0",
+  "archiveHashes": {
+    "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-core-0.8.0.tgz": "ab36142c084f0b33236e47d248c5ff9ab81bf4b4ef0e0c2bd4f7216aa2af9bb8",
+    "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-react-0.8.0.tgz": "e2b72c207d5e2ccf61cf079acf95b7a04a676ddab2e2e9754a2223ac79ca04e6"
+  },
+  "browser": "155.0.8059.41",
+  "recordedAt": "2026-10-14T19:06:55.249Z",
+  "checks": [
+    "vite",
+    "vite-worker-fallback"
+  ]
+}

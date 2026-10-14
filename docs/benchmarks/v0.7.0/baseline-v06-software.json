@@ -1,0 +1,265 @@
+{
+  "label": "baseline-v06-software",
+  "runtime": "/artifacts/v07/baseline-runtime/index.js",
+  "runtimeSHA256": "e9cf40ea02fc031cb40387018667478be795084e22acfe886e018f9183fc921a",
+  "recordedAt": "2026-10-13T12:42:27.673Z",
+  "browser": "155.0.8059.40",
+  "softwareGpuRequested": true,
+  "cpu": "Intel(R) Core(TM) i9-14900HX",
+  "platform": "win32",
+  "viewport": {
+    "width": 1000,
+    "height": 600,
+    "dpr": 1
+  },
+  "warmup": "one unmeasured points+density figure per browser session",
+  "p95": "nearest rank of 20 completed setView/ready interactions",
+  "results": [
+    {
+      "repeat": 0,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 167.2999999821186,
+      "p95Ms": 90.59999999403954,
+      "samples": [
+        78.09999999403954,
+        78.30000001192093,
+        82.59999999403954,
+        77.2000000178814,
+        85.59999999403954,
+        76,
+        77.59999999403954,
+        85.90000000596046,
+        90.59999999403954,
+        80.59999999403954,
+        79.2000000178814,
+        92.39999997615814,
+        83,
+        90.30000001192093,
+        86.5,
+        83.30000001192093,
+        85,
+        84.89999997615814,
+        87.40000000596046,
+        83.30000001192093
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 174.40000000596046,
+      "p95Ms": 110.59999999403954,
+      "samples": [
+        85.09999999403954,
+        97.40000000596046,
+        95,
+        96.5,
+        110.59999999403954,
+        112.69999998807907,
+        95.30000001192093,
+        109.40000000596046,
+        107.5,
+        90.59999999403954,
+        92.59999999403954,
+        97.80000001192093,
+        91.59999999403954,
+        105.59999999403954,
+        92.40000000596046,
+        86.5,
+        98.80000001192093,
+        83.69999998807907,
+        103.19999998807907,
+        79.90000000596046
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 167.2000000178814,
+      "p95Ms": 127.59999999403954,
+      "samples": [
+        81.09999999403954,
+        81.19999998807907,
+        77.5,
+        132.90000000596046,
+        127.59999999403954,
+        100.10000002384186,
+        116.69999998807907,
+        79.19999998807907,
+        104.10000002384186,
+        85.89999997615814,
+        76.10000002384186,
+        74.89999997615814,
+        75,
+        70,
+        72.40000000596046,
+        74.90000000596046,
+        125.69999998807907,
+        87.40000000596046,
+        83,
+        79.7000000178814
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 178.30000001192093,
+      "p95Ms": 107,
+      "samples": [
+        81.09999999403954,
+        84,
+        87.69999998807907,
+        99.90000000596046,
+        127.5,
+        85.7000000178814,
+        107,
+        103.7999999821186,
+        98.7000000178814,
+        91.39999997615814,
+        92.80000001192093,
+        96.30000001192093,
+        83.59999999403954,
+        87.2999999821186,
+        91.60000002384186,
+        73.09999999403954,
+        88,
+        99.09999999403954,
+        93.09999999403954,
+        88.7000000178814
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 171.5,
+      "p95Ms": 121.7000000178814,
+      "samples": [
+        85,
+        78.7999999821186,
+        94.90000000596046,
+        82.59999999403954,
+        110.80000001192093,
+        132.40000000596046,
+        109.39999997615814,
+        80.90000000596046,
+        121.7000000178814,
+        89.09999999403954,
+        92.69999998807907,
+        81.30000001192093,
+        104.5,
+        81.5,
+        80.09999999403954,
+        78.80000001192093,
+        102.89999997615814,
+        78.90000000596046,
+        79.80000001192093,
+        113.69999998807907
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 196.40000000596046,
+      "p95Ms": 100.7000000178814,
+      "samples": [
+        88.09999999403954,
+        82.80000001192093,
+        84.2999999821186,
+        74.2000000178814,
+        83.89999997615814,
+        96.5,
+        92.60000002384186,
+        96.39999997615814,
+        98.90000000596046,
+        83.90000000596046,
+        81.90000000596046,
+        82,
+        101.69999998807907,
+        87.90000000596046,
+        88.59999999403954,
+        100.7000000178814,
+        76.2999999821186,
+        77.30000001192093,
+        78.09999999403954,
+        81.59999999403954
+      ],
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    }
+  ]
+}

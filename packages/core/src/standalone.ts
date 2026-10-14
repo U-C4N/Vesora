@@ -82,6 +82,7 @@ async function start():Promise<void> {
       points:{name:'Original points',note:'Original data',rendered:'Points drawn'},
       density:{name:'Count density',note:'All visible samples counted',rendered:'Occupied bins'},
       line:{name:info.exact?'Full line':'Reduced line',note:info.exact?'Original samples retained':'Extrema-preserving reduction',rendered:'Retained samples'},
+      band:{name:'Uncertainty band',note:'Paired source bounds; gaps preserved',rendered:'Retained samples'},
       grid:{name:'Heatmap',note:'Regular grid',rendered:'Cells drawn'},
       surface:{name:'Surface',note:'Regular-grid surface',rendered:'Triangles drawn'},
       hist:{name:'Histogram',note:'Exact source-data counts',rendered:'Bins drawn'},
@@ -109,7 +110,7 @@ async function start():Promise<void> {
     infos=next;const selected=layerSelect.value;layerSelect.replaceChildren();
     for(const info of infos){
       const index=fig!.spec.layers.findIndex(layer=>layer.id===info.layerId),layer=fig!.spec.layers[index];
-      const names={line:'Line',scatter:'Scatter',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
+      const names={line:'Line',band:'Uncertainty band',scatter:'Scatter',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
       const panel=fig!.spec.panels?.find(panel=>panel.id===(info.panelId??'main'));
       const label=layer.style.label||`${names[layer.kind]} ${index+1}`;
       const option=document.createElement('option');option.value=info.layerId;option.textContent=panel?`${panel.title||`Panel ${panel.row+1}, ${panel.col+1}`} · ${label}`:label;

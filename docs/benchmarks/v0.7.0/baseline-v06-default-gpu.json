@@ -1,0 +1,265 @@
+{
+  "label": "baseline-v06-default-gpu",
+  "runtime": "/artifacts/v07/baseline-runtime/index.js",
+  "runtimeSHA256": "e9cf40ea02fc031cb40387018667478be795084e22acfe886e018f9183fc921a",
+  "recordedAt": "2026-10-13T12:43:18.844Z",
+  "browser": "155.0.8059.40",
+  "softwareGpuRequested": false,
+  "cpu": "Intel(R) Core(TM) i9-14900HX",
+  "platform": "win32",
+  "viewport": {
+    "width": 1000,
+    "height": 600,
+    "dpr": 1
+  },
+  "warmup": "one unmeasured points+density figure per browser session",
+  "p95": "nearest rank of 20 completed setView/ready interactions",
+  "results": [
+    {
+      "repeat": 0,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 136.09999999403954,
+      "p95Ms": 78.09999999403954,
+      "samples": [
+        80.7999999821186,
+        75.10000002384186,
+        72.5,
+        68.89999997615814,
+        73.30000001192093,
+        70.40000000596046,
+        73.09999999403954,
+        76.69999998807907,
+        72.40000000596046,
+        78.09999999403954,
+        76.2000000178814,
+        75.2999999821186,
+        76.10000002384186,
+        75.7999999821186,
+        73.7000000178814,
+        72.7999999821186,
+        75.40000000596046,
+        75,
+        73.80000001192093,
+        72.89999997615814
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 155.09999999403954,
+      "p95Ms": 90.09999999403954,
+      "samples": [
+        90.09999999403954,
+        90,
+        82.90000000596046,
+        77.40000000596046,
+        75.09999999403954,
+        79.90000000596046,
+        79.19999998807907,
+        80.2000000178814,
+        82.39999997615814,
+        94,
+        81,
+        84,
+        77,
+        76.10000002384186,
+        78.89999997615814,
+        78.60000002384186,
+        74.2999999821186,
+        73.40000000596046,
+        75.80000001192093,
+        74.5
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 152.10000002384186,
+      "p95Ms": 87,
+      "samples": [
+        85.39999997615814,
+        89.2000000178814,
+        76.90000000596046,
+        72.5,
+        73.69999998807907,
+        74.40000000596046,
+        76.69999998807907,
+        74.09999999403954,
+        87,
+        77.40000000596046,
+        76.2000000178814,
+        75,
+        74.2999999821186,
+        76.2000000178814,
+        73.59999999403954,
+        79,
+        74.5,
+        82.90000000596046,
+        74.89999997615814,
+        77.40000000596046
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 149.7999999821186,
+      "p95Ms": 84,
+      "samples": [
+        84,
+        85.5,
+        79.2000000178814,
+        77.09999999403954,
+        79.09999999403954,
+        75.59999999403954,
+        78.90000000596046,
+        82.40000000596046,
+        82.69999998807907,
+        76.5,
+        76.30000001192093,
+        76.19999998807907,
+        75.7000000178814,
+        77.19999998807907,
+        76.09999999403954,
+        77.2000000178814,
+        78.2999999821186,
+        73.90000000596046,
+        76.69999998807907,
+        73.30000001192093
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "kind": "density",
+      "count": 1000000,
+      "firstRenderMs": 142,
+      "p95Ms": 85.19999998807907,
+      "samples": [
+        77.09999999403954,
+        78.40000000596046,
+        78.2999999821186,
+        73,
+        69.5,
+        73.60000002384186,
+        75,
+        74.59999999403954,
+        72.40000000596046,
+        74.39999997615814,
+        75.40000000596046,
+        73.5,
+        75.90000000596046,
+        77.19999998807907,
+        77.7000000178814,
+        85.19999998807907,
+        89.40000000596046,
+        79.40000000596046,
+        76.09999999403954,
+        72.80000001192093
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "density",
+          "total": 1000000,
+          "visible": 734806,
+          "rendered": 24544,
+          "exact": true,
+          "method": "count aggregation (screen-space cells; all visible samples counted)",
+          "layerId": "layer-2"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "kind": "line",
+      "count": 1000000,
+      "firstRenderMs": 144.59999999403954,
+      "p95Ms": 79.80000001192093,
+      "samples": [
+        80.90000000596046,
+        79.59999999403954,
+        79.80000001192093,
+        75.39999997615814,
+        79.5,
+        77.40000000596046,
+        79.80000001192093,
+        78.69999998807907,
+        77.40000000596046,
+        77.40000000596046,
+        77.5,
+        74.2999999821186,
+        75.5,
+        76,
+        75.80000001192093,
+        76.69999998807907,
+        72,
+        76.60000002384186,
+        78.59999999403954,
+        72.90000000596046
+      ],
+      "gpu": "ANGLE (Intel, Intel(R) UHD Graphics (0x0000A788) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "info": [
+        {
+          "kind": "line",
+          "total": 1000000,
+          "visible": 696001,
+          "rendered": 2692,
+          "exact": false,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-2"
+        }
+      ]
+    }
+  ]
+}

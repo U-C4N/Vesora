@@ -102,12 +102,16 @@ test('selection and hover remain panel-local while independent logarithmic panel
     window.selected=[];window.hovered=[];fig.on('selection',e=>selected.push(e));fig.on('hover',e=>hovered.push(e));
     fig.mount(document.querySelector('#chart'));await fig.ready();
   });
-  await page.mouse.move(312,498);await expect.poll(()=>page.evaluate(()=>hovered.length)).toBeGreaterThan(0);
+  const target=await page.evaluate(()=>{
+    const panel=fig.view.panels[1],r=panel.rect,offset=fig.view.overlay.getBoundingClientRect();
+    return {x:offset.left+r.left+r.width/2,y:offset.top+r.top+r.height/2,left:offset.left+r.left+1,top:offset.top+r.top+1,right:offset.left+r.left+r.width-1,bottom:offset.top+r.top+r.height-1};
+  });
+  await page.mouse.move(target.x,target.y);await expect.poll(()=>page.evaluate(()=>hovered.length)).toBeGreaterThan(0);
   const secondaryId=await page.evaluate(()=>fig.spec.panels[1].id);
   expect(await page.evaluate(()=>hovered.at(-1).panelId)).toBe(secondaryId);
-  await page.keyboard.down('Shift');await page.mouse.move(80,390);await page.mouse.down();await page.mouse.move(540,600,{steps:5});await page.mouse.up();await page.keyboard.up('Shift');
+  await page.keyboard.down('Shift');await page.mouse.move(target.left,target.top);await page.mouse.down();await page.mouse.move(target.right,target.bottom,{steps:5});await page.mouse.up();await page.keyboard.up('Shift');
   const selected=await page.evaluate(()=>window.selected);expect(selected).toHaveLength(1);expect(selected[0].count).toBe(1);expect(selected[0].panelId).toBe(secondaryId);
-  await page.mouse.move(300,490);await page.mouse.wheel(0,-100);await page.evaluate(()=>fig.ready());
+  await page.mouse.move(target.x,target.y);await page.mouse.wheel(0,-100);await page.evaluate(()=>fig.ready());
   const views=await page.evaluate(()=>[fig.panel(0,0).view,fig.panel(1,0).view]);
   expect(views[0].xDomain).toEqual([1,100]);expect(views[1].xDomain[0]).toBeGreaterThan(1);expect(views[1].xDomain[1]).toBeLessThan(100);
   expect(errors).toEqual([]);

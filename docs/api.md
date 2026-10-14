@@ -1,10 +1,23 @@
 # API and usage
 
-Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. A figure contains either 2D or 3D layers; mixing them in one figure raises an error. v0.6 adds themes, time axes, declarative formats and a separate [React adapter](../packages/react/README.md). Python installation dependencies are unchanged.
+Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. A figure contains either 2D or 3D layers; mixing them in one figure raises an error. v0.8 adds bounded numeric line/scatter streaming, runtime diagnostics and recovery, retaining the interval bands, shared-x inspection and explicit PNG dimensions from v0.7. The [React adapter](../packages/react/README.md) exposes matching features. Python installation dependencies are unchanged.
+
+## Append live data
+
+| Operation | Python | JavaScript |
+| --- | --- | --- |
+| Enable bounded history | `layer.enable_streaming(max_points=100_000)` | `layer.enableStreaming({maxPoints: 100_000})` |
+| Append complete channels | `layer.append_data(x=x, y=y)` | `await layer.appendData({x, y})` |
+| Stop appending, keep retained data | `layer.disable_streaming()` | `layer.disableStreaming()` |
+| Replace data and reset epoch | `layer.set_data(x=x, y=y)` | `layer.setData({x, y})` |
+
+Capacity is mandatory. Numeric 2D lines/scatters are supported; bands, categories, statistical/3D layers and linked-selection members cannot stream. JavaScript also exposes atomic multi-series `fig.appendDataBatch([{layer, data}, ...])`, `fig.getStreamingState(layer.id)`, `fig.diagnostics()` and `fig.ready({signal, timeoutMs})`. React exposes `streaming={{maxPoints}}` and `appendRows(rows)` on its typed ref. Python append is synchronous data acceptance; JavaScript/React append promises wait for a covering rendered frame when mounted. Read [the complete streaming contracts](streaming.md) before integrating a producer.
 
 ## Themes, dates and number formats
 
 Themes apply to WebGL backgrounds, Canvas axes/labels/tooltips, viewer controls and exports. Choose `light`, `dark`, or partial tokens: `background`, `foreground`, `muted`, `grid`, `axis`, `tooltipBackground`, `tooltipForeground`, `selection`, `error`, `fontFamily`, `fontSize` and `palette`. Explicit layer colors override the theme palette. The default remains light.
+
+Optional `titleFontSize`, `labelFontSize`, `tickFontSize` and `legendFontSize` override individual text roles, in logical CSS pixels. Each font-size token accepts finite numbers from 8 through 32. Omitted role tokens retain the existing `fontSize`-based appearance and are not added to legacy snapshots. Tick density and plot margins adapt to measured text; increasing text sizes may reduce the number of labels drawn. Python uses the same camelCase token names inside its theme dictionary.
 
 ```typescript
 import { figure } from '@vesora/core';
@@ -30,7 +43,7 @@ fig.save_html("revenue.html")
 
 Time coordinates are numeric UTC epoch milliseconds; locale and timezone affect labels, not observation identity or geometry. Calendar ticks use UTC boundaries and adapt to the visible interval. Use `kind: 'number' | 'percent' | 'currency' | 'date'`; percentage values are fractions, and currency requires a three-letter code. Optional `options` contains supported JSON-safe Intl settings. Date formatting defaults to `en-US` and `UTC`; explicit Intl date options override automatic tick formatting. Time axes are for numeric 2D data; existing statistical and categorical restrictions remain enforced.
 
-Use `setTheme(...)` / `set_theme(...)` to change a theme. Panel handles also provide axis formatting. Theme/time/format features promote snapshots to protocol 5; readers retain protocols 1–4. Invalid options fail before changing the current valid scene. Declarative formats survive offline HTML, while application callbacks remain in the host.
+Use `setTheme(...)` / `set_theme(...)` to change a theme. Panel handles also provide axis formatting. Base theme/time/format features promote snapshots to protocol 5; role font sizes require protocol 6. The current reader accepts protocols 1–6. Invalid options fail before changing the current valid scene. Declarative formats survive offline HTML, while application callbacks remain in the host.
 
 JavaScript `fig.on(...)` callbacks use `FigureEventMap`. Hover includes original source indices when a point is identifiable, plus local/client pointer positions; `null` clears a previous hover. Click carries the same hit information. Density hover identifies a bin rather than an individual record. Consumer callback exceptions are reported to the console and isolated from rendering and readiness. The returned unsubscribe function removes the subscription.
 
@@ -42,6 +55,7 @@ JavaScript `fig.on(...)` callbacks use `FigureEventMap`. Hover includes original
 | 2D grid | `vs.subplots(2, 1, sharex=True)` | `subplots({rows: 2, cols: 1, shareX: true})` |
 | Panel | `fig.panel(0, 0)` | `fig.panel(0, 0)` |
 | Line | `fig.plot(x, y)` | `fig.plot(x, y)` |
+| Interval band | `fig.fill_between(x, lower, upper)` | `fig.fillBetween(x, lower, upper)` |
 | Scatter | `fig.scatter(x, y)` | `fig.scatter(x, y)` |
 | Heatmap | `fig.heatmap(x, y, z)` | `fig.heatmap(x, y, z)` |
 | Surface | `fig.surface(x, y, z)` | `fig.surface(x, y, z)` |
@@ -51,6 +65,7 @@ JavaScript `fig.on(...)` callbacks use `FigureEventMap`. Hover includes original
 | Boxplot | `fig.boxplot(groups, labels=names)` | `fig.boxplot(groups, {labels: names})` |
 | Display | `fig.show()` | `fig.mount(element)` |
 | PNG export | `fig.savefig("figure.png")` | `await fig.savefig()` → `Blob` |
+| Shared-x inspection | `fig.set_hover_mode("x")` | `fig.setHoverMode('x')` |
 | Interactive HTML | `fig.save_html("figure.html")` | `downloadHTML(fig, "figure.html")` |
 | HTML string | `fig.to_html()` | `toHTML(fig)` |
 | Close | `fig.close()` | `fig.close()` |
@@ -70,6 +85,34 @@ fig = vs.figure(title="Damped radial wave")
 fig.surface(x, x, z, colormap="viridis")
 fig.show()
 ```
+
+## Show an interval around a curve
+
+Use `fill_between(x, lower, upper, **style)` / `fillBetween(x, lower, upper, style)` on a `Figure` or `Panel`. Python also provides `vs.fill_between`. Supply the bounds you want to show; the engine does not calculate a confidence interval or infer statistical meaning.
+
+```python
+import vesora as vs
+
+x, y = [0, 1, 2, 3], [3.2, 1.8, 1.0, 0.7]
+fig = vs.figure(title="Synthetic interval")
+band = fig.fill_between(x, [2.8, 1.5, .8, .5], [3.6, 2.1, 1.2, .9], color="#3569c8")
+fig.plot(x, y, color="#3569c8", label="Model A")
+fig.set_axes(yscale="log")
+band.set_data(lower=[2.7, 1.4, .7, .4])
+fig.save_html("interval.html")
+```
+
+All three channels must be numeric one-dimensional arrays of equal length. `x` must be finite and strictly increasing; empty and one-sample arrays are accepted. Wherever both bounds are finite, `lower <= upper` is required. A nonfinite bound creates a gap. Nonpositive values on logarithmic axes also create gaps. Bands support a 2D x axis of `linear`, `log` or `time`, and a y axis of `linear` or `log`; categorical axes, time y axes and y date formats are unsupported.
+
+Band styles are deliberately limited to `color`, `opacity` and `label`; opacity defaults to `0.18`. Labels appear in the core legend. Band data and style updates are atomic. Update named channels with `band.set_data(lower=new_lower)` / `band.setData({lower: newLower})`, or replace all three channels positionally in Python. Displayed bands preserve both bounds and missing-data breaks while clipping to the viewport; they do not provide point hover or rectangle selection. Put a line over a band for sample inspection.
+
+## Compare series at the same cursor x
+
+Enable `fig.set_hover_mode("x")` / `fig.setHoverMode('x')`; use `"nearest"` to restore the existing point-hover mode. Shared-x inspection applies to visible 2D numeric/time line layers in the active panel. Every participating line needs finite, strictly increasing x coordinates. Invalid mode changes, data updates or attempts to show an ineligible line fail without changing the previous scene.
+
+The guide follows the cursor x. Each visible line reports its nearest **original source sample within the same valid run**, with that sample's actual x and y. This is not interpolation, does not extrapolate beyond a run, and does not bridge missing or logarithmically invalid data. Hidden series are excluded; a line without a valid sample at that cursor position has no core event item. The tooltip can therefore show different sample x values for irregularly sampled series.
+
+JavaScript subscribes with `fig.on('xhover', event => { /* use event or null */ })`. `XHoverEvent` contains `cursorX`, `pointerPosition`, optional `panelId` and `items`; each item has `layerId`, `index`, `x` and `y`. Moving away or clearing inspection emits `null`. Touch can pin inspection, and the focused chart supports Left/Right and Home/End keys. Hover remains local to the viewer: Python configures and serializes the mode, but the Python hosts do not forward per-pointer `hover` or `xhover` callbacks. Transient guides/tooltips are omitted from PNG and HTML state.
 
 ## Compare data in panels
 
@@ -156,7 +199,7 @@ In JavaScript, use `fig.axhline(3, {color: '#b45309', width: 2})`, `fig.text(1, 
 | Text font size | `font_size` | `fontSize` | Positive finite CSS-pixel size. |
 | Position / content | `x`, `y`, `text` | `x`, `y`, `text` | Use the coordinates required by the annotation kind; text content must be a string. |
 
-`text` requires x and y; a horizontal line accepts y; a vertical line accepts x. Coordinates must be finite numbers. Error bars, confidence bands, arrows, mathematical text rendering and 3D annotations are not part of this API.
+`text` requires x and y; a horizontal line accepts y; a vertical line accepts x. Coordinates must be finite numbers. Error bars, arrows, mathematical text rendering and 3D annotations are not part of this API. Use an [interval-band layer](#show-an-interval-around-a-curve) to shade explicit lower/upper bounds.
 
 Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. Text uses the system sans-serif font, left alignment, and literal newline characters for multiple lines. Text is never interpreted as HTML or mathematical markup.
 
@@ -164,7 +207,7 @@ Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. T
 
 Supported Python inputs include lists, tuples, `array.array`, and supported numeric buffers. When installed, NumPy `ndarray` inputs are accepted through the buffer protocol. This uses the same data adapter and visualization engine.
 
-For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
+For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
 
 This example supplies Float32 buffers using the Python standard library:
 
@@ -179,7 +222,9 @@ fig.show()
 
 ## Update styles and data
 
-Style options are `color`, `size`, `width`, `opacity`, `label`, `colormap`, `representation`, and `colorDomain` (`color_domain` in Python). Colormaps are `viridis` or `magma`. Scatter representation modes are `auto`, `points`, and `density`.
+Style options are `color`, `size`, `width`, `opacity`, `label`, `colormap`, `representation`, `colorDomain` (`color_domain` in Python) and `colorbarLabel` (`colorbar_label` in Python). Colormaps are `viridis` or `magma`. Scatter representation modes are `auto`, `points`, and `density`. Bands accept only the three styles documented above.
+
+Use `fig.heatmap([[1, 2], [3, 4]], colorbar_label="Temperature (°C)")` or JavaScript `{colorbarLabel: 'Temperature (°C)'}` to name a scalar scale. Density retains its count-per-bin meaning even with a custom label: changing the label does not change the aggregation. Colors and numeric color domains keep their existing semantics.
 
 ```javascript
 // After importing figure from @vesora/core and creating a #chart element:
@@ -214,7 +259,7 @@ unsubscribe();
 
 JavaScript's `fig.inspect()` returns `kind`, `total`, `visible`, `rendered`, `exact`, `method`, and `layerId` for each layer, with `panelId` for grid results. For density, `exact: true` means the counts are exact; it does not mean every point is drawn separately. After a view update, use `await fig.ready()` before reading the completed result. Python does not expose `fig.inspect()`; subscribe to the `representation` event or use the exported viewer's inspector.
 
-JavaScript event names are `hover`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward `selection`, `viewchange`, `representation`, and `error`; `hover` is currently JavaScript-only. An unlinked point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. An unlinked density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. Without an explicit selection link, selection does not highlight or filter another panel. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
+JavaScript event names include `hover`, `xhover`, `click`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward low-frequency selection/view/representation/error events; the per-pointer `hover` and `xhover` events remain JavaScript-only. An unlinked point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. An unlinked density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. Without an explicit selection link, selection does not highlight or filter another panel. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
 
 ## Follow observations across views
 
@@ -315,7 +360,23 @@ For notebook support, install `python -m pip install -e ".[notebook]"` from sour
 
 ## Export PNG and release resources
 
-Mount a JavaScript figure before exporting. `await fig.savefig()` waits for every panel, composites the WebGL and annotation canvases, and returns a PNG Blob of the whole layout. In the browser, the figure's width follows its mount element subject to the grid's minimum cell size; set the element's CSS width for a fixed size. Output dimensions are the actual CSS figure dimensions multiplied by the device pixel ratio, capped at 2. Python's `fig.savefig(path)` can export a figure that has not been displayed, using the Qt host. A current render failure rejects export instead of returning an older image.
+Mount a JavaScript figure before exporting. `await fig.savefig()` waits for every panel, composites the WebGL and annotation canvases, and returns a PNG Blob of the whole layout. With no options, the mounted CSS dimensions and existing effective device pixel ratio (capped at 2) are retained. Python's `fig.savefig(path)` can export an undisplayed figure using Qt. A current render failure rejects export instead of returning an older image.
+
+```python
+# Uses the existing fig; 1000 × 600 logical pixels become a 2000 × 1200 PNG.
+fig.savefig("figure.png", width=1000, height=600, scale=2)
+# In a displayed notebook: await fig.savefig_async("figure.png", width=1000, height=600, scale=2)
+```
+
+```typescript
+const png = await fig.savefig({width: 1000, height: 600, scale: 2});
+```
+
+`width` and `height` must be supplied together as safe integers of at least 200 × 180 logical pixels. `scale` is an independent positive finite raster multiplier. Omit the dimensions to use the mounted size; omit scale to use the effective viewer DPR. Explicitly set all three for predictable output dimensions. The renderer lays out and renders at the requested logical size, rather than resizing a screenshot. Pixel dimensions are rounded to integers and must be positive, fit the active GPU limits, and contain no more than 32,000,000 pixels. Invalid requests reject without altering the live figure. Exports retain data, view and serialized styling while excluding transient hover guides and tooltips.
+
+React exposes the same `ExportPNGOptions` through `await chartRef.current.exportPNG({width, height, scale})`. Python sync/async calls retain their `timeout` option. Changing export dimensions or scale does not promote the scene protocol; bands, hover mode, new typography tokens and colorbar labels use protocol 6.
+
+Requests on the same figure are serialized. Each captures a completed scene and owned source buffers before entering the export queue, so later data changes or resizes cannot mix into the image. Rendering uses a separate multisampled framebuffer in the existing WebGL context; the live viewport, camera and selection remain unchanged. Temporary resources are released on success and failure. Closing or unmounting the source before capture completes can reject the pending request with a disposal/context error.
 
 `close()` releases GPU resources, workers, and event listeners. A closed figure cannot be reused. In Python, closing only the desktop window preserves the figure's data for later display or export. An explicit `fig.close()` releases that data too.
 

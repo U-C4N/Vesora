@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable
 
-from .numeric import NumericData, as_numeric, numeric_range
+from .numeric import NumericData, ChunkedNumericData, as_numeric, numeric_range
 from . import statistics as _statistics
 from . import presentation as _presentation
 
@@ -19,8 +19,10 @@ EXTENDED_PROTOCOL_VERSION = 2
 STATISTICS_PROTOCOL_VERSION = 3
 LINKED_PROTOCOL_VERSION = 4
 PRESENTATION_PROTOCOL_VERSION = _presentation.PRESENTATION_PROTOCOL_VERSION
+QUALITY_PROTOCOL_VERSION = _presentation.QUALITY_PROTOCOL_VERSION
 _MAX_SAFE_SELECTION_SEQUENCE = 2**53 - 1
-_STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain"}
+_STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain", "colorbarLabel"}
+_BAND_STYLES = {"color", "opacity", "label"}
 
 
 def _default_host() -> str:
@@ -108,10 +110,14 @@ def _style(values: dict[str, Any]) -> dict[str, Any]:
     result = dict(values)
     if "color_domain" in result:
         result["colorDomain"] = result.pop("color_domain")
+    if "colorbar_label" in result:
+        if "colorbarLabel" in result:
+            raise TypeError("Supply only one of colorbar_label and colorbarLabel")
+        result["colorbarLabel"] = result.pop("colorbar_label")
     unknown = result.keys() - _STYLES
     if unknown:
         raise TypeError(f"Unknown style option(s): {', '.join(sorted(unknown))}")
-    for key in ("color", "label"):
+    for key in ("color", "label", "colorbarLabel"):
         if key in result and not isinstance(result[key], str):
             raise TypeError(f"{key} must be a string")
     if "color" in result and result["color"].lower() not in {"blue", "red", "green", "orange", "purple", "black", "white", "cyan", "yellow"} and not re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", result["color"]):
@@ -168,7 +174,13 @@ def _annotation(kind: str, values: dict[str, Any]) -> dict[str, Any]:
 
 def _prepare(kind: str, *args: Any, **kwargs: Any) -> dict[str, NumericData]:
     colors = kwargs.pop("color", kwargs.pop("values", None))
-    if kind in ("line", "scatter"):
+    if kind == "band":
+        if len(args) != 3:
+            raise TypeError("fill_between expects x, lower, upper")
+        if colors is not None:
+            raise TypeError("Bands do not support scalar colors")
+        values = {name: _array(value, name) for name, value in zip(("x", "lower", "upper"), args)}
+    elif kind in ("line", "scatter"):
         if len(args) == 1:
             y = _array(args[0], "y")
             args = (numeric_range(y.size), y)
@@ -194,11 +206,19 @@ def _prepare(kind: str, *args: Any, **kwargs: Any) -> dict[str, NumericData]:
             raise TypeError(f"{kind} expects z or x, y, z")
     if kwargs:
         raise TypeError(f"Unknown data arguments: {', '.join(kwargs)}")
-    if kind in ("line", "scatter", "scatter3d"):
+    if kind in ("line", "scatter", "scatter3d", "band"):
         if any(a.ndim != 1 for a in values.values()):
             raise ValueError(f"{kind} coordinates must be 1D arrays")
         if len({a.size for a in values.values()}) != 1:
             raise ValueError("Coordinate arrays must have matching lengths")
+        if kind == "band":
+            previous = -math.inf
+            for value in values["x"]:
+                if not math.isfinite(value) or value <= previous:
+                    raise ValueError("Band x coordinates must be finite and strictly increasing")
+                previous = value
+            if any(math.isfinite(lo) and math.isfinite(hi) and lo > hi for lo, hi in zip(values["lower"], values["upper"])):
+                raise ValueError("Band lower bounds must not exceed upper bounds")
     else:
         x, y, z = values["x"], values["y"], values["z"]
         if x.ndim != 1 or y.ndim != 1 or z.ndim != 2 or z.shape != (y.size, x.size):
@@ -236,7 +256,7 @@ class Layer:
         raise RuntimeError("Layer has been removed")
 
     def set_data(self, *args: Any, **kwargs: Any) -> Layer:
-        if self._spec()["kind"] in ("hist", "bar", "boxplot", "line", "scatter"):
+        if self._spec()["kind"] in ("hist", "bar", "boxplot", "line", "scatter", "band"):
             self.figure._update_layer_data(self._spec(), args, kwargs)
             return self
         with self.figure._lock:
@@ -270,6 +290,87 @@ class Layer:
         self.figure._publish()
         return self
 
+    def enable_streaming(self, *, max_points: int) -> Layer:
+        """Keep a bounded numeric 2D line/scatter window for append_data()."""
+        if isinstance(max_points, bool) or not isinstance(max_points, int) or not 0 < max_points <= 2**32 - 1:
+            raise ValueError("max_points must be a positive integer at most 2**32 - 1")
+        with self.figure._lock:
+            layer = self._spec()
+            previous = self.figure._streams.get(self.id)
+            if previous is not None:
+                if previous["maxPoints"] != max_points:
+                    raise ValueError("Disable streaming before changing max_points")
+                return self
+            self.figure._ensure_unlinked_data(self.id)
+            if layer["kind"] not in ("line", "scatter") or layer.get("categorical") or self.figure._panel_view(layer.get("panelId", "main"))["kind"] != "2d":
+                raise ValueError("Streaming supports numeric 2D line and scatter layers only")
+            arrays = self.figure._layer_arrays(layer)
+            self.figure._reset_stream(layer, arrays, max_points)
+            self.figure._publish()
+        return self
+
+    def disable_streaming(self) -> Layer:
+        """Keep the current window as ordinary static source data."""
+        with self.figure._lock:
+            layer = self._spec()
+            if self.id not in self.figure._streams:
+                return self
+            self.figure._streams.pop(self.id)
+            for source_id in layer["data"].values():
+                descriptor, values = self.figure._sources[source_id]
+                self.figure._sources[source_id] = (descriptor, NumericData(values.dtype, values.shape, values.tobytes()))
+            self.figure._publish()
+        return self
+
+    def append_data(self, **channels: Any) -> Layer:
+        """Atomically append all existing channels, retaining at most max_points."""
+        with self.figure._lock:
+            layer = self._spec()
+            state = self.figure._streams.get(self.id)
+            if state is None:
+                raise RuntimeError("Call enable_streaming(max_points=...) before append_data()")
+            current = self.figure._layer_arrays(layer)
+            if channels.keys() != current.keys():
+                raise ValueError("Append must provide exactly all existing data channels")
+            arrays = _prepare(layer["kind"], channels["x"], channels["y"], color=channels.get("color"))
+            if any(arrays[name].dtype != current[name].dtype for name in arrays):
+                raise TypeError("Streaming append must preserve each channel's dtype")
+            count = arrays["x"].size
+            if not count:
+                return self
+            if state["nextSequence"] + count > 2**53 - 1 or state["revision"] >= 2**53 - 1 or any(self.figure._sources[source][0]["version"] >= 2**53 - 1 for source in layer["data"].values()):
+                raise ValueError("Streaming sequence exceeds the JavaScript safe integer range")
+            view = self.figure._panel_view(layer.get("panelId", "main"))
+            for axis in "xy":
+                if view[axis + "Scale"] == "time" or view.get(axis + "Format", {}).get("kind") == "date":
+                    if any(math.isfinite(value) and abs(value) > 8.64e15 for value in arrays[axis]):
+                        raise ValueError("Time coordinates must be within the JavaScript Date range")
+            if layer["kind"] == "line" and layer["visible"] and self.figure._spec.get("hoverMode") == "x":
+                # History was checked at opt-in/format changes; only inspect the
+                # incoming batch and its boundary, never rescan the live window.
+                previous = self.figure._stream_last_x.get(self.id, -math.inf)
+                for value in arrays["x"]:
+                    if not math.isfinite(value) or value <= previous:
+                        raise ValueError("Shared x hover requires finite strictly increasing line x coordinates")
+                    previous = value
+            updated = {name: value.append(arrays[name], state["maxPoints"]) for name, value in current.items()}
+            patches = []
+            for name, value in updated.items():
+                source_id = layer["data"][name]
+                previous = self.figure._sources[source_id][0]
+                descriptor = self.figure._descriptor(source_id, value, previous["version"] + 1)
+                self.figure._sources[source_id] = (descriptor, value)
+                patches.append({"channel": name, "sourceId": source_id, "baseVersion": previous["version"],
+                                "descriptor": self.figure._descriptor(source_id, arrays[name], descriptor["version"]),
+                                "buffer": arrays[name].tobytes()})
+            retained = updated["x"].size
+            state.update(nextSequence=state["nextSequence"] + count, revision=state["revision"] + 1,
+                         retained=retained, evicted=state["nextSequence"] + count - retained)
+            self.figure._stream_last_x[self.id] = next(reversed(tuple(arrays["x"])))
+            self.figure._publish({"kind": "append", "layerId": self.id, "channels": patches,
+                                  "state": copy.deepcopy(state)})
+        return self
+
     def set_options(self, **options: Any) -> Layer:
         with self.figure._lock:
             previous = self._spec()
@@ -293,13 +394,21 @@ class Layer:
     def set_style(self, **style: Any) -> Layer:
         validated = _style(style)
         with self.figure._lock:
-            self._spec()["style"].update(validated)
+            layer = self._spec()
+            if layer["kind"] == "band" and validated.keys() - _BAND_STYLES:
+                raise TypeError("Band styles only accept color, opacity and label")
+            layer["style"].update(validated)
+            if "colorbarLabel" in validated:
+                self.figure._spec["protocolVersion"] = max(self.figure._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
         self.figure._publish()
         return self
 
     def set_visible(self, visible: bool) -> Layer:
         with self.figure._lock:
-            self._spec()["visible"] = bool(visible)
+            layer = self._spec()
+            candidate = {**layer, "visible": bool(visible)}
+            self.figure._validate_axis_contract([candidate if item is layer else item for item in self.figure._spec["layers"]], self.figure._spec.get("categories", {}))
+            layer["visible"] = candidate["visible"]
         self.figure._publish()
         return self
 
@@ -308,6 +417,8 @@ class Layer:
             spec = self._spec()
             self.figure._unlink_member(self.id)
             self.figure._spec["layers"].remove(spec)
+            self.figure._streams.pop(self.id, None)
+            self.figure._stream_last_x.pop(self.id, None)
             for data_id in spec["data"].values():
                 self.figure._sources.pop(data_id, None)
         self.figure._publish()
@@ -389,6 +500,9 @@ class Panel:
     def plot(self, *args: Any, **style: Any) -> Layer:
         return self.figure._add("line", args, style, panel_id=self.id)
 
+    def fill_between(self, x: Any, lower: Any, upper: Any, **style: Any) -> Layer:
+        return self.figure._add("band", (x, lower, upper), style, panel_id=self.id)
+
     def scatter(self, x: Any, y: Any, **style: Any) -> Layer:
         return self.figure._add("scatter", (x, y), style, panel_id=self.id)
 
@@ -457,6 +571,9 @@ class Figure:
                           "xLabel": "", "yLabel": "", "zLabel": "",
                           "camera": {"azimuth": 35, "elevation": 25, "distance": 3}, "pan3d": [0, 0]}, "layers": []}
         self._sources: dict[str, tuple[dict[str, Any], NumericData]] = {}
+        self._streams: dict[str, dict[str, Any]] = {}
+        self._stream_last_x: dict[str, float] = {}
+        self._last_change: dict[str, Any] | None = None
         self._listeners: list[Callable[[], None]] = []
         self._events: dict[str, list[Callable[[Any], None]]] = defaultdict(list)
         self._host = None
@@ -466,7 +583,7 @@ class Figure:
         self._selection_event_sequence = -1
         if theme is not None:
             self._spec["theme"] = _presentation.resolve_theme(theme)
-            self._spec["protocolVersion"] = PRESENTATION_PROTOCOL_VERSION
+            self._spec["protocolVersion"] = QUALITY_PROTOCOL_VERSION if _presentation.FONT_SIZE_TOKENS & self._spec["theme"].keys() else PRESENTATION_PROTOCOL_VERSION
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -582,9 +699,33 @@ class Figure:
                 raise ValueError("Stale data version; fetch a fresh snapshot")
             return array.tobytes(order="C")
 
-    def _publish(self) -> None:
-        for listener in tuple(self._listeners):
-            listener()
+    def _publish(self, change: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            self._last_change = change
+            try:
+                for listener in tuple(self._listeners):
+                    listener()
+            finally:
+                self._last_change = None
+
+    def _reset_stream(self, layer: dict[str, Any], arrays: dict[str, Any], max_points: int) -> None:
+        count = arrays["x"].size
+        retained = min(count, max_points)
+        state = {"streamId": _id("stream"), "maxPoints": max_points, "nextSequence": count,
+                 "revision": 0, "retained": retained, "evicted": count - retained}
+        for name, values in arrays.items():
+            source_id = layer["data"][name]
+            previous = self._sources[source_id][0]
+            bounded = ChunkedNumericData.from_data(values, max_points)
+            self._sources[source_id] = (self._descriptor(source_id, bounded, previous["version"] + 1), bounded)
+        self._streams[layer["id"]] = state
+        self._stream_last_x[layer["id"]] = next(reversed(tuple(arrays["x"])), -math.inf)
+
+    def _frozen_transfer(self) -> tuple[dict[str, Any], list[bytes], dict[str, Any]]:
+        """One revision's owned buffers, independent of subsequent appends."""
+        with self._lock:
+            snapshot = self.snapshot()
+            return snapshot, [self._data_bytes(item["id"], item["version"]) for item in snapshot["sources"]], copy.deepcopy(self._streams)
 
     def link_selection(self, *, scatter: Any, histogram: Layer) -> SelectionLink:
         """Link two numeric scatter panels and one aligned count histogram.
@@ -603,6 +744,8 @@ class Figure:
             if self._spec.get("selectionLink") is not None:
                 raise ValueError("Only one selection link is supported per figure")
             layers = [member._spec() for member in members]
+            if any(layer["id"] in self._streams for layer in layers):
+                raise ValueError("Disable streaming before linking selection members")
             if len({layer["id"] for layer in layers}) != 3:
                 raise ValueError("Selection link members must be distinct")
             if any(layer["kind"] != "scatter" or layer.get("categorical") for layer in layers[:2]):
@@ -688,6 +831,8 @@ class Figure:
             panel_id = layer.get("panelId", "main")
             view = views[panel_id]
             calendar_axes = {axis for axis in "xy" if view[axis + "Scale"] == "time" or view.get(axis + "Format", {}).get("kind") == "date"}
+            if layer["kind"] == "band" and (view["kind"] != "2d" or view["xScale"] not in ("linear", "log", "time") or view["yScale"] not in ("linear", "log") or "y" in calendar_axes):
+                raise ValueError("Bands require numeric 2D axes, with time allowed on x only")
             if calendar_axes:
                 arrays = (overrides or {}).get(layer["id"])
                 if arrays is None:
@@ -718,6 +863,25 @@ class Figure:
             for axis in "xy":
                 if self._category_key(panel_id, axis) in categories and (view["kind"] != "2d" or view[axis + "Scale"] != "linear"):
                     raise ValueError("Categorical axes require a linear 2D view")
+        self._validate_hover(layers, views, overrides)
+
+    def _validate_hover(self, layers: list[dict[str, Any]], views: dict[str, dict[str, Any]], overrides: dict[str, dict[str, NumericData]] | None = None, mode: str | None = None) -> None:
+        if (self._spec.get("hoverMode", "nearest") if mode is None else mode) != "x":
+            return
+        for layer in layers:
+            if layer["kind"] != "line" or not layer["visible"]:
+                continue
+            view = views[layer.get("panelId", "main")]
+            if view["kind"] != "2d" or layer.get("categorical"):
+                raise ValueError("Shared x hover requires numeric 2D line coordinates")
+            arrays = (overrides or {}).get(layer["id"])
+            if arrays is None:
+                arrays = self._layer_arrays(layer)
+            previous = -math.inf
+            for value in arrays["x"]:
+                if not math.isfinite(value) or value <= previous:
+                    raise ValueError("Shared x hover requires finite strictly increasing line x coordinates")
+                previous = value
 
     def _validate_bars(self, layers: list[dict[str, Any]], overrides: dict[str, dict[str, NumericData]] | None = None, modes: dict[str, str] | None = None) -> None:
         modes = self._spec.get("barModes", {}) if modes is None else modes
@@ -766,6 +930,8 @@ class Figure:
             self._spec["categories"] = categories
         if categories or layer["kind"] in ("hist", "bar", "boxplot"):
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], STATISTICS_PROTOCOL_VERSION)
+        if layer["kind"] == "band" or "colorbarLabel" in layer["style"]:
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
 
     def _set_categories(self, panel_id: str, axis: str, labels: Any) -> None:
         if axis not in ("x", "y"):
@@ -873,6 +1039,10 @@ class Figure:
             data_options["color"] = options.pop("color")
         style = _style(options)
         dimension = "3d" if kind in ("surface", "scatter3d") else "2d"
+        if kind == "band":
+            if style.keys() - _BAND_STYLES:
+                raise TypeError("Band styles only accept color, opacity and label")
+            style.setdefault("opacity", 0.18)
         with self._lock:
             self._ensure_open()
             self._panel_view(panel_id)
@@ -915,7 +1085,17 @@ class Figure:
             incoming = dict(values)
             categories = copy.deepcopy(self._spec.get("categories", {}))
             categorical = dict(layer.get("categorical", {}))
-            if kind in ("line", "scatter"):
+            if kind == "band":
+                if args:
+                    if len(args) != 3 or incoming:
+                        raise TypeError("Band set_data expects x, lower, upper or named channels")
+                    incoming.update(zip(("x", "lower", "upper"), args))
+                if incoming.keys() - {"x", "lower", "upper"}:
+                    raise TypeError("Band data only accepts x, lower and upper")
+                complete = {**current, **incoming}
+                arrays = _prepare("band", complete["x"], complete["lower"], complete["upper"])
+                changed = set(incoming)
+            elif kind in ("line", "scatter"):
                 if "values" in incoming:
                     if "color" in incoming:
                         raise TypeError("Supply only one of values and color")
@@ -1000,15 +1180,24 @@ class Figure:
             else:
                 candidate.pop("categorical", None)
             self._validate_layer_candidate(candidate, arrays, categories)
+            streaming = self._streams.get(layer["id"])
+            if streaming and categorical:
+                raise ValueError("Streaming supports numeric coordinates only")
             if categorical:
                 layer["categorical"] = categorical
             else:
                 layer.pop("categorical", None)
             self._commit_layer_arrays(layer, arrays, changed, categories)
+            if streaming:
+                self._reset_stream(layer, arrays, streaming["maxPoints"])
         self._publish()
 
     def plot(self, *args: Any, **style: Any) -> Layer:
         return self._add("line", args, style)
+
+    def fill_between(self, x: Any, lower: Any, upper: Any, **style: Any) -> Layer:
+        """Fill the interval between bounds; nonfinite bounds create gaps."""
+        return self._add("band", (x, lower, upper), style)
 
     def scatter(self, x: Any, y: Any, **style: Any) -> Layer:
         return self._add("scatter", (x, y), style)
@@ -1032,7 +1221,20 @@ class Figure:
         with self._lock:
             self._ensure_open()
             self._spec["theme"] = validated
-            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], PRESENTATION_PROTOCOL_VERSION)
+            version = QUALITY_PROTOCOL_VERSION if _presentation.FONT_SIZE_TOKENS & validated.keys() else PRESENTATION_PROTOCOL_VERSION
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], version)
+        self._publish()
+        return self
+
+    def set_hover_mode(self, mode: str) -> Figure:
+        """Select renderer-local nearest-point or shared-x line inspection."""
+        if mode not in ("nearest", "x"):
+            raise ValueError("Hover mode must be 'nearest' or 'x'")
+        with self._lock:
+            self._ensure_open()
+            self._validate_hover(self._spec["layers"], self._views(), mode=mode)
+            self._spec["hoverMode"] = mode
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
         self._publish()
         return self
 
@@ -1250,9 +1452,7 @@ class Figure:
         if host == "auto":
             host = _default_host()
         if host == "notebook":
-            from .notebook import make_widget
-            if self._widget is None:
-                self._widget = make_widget(self)
+            self._ensure_widget()
             from IPython.display import display
             display(self._widget)
             return self._widget
@@ -1261,23 +1461,29 @@ class Figure:
         from .qt import show_figure
         return show_figure(self, block=block)
 
-    def savefig(self, path: str | Path, *, timeout: float = 30) -> Path:
+    def savefig(self, path: str | Path, *, timeout: float = 30, width: int | None = None,
+                height: int | None = None, scale: float | None = None) -> Path:
         self._ensure_open()
         path = Path(path)
         if path.suffix.lower() != ".png":
             raise ValueError("This release exports PNG; SVG/PDF export is not supported")
+        from .export import png_options
+        options = png_options(width=width, height=height, scale=scale)
         from .qt import save_figure
-        return save_figure(self, path, timeout=timeout)
+        return save_figure(self, path, timeout=timeout, **options)
 
-    async def savefig_async(self, path: str | Path, *, timeout: float = 30) -> Path:
+    async def savefig_async(self, path: str | Path, *, timeout: float = 30, width: int | None = None,
+                            height: int | None = None, scale: float | None = None) -> Path:
         """Export from a displayed notebook widget without blocking its comm messages."""
         self._ensure_open()
         path = Path(path)
         if path.suffix.lower() != ".png":
             raise ValueError("This release exports PNG only")
+        from .export import png_options
+        options = png_options(width=width, height=height, scale=scale)
         if self._widget is None:
             raise RuntimeError("Display this figure in a notebook before savefig_async()")
-        payload = await self._widget.export_png(timeout=timeout)
+        payload = await self._widget.export_png(timeout=timeout, **options)
         path.write_bytes(payload)
         return path
 
@@ -1293,13 +1499,19 @@ class Figure:
             self._host.close()
         self._listeners.clear()
         self._sources.clear()
+        self._streams.clear()
+        self._stream_last_x.clear()
         self._emit("close", None)
 
-    def _repr_mimebundle_(self, **kwargs: Any) -> Any:
+    def _ensure_widget(self) -> Any:
+        self._ensure_open()
         from .notebook import make_widget
-        if self._widget is None:
+        if self._widget is None or getattr(self._widget, "_vesora_closed", False):
             self._widget = make_widget(self)
-        return self._widget._repr_mimebundle_(**kwargs)
+        return self._widget
+
+    def _repr_mimebundle_(self, **kwargs: Any) -> Any:
+        return self._ensure_widget()._repr_mimebundle_(**kwargs)
 
     def __enter__(self) -> Figure:
         return self

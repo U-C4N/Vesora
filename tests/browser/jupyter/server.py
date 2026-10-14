@@ -11,6 +11,11 @@ import tempfile
 
 def main() -> None:
     root = Path(__file__).resolve().parents[3]
+    installed_package = os.environ.get("VESORA_INSTALLED_PACKAGE") == "1"
+    if installed_package:
+        import vesora
+        if (root / "python") in Path(vesora.__file__).resolve().parents:
+            raise RuntimeError("Installed-package validation imported the source checkout")
     with tempfile.TemporaryDirectory(prefix="vesora-jupyter-") as temporary:
         workspace = Path(temporary)
         kernels = workspace / "jupyter-data" / "kernels" / "vesora-test"
@@ -19,7 +24,7 @@ def main() -> None:
         (kernels / "kernel.json").write_text(json.dumps({
             "argv": [sys.executable, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
             "display_name": "Vesora integration", "language": "python",
-            "env": {"PYTHONPATH": str(root / "python")},
+            "env": {"PYTHONPATH": "" if installed_package else str(root / "python")},
         }), encoding="utf-8")
         os.environ["JUPYTER_PATH"] = str(workspace / "jupyter-data")
         os.environ["JUPYTER_RUNTIME_DIR"] = str(workspace / "runtime")
@@ -29,7 +34,10 @@ def main() -> None:
         os.environ["JUPYTERLAB_WORKSPACES_DIR"] = str(workspace / "workspaces")
         cells = [
             '''import vesora as vs
+import os
 from pathlib import Path
+if os.environ.get("VESORA_INSTALLED_PACKAGE") == "1":
+    assert "site-packages" in Path(vs.__file__).resolve().parts, vs.__file__
 fig = vs.subplots(2, 2, sharex=True, title="Real Jupyter comparison", width=900, height=680)
 layers = []
 for row in range(2):

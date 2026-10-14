@@ -68,6 +68,7 @@ function signal(fig) {
   fig.plot(x, y, { color: '#137f8b', width: 1.3, label: 'Signal model' });
   fig.plot(x, baseline, { color: '#d48c43', width: 1.5, label: '0.6 Hz component' });
   fig.setView({ xLabel: 'Time (s)', yLabel: 'Amplitude' });
+  fig.setHoverMode('x');
 }
 
 function scatter(fig) {
@@ -239,7 +240,7 @@ export const examples = [
     id: 'signal', dimension: '2d', title: 'Hidden detail in a signal', type: 'LINE / TIME SERIES',
     description: '120,000 samples · Two frequencies, narrow spikes, and a missing-data interval.',
     tags: ['120k samples', 'Min / max', 'NaN gap'],
-    insight: 'Narrow spikes at 4.25 and 16.6 seconds survive reduction; the missing interval remains a gap.',
+    insight: 'Narrow spikes at 4.25 and 16.6 seconds survive reduction. Shared x hover reads source samples and leaves the missing interval empty.',
     create: signal, javascript: javascript(signal, [range]),
     python: python(`fig = vs.figure()
 x = [i * 24 / 119999 for i in range(120000)]
@@ -254,7 +255,8 @@ for t in x:
     y.append(math.nan if gap else value)
 fig.plot(x, y, color="#137f8b", width=1.3, label="Signal model")
 fig.plot(x, baseline, color="#d48c43", width=1.5, label="0.6 Hz component")
-fig.set_axes(xlabel="Time (s)", ylabel="Amplitude")`),
+fig.set_axes(xlabel="Time (s)", ylabel="Amplitude")
+fig.set_hover_mode("x")`),
   },
   {
     id: 'scatter', dimension: '2d', title: 'Uncertainty varies', type: 'SCATTER / VARYING VARIANCE',

@@ -77,16 +77,17 @@ def test_real_qt_shift_drag_retains_cohort_exports_labels_and_python_clear(tmp_p
         })()""")
         geometry = json.loads(javascript(page, """JSON.stringify((() => {
           const box = document.querySelector('.vesora-figure canvas:last-of-type').getBoundingClientRect();
-          return {x:box.x,y:box.y,width:box.width,height:box.height};
+          const plot = window.vesoraFigure.view.panels.find(panel => panel.id === 'main').rect;
+          return {x:box.x,y:box.y,width:box.width,height:box.height,plot};
         })())"""))
         # The first numeric panel has fixed [0,10] domains. The rectangle covers
         # observations 1 and 2 (values 2 and 3), excluding values 1 and 8.
-        plot_width = geometry["width"] / 3 - 155
-        plot_height = geometry["height"] - 70 - 28 - 82 - 36
-        start = QPoint(round(geometry["x"] + 70 + .15 * plot_width),
-                       round(geometry["y"] + 98 + .85 * plot_height))
-        end = QPoint(round(geometry["x"] + 70 + .35 * plot_width),
-                     round(geometry["y"] + 98 + .65 * plot_height))
+        # Measured text/layout can change margins; native input uses the live rect.
+        plot = geometry["plot"]
+        start = QPoint(round(geometry["x"] + plot["left"] + .15 * plot["width"]),
+                       round(geometry["y"] + plot["top"] + .85 * plot["height"]))
+        end = QPoint(round(geometry["x"] + plot["left"] + .35 * plot["width"]),
+                     round(geometry["y"] + plot["top"] + .65 * plot["height"]))
         target = view.focusProxy() or view
         target.setFocus()
         start, end = target.mapFrom(view, start), target.mapFrom(view, end)

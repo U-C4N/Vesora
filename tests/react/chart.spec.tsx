@@ -10,15 +10,24 @@ vi.mock('@vesora/core', () => {
   const palette = {background: '#ffffff', foreground: '#334155', muted: '#475569', grid: '#eee', axis: '#ccc', tooltipBackground: '#111', tooltipForeground: '#fff', selection: '#f80', error: '#b00', fontFamily: 'system-ui', fontSize: 12, palette: ['#2563eb', '#dc2626']};
   class FakeLayer {
     id = `layer-${++state.serial}`;
-    setData = vi.fn(); setStyle = vi.fn(); setOptions = vi.fn(); setVisible = vi.fn(); remove = vi.fn();
+    spec = {id: this.id};
+    stream?: {streamId: string; maxPoints: number; nextSequence: number; retained: number; revision: number; evicted: number};
+    setData = vi.fn((data: any) => {this.x = data.x; this.y = data.y; if (this.stream) this.enableStreaming({maxPoints: this.stream.maxPoints}); return this;});
+    setStyle = vi.fn(); setOptions = vi.fn(); setVisible = vi.fn(() => this); remove = vi.fn();
+    enableStreaming = vi.fn(({maxPoints}: {maxPoints: number}) => {
+      const count = (this.x as number[]).length;
+      this.stream = {streamId: `stream-${++state.serial}`, maxPoints, nextSequence: count, retained: Math.min(count, maxPoints), revision: 0, evicted: Math.max(0, count - maxPoints)};
+      this.x = Array.from(this.x as number[]).slice(-maxPoints); this.y = Array.from(this.y as number[]).slice(-maxPoints); return this;
+    });
+    disableStreaming = vi.fn(() => {this.stream = undefined; return this;});
     constructor(public x: unknown, public y: unknown, public style: unknown) {}
   }
   class FakeFigure {
-    spec: any = {view: {kind: '2d', xScale: 'linear', yScale: 'linear', xLabel: '', yLabel: '', camera: {azimuth: 0, elevation: 0, distance: 3}}};
+    spec: any = {layers: [], view: {kind: '2d', xScale: 'linear', yScale: 'linear', xLabel: '', yLabel: '', camera: {azimuth: 0, elevation: 0, distance: 3}}};
     layers: FakeLayer[] = []; listeners = new Map<string, (event: unknown) => void>(); element?: HTMLElement;
     waiters: Array<{resolve: () => void; reject: (error: Error) => void}> = [];
     closed = false;
-    setTheme = vi.fn(); setSize = vi.fn(); setTitle = vi.fn(); setAxisFormat = vi.fn(); setBarMode = vi.fn(); setPresentation = vi.fn();
+    setTheme = vi.fn(); setSize = vi.fn(); setTitle = vi.fn(); setAxisFormat = vi.fn(); setBarMode = vi.fn(); setPresentation = vi.fn(); setHoverMode = vi.fn();
     setCategories = vi.fn((axis: string, names: string[]) => {(this.spec.categories ??= {})[`${axis}:main`] = [...names];});
     setView = vi.fn((view: object) => {Object.assign(this.spec.view, view);});
     restoreView = vi.fn((view: object) => {this.spec.view = {...this.spec.view, ...view};});
@@ -31,11 +40,23 @@ vi.mock('@vesora/core', () => {
       this.element.append(document.createElement('canvas')); host.append(this.element);
     });
     ready = vi.fn(() => state.delayed ? new Promise<void>((resolve, reject) => this.waiters.push({resolve, reject})) : Promise.resolve());
+    getStreamingState(id: string) {const value = this.layers.find(layer => layer.id === id)?.stream; return value && {...value};}
+    appendDataBatch = vi.fn(async (updates: {layer: FakeLayer; data: {x: number[]; y: Float64Array}}[]) => {
+      for (const {layer, data} of updates) if (data.x.some((x, index) => x <= (index ? data.x[index - 1] : (layer.x as number[]).at(-1) ?? -Infinity))) throw new Error('Streaming x values must be increasing.');
+      for (const {layer, data} of updates) {
+        const stream = layer.stream!;
+        layer.x = [...layer.x as number[], ...data.x].slice(-stream.maxPoints);
+        layer.y = [...layer.y as number[], ...data.y].slice(-stream.maxPoints);
+        stream.nextSequence += data.x.length; stream.retained = (layer.x as number[]).length; stream.evicted = stream.nextSequence - stream.retained; stream.revision++;
+      }
+      await this.ready();
+    });
     close = vi.fn(() => {this.closed = true; this.element?.remove();});
-    plot(x: unknown, y: unknown, style: unknown) {if (Array.isArray(x) && typeof x[0] === 'string') this.setCategories('x', x); const layer = new FakeLayer(x, y, style); this.layers.push(layer); return layer;}
+    plot(x: unknown, y: unknown, style: unknown) {if (Array.isArray(x) && typeof x[0] === 'string') this.setCategories('x', x); const layer = new FakeLayer(x, y, style); this.layers.push(layer); this.spec.layers.push(layer.spec); return layer;}
+    fillBetween(x: unknown, lower: unknown, upper: unknown, style: unknown) {return this.plot(x, {lower, upper}, style);}
     scatter(x: unknown, y: unknown, style: unknown) {return this.plot(x, y, style);}
     bar(x: unknown, y: unknown, style: unknown) {return this.plot(x, y, style);}
-    barh(x: unknown, y: unknown, style: unknown) {if (Array.isArray(x) && typeof x[0] === 'string') this.setCategories('y', x); const layer = new FakeLayer(x, y, style); this.layers.push(layer); return layer;}
+    barh(x: unknown, y: unknown, style: unknown) {if (Array.isArray(x) && typeof x[0] === 'string') this.setCategories('y', x); const layer = new FakeLayer(x, y, style); this.layers.push(layer); this.spec.layers.push(layer.spec); return layer;}
     savefig = vi.fn(async () => new Blob(['png'], {type: 'image/png'}));
   }
   return {
@@ -188,9 +209,77 @@ describe('declarative React chart integration', () => {
     await render(<VesoraChart {...base} ref={reference} />);
     expect(await reference.current!.exportHTML()).toContain('chart source rows');
     expect((await reference.current!.exportPNG()).type).toBe('image/png');
+    const options = {width: 800, height: 400, scale: 2};
+    await reference.current!.exportPNG(options);
+    expect(current().savefig).toHaveBeenLastCalledWith(options);
     const handle = reference.current!;
     await render(null);
     await expect(handle.exportHTML()).rejects.toThrow('not mounted');
+  });
+
+  it('keeps a band owned by its line through updates, legend toggles and cleanup', async () => {
+    const bandRows = rows.map(row => ({...row, lower: row.revenue! - 2, upper: row.revenue! + 2}));
+    const bandSeries = [{key: 'revenue' as const, label: 'Revenue', band: {lowerKey: 'lower' as const, upperKey: 'upper' as const}}];
+    await render(<StrictMode><VesoraChart type="line" data={bandRows} xKey="time" series={bandSeries} /></StrictMode>);
+    const fig = current(), band = fig.layers[0], line = fig.layers[1];
+    expect(fig.layers).toHaveLength(2);
+    expect(band.style).toEqual({color: '#2563eb', opacity: .18});
+    expect([...container.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Revenue']);
+    await act(async () => {container.querySelector<HTMLButtonElement>('button')!.click();});
+    expect(band.setVisible).toHaveBeenLastCalledWith(false);
+    expect(line.setVisible).toHaveBeenLastCalledWith(false);
+    await render(<StrictMode><VesoraChart type="line" data={bandRows.map(row => ({...row, upper: row.upper + 1}))} xKey="time" series={[{...bandSeries[0], color: '#abc123'}]} /></StrictMode>);
+    expect(current()).toBe(fig); expect(fig.layers).toHaveLength(2);
+    expect(band.setStyle).toHaveBeenLastCalledWith({color: '#abc123', opacity: .18});
+    expect(band.setData).toHaveBeenLastCalledWith({x: [1, 2], lower: new Float64Array([8, 18]), upper: new Float64Array([13, 23])});
+    await render(null);
+    expect(fig.close).toHaveBeenCalledOnce();
+    expect(fig.listeners.size).toBe(0);
+  });
+
+  it('maps unified hover to each original sample and includes missing visible series without changing legacy callbacks', async () => {
+    const hovered = vi.fn(), xHovered = vi.fn(), rendered = vi.fn();
+    await render(<VesoraChart {...base} hoverMode="x" onHover={hovered} onXHover={xHovered} renderXTooltip={value => {rendered(value); return <b>{value.items.map(item => `${item.series.label}: ${item.formattedX} / ${item.formattedY}`).join(' | ')}</b>;}} />);
+    const fig = current();
+    expect(fig.setHoverMode).toHaveBeenLastCalledWith('x');
+    const event = {cursorX: 1.7, pointerPosition: {x: 100, y: 100, clientX: 100, clientY: 100}, items: [{layerId: fig.layers[0].id, index: 1, x: 2, y: 20}]};
+    await act(async () => {fig.emit('xhover', event);});
+    expect(hovered).not.toHaveBeenCalled();
+    expect(xHovered).toHaveBeenLastCalledWith(expect.objectContaining({event, items: [
+      expect.objectContaining({row: rows[1], series: series[0], index: 1, x: 2, y: 20, missing: false}),
+      expect.objectContaining({row: undefined, index: undefined, series: series[1], formattedX: '—', formattedY: '—', missing: true}),
+    ]}));
+    expect(rendered).toHaveBeenCalled();
+    expect(container.querySelector('[role=tooltip]')?.textContent).toContain('Revenue: 2 / 20');
+    expect(container.querySelector('[role=tooltip]')?.textContent).toContain('Expense: — / —');
+    // A pinned core inspection survives pointer leave. Only the core's explicit
+    // xhover:null event (Escape, unpinned leave, update) ends its React tooltip.
+    await act(async () => {container.querySelector('[data-vesora-host]')!.dispatchEvent(new MouseEvent('pointerout', {bubbles: true, relatedTarget: document.body}));});
+    expect(container.querySelector('[role=tooltip]')).not.toBeNull();
+    const button = [...container.querySelectorAll('button')].find(item => item.textContent === 'Expense')!;
+    await act(async () => {button.click();});
+    await act(async () => {fig.emit('xhover', event);});
+    expect(xHovered.mock.lastCall![0].items).toHaveLength(1);
+    await act(async () => {fig.emit('xhover', null);});
+    expect(container.querySelector('[role=tooltip]')).toBeNull();
+    expect(xHovered).toHaveBeenLastCalledWith(null);
+  });
+
+  it('shows original x values in the default unified tooltip and clears it on data updates', async () => {
+    const xHovered = vi.fn();
+    await render(<VesoraChart {...base} hoverMode="x" onXHover={xHovered} />);
+    const fig = current();
+    const event = {cursorX: 1.5, pointerPosition: {x: 100, y: 100, clientX: 100, clientY: 100}, items: [
+      {layerId: fig.layers[0].id, index: 0, x: 1, y: 10}, {layerId: fig.layers[1].id, index: 1, x: 2, y: 8},
+    ]};
+    await act(async () => {fig.emit('xhover', event);});
+    expect(container.querySelector('[role=tooltip]')?.textContent).toBe('Revenue1: 10Expense2: 8');
+    const next = rows.map(row => ({...row, revenue: row.revenue! + 5}));
+    await render(<VesoraChart {...base} data={next} hoverMode="x" onXHover={xHovered} />);
+    expect(container.querySelector('[role=tooltip]')).toBeNull();
+    await act(async () => {fig.emit('xhover', {...event, items: [{...event.items[0], y: 15}]});});
+    expect(xHovered.mock.lastCall![0].items[0].row).toBe(next[0]);
+    expect(container.querySelector('[role=tooltip]')?.textContent).toBe('Revenue1: 15Expense—');
   });
 
   it('ignores stale render failures after type replacement', async () => {
@@ -201,5 +290,88 @@ describe('declarative React chart integration', () => {
     await act(async () => {for (const waiter of previous.waiters) waiter.reject(new Error('stale failure'));});
     expect(failed).not.toHaveBeenCalled();
     expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+  });
+
+  it('appends aligned series atomically, retains source rows after eviction and preserves them across styling', async () => {
+    const reference = createRef<VesoraChartHandle<Row>>(), hovered = vi.fn(), clicked = vi.fn();
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints: 3}} onXHover={hovered} onClick={clicked} hoverMode="x" />);
+    const fig = current(), next = [{id: 'three', time: 3, revenue: 30, expense: 9}, {id: 'four', time: 4, revenue: 40, expense: 12}];
+    await act(async () => {await reference.current!.appendRows(next);});
+    expect(fig.appendDataBatch).toHaveBeenCalledOnce();
+    expect(fig.layers[0].x).toEqual([2, 3, 4]);
+    expect(fig.layers[1].y).toEqual([8, 9, 12]);
+    expect(container.textContent).toContain('3 rows and 2 series');
+    const version = fig.layers[0].stream.streamId;
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints: 3}} onXHover={hovered} onClick={clicked} hoverMode="x" theme="dark" title="Live" series={series.map(item => ({...item, color: '#ff8800'}))} />);
+    expect(fig.layers[0].setData).not.toHaveBeenCalled();
+    expect(fig.layers[0].stream.streamId).toBe(version);
+    const items = fig.layers.map((layer: any) => ({layerId: layer.id, index: 2, sequence: 3, streamId: layer.stream.streamId, x: 4, y: 40}));
+    await act(async () => {fig.emit('xhover', {cursorX: 4, items}); fig.emit('click', {...items[1], kind: 'point'});});
+    expect(hovered.mock.lastCall![0].items.map((item: any) => item.row)).toEqual([next[1], next[1]]);
+    expect(clicked.mock.lastCall![0].row).toBe(next[1]);
+    await act(async () => {await reference.current!.appendRows([{id: 'bad', time: 5, revenue: 50, expense: 'invalid'}] as unknown as Row[]).catch(() => {});});
+    expect(fig.appendDataBatch).toHaveBeenCalledOnce();
+    expect(fig.layers[0].x).toEqual([2, 3, 4]);
+  });
+
+  it('resets the streaming epoch on an explicit data replacement and rejects stale rows in callbacks', async () => {
+    const reference = createRef<VesoraChartHandle<Row>>(), clicked = vi.fn();
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints: 2}} onClick={clicked} />);
+    const fig = current(), streamId = fig.layers[0].stream.streamId;
+    await act(async () => {await reference.current!.appendRows([{id: 'three', time: 3, revenue: 30, expense: 9}]);});
+    const replacement = [{id: 'new', time: 100, revenue: 1, expense: 2}];
+    await render(<VesoraChart {...base} data={replacement} ref={reference} streaming={{maxPoints: 2}} onClick={clicked} />);
+    expect(fig.layers[0].x).toEqual([100]);
+    expect(fig.layers[0].stream.streamId).not.toBe(streamId);
+    await act(async () => {fig.emit('click', {kind: 'point', layerId: fig.layers[0].id, index: 0, sequence: 0, streamId, x: 1, y: 10});});
+    expect(clicked.mock.lastCall![0].row).toBeUndefined();
+    await act(async () => {fig.emit('click', {kind: 'point', layerId: fig.layers[0].id, index: 0, sequence: 0, streamId: fig.layers[0].stream.streamId, x: 100, y: 1});});
+    expect(clicked.mock.lastCall![0].row).toBe(replacement[0]);
+    await render(<VesoraChart {...base} data={[]} ref={reference} streaming={{maxPoints: 2}} />);
+    expect(fig.layers[0].x).toEqual([]);
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('empty');
+    await act(async () => {await reference.current!.appendRows(replacement);});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+  });
+
+  it('keeps callbacks bound to committed rows when a declarative replacement fails validation', async () => {
+    const clicked = vi.fn();
+    await render(<VesoraChart {...base} onClick={clicked} />);
+    const fig = current();
+    await render(<VesoraChart {...base} data={[{...rows[0], id: 'uncommitted', expense: 'invalid'}] as unknown as Row[]} onClick={clicked} />);
+    await act(async () => {fig.emit('click', {kind: 'point', layerId: fig.layers[0].id, index: 0, x: 1, y: 10});});
+    expect(clicked.mock.lastCall![0].row).toBe(rows[0]);
+  });
+
+  it('cancels queued appends after data replacement and rejects calls through an unmounted handle', async () => {
+    const reference = createRef<VesoraChartHandle<Row>>();
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints: 3}} />);
+    const fig = current(), handle = reference.current!;
+    state.delayed = true;
+    let first!: Promise<void | string>, second!: Promise<void | string>;
+    await act(async () => {
+      first = handle.appendRows([{id: 'three', time: 3, revenue: 30, expense: 9}]).catch(error => error.message);
+      second = handle.appendRows([{id: 'four', time: 4, revenue: 40, expense: 12}]).catch(error => error.message);
+      await Promise.resolve();
+    });
+    state.delayed = false;
+    await render(<VesoraChart {...base} data={[{id: 'reset', time: 100, revenue: 1, expense: 2}]} ref={reference} streaming={{maxPoints: 3}} />);
+    await act(async () => {for (const waiter of fig.waiters) waiter.resolve(); await first;});
+    expect(await first).toContain('replaced');
+    expect(await second).toContain('replaced');
+    expect(fig.layers[0].x).toEqual([100]);
+    await render(null);
+    await expect(handle.appendRows(rows)).rejects.toThrow('not mounted');
+  });
+
+  it('rejects unsupported streaming schemas before modifying the live chart', async () => {
+    await render(<VesoraChart {...base} />);
+    const fig = current();
+    await render(<VesoraChart {...base} streaming={{maxPoints: 0}} />);
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('positive safe integer');
+    expect(fig.layers[0].setData).not.toHaveBeenCalled();
+    await render(<VesoraChart {...base} streaming={{maxPoints: 2}} series={[{key: 'revenue', band: {lowerKey: 'expense', upperKey: 'revenue'}}]} />);
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('without bands');
+    expect(fig.layers[0].setData).not.toHaveBeenCalled();
   });
 });

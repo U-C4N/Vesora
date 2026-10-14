@@ -13,10 +13,43 @@
   <a href="#see-it-in-action">Scientific gallery</a> ·
   <a href="#get-started">Quick start</a> ·
   <a href="docs/api.md">API reference</a> ·
-  <a href="docs/releases/v0.6.0.md">v0.6 overview</a>
+  <a href="docs/releases/v0.8.0.md">v0.8 overview</a>
 </p>
 
-> **v0.6 developer preview, MIT licensed.** Build and install the release archives below. Registry publication is a separate authenticated step; these instructions do not assume published npm/PyPI packages. WebGL2 is required; Python desktop windows use QtWebEngine.
+> **v0.8 developer preview, MIT licensed.** Build and install the release archives below. Registry publication is a separate authenticated step; these instructions do not assume published npm/PyPI packages. WebGL2 is required; Python desktop windows use QtWebEngine.
+
+## New in v0.8: bounded live measurements
+
+Append numeric line/scatter data with an explicit retained capacity in Python, JavaScript and React. The shared engine keeps accepted updates atomic, identifies samples across evictions, and captures a frozen retained snapshot for PNG or offline HTML. Worker watchdogs, WebGL restoration and resource diagnostics make long-running charts easier to operate.
+
+```python
+import vesora as vs
+
+fig = vs.figure(title="Live measurements")
+line = fig.plot([], [], label="Signal").enable_streaming(max_points=100_000)
+line.append_data(x=[0, 1, 2], y=[3.2, 1.8, 1.0])
+fig.show()
+```
+
+Read the [streaming guide](docs/streaming.md), [v0.8 release notes](docs/releases/v0.8.0.md) and [recorded measurements](docs/benchmarks/v0.8.0.md). Run the three-curve examples in [JavaScript](examples/web/streaming.html), [Python](examples/python_streaming.py), or the [React starter](examples/react-saas/README.md). Existing scene protocols 1–6 remain supported.
+
+## New in v0.7: readable figures and shared inspection
+
+Draw an explicit interval around a curve, compare source samples at a common cursor x position, and export at a chosen size. Themes now separate title, axis-label, tick and legend sizes; colorbars can name the quantity and units they encode. The same scene works in Python, JavaScript, React and offline HTML.
+
+```python
+import vesora as vs
+
+x, mean = [0, 1, 2, 3], [3.2, 1.8, 1.0, 0.7]
+fig = vs.figure(title="Synthetic learning curve", theme={"tickFontSize": 14, "labelFontSize": 16})
+fig.fill_between(x, [v * .85 for v in mean], [v * 1.15 for v in mean], color="#3569c8")
+fig.plot(x, mean, color="#3569c8", label="Model A")
+fig.set_axes(xlabel="Training step", ylabel="Loss", yscale="log")
+fig.set_hover_mode("x")
+fig.savefig("learning.png", width=1000, height=600, scale=2)
+```
+
+The example bounds are synthetic and illustrative; Vesora does not estimate a confidence interval. Shared-x inspection reports actual source samples without interpolation. Read the [v0.7 overview](docs/releases/v0.7.0.md), [interval and inspection API](docs/api.md#show-an-interval-around-a-curve) and [React band API](packages/react/README.md#show-bands-and-compare-series).
 
 <p align="center">
   <a href="docs/assets/signal-studio-light.png"><img src="docs/assets/signal-studio-light.png" alt="Vesora Signal Studio in light mode: revenue trend, period-peak insight, subscription bars and account scatter" width="100%"></a>
@@ -70,7 +103,7 @@ Open the URL printed by Vite to run Signal Studio. See the [React API](packages/
 Build portable packages with `npm run package:release`, then install the matching archives into another React project:
 
 ```bash
-npm install ./vesora-core-0.6.0.tgz ./vesora-react-0.6.0.tgz
+npm install ./vesora-core-0.8.0.tgz ./vesora-react-0.8.0.tgz
 ```
 
 React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HTML export explicitly includes all chart source rows and excludes React callbacks; use the ref handle's `exportPNG`, `exportHTML` and `resetView` methods. The pilot thresholds are proposed validation criteria, not completed user research or measured competitive advantages.
@@ -79,13 +112,29 @@ React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HT
 
 These are **real PNG exports from Vesora's shared engine**, generated through the Python API without NumPy. Click a figure to inspect it at full resolution.
 
-| Compare learning curves | Explore dense measurements |
-| :---: | :---: |
-| [![Three synthetic model training curves on a logarithmic loss axis](docs/assets/training-loss.png)](docs/assets/training-loss.png) | [![One million synthetic samples displayed as a count-per-bin density map](docs/assets/density.png)](docs/assets/density.png) |
-| Multi-series lines, log scales and legends. **Synthetic models; not reported benchmark results.** | 1,000,000 generated samples, aggregated into screen-space bins. Color means **count per bin**. |
-| **Inspect mathematical surfaces** | **Follow nonlinear dynamics** |
-| [![A smooth mathematical interference surface colored by amplitude](docs/assets/surface.png)](docs/assets/surface.png) | [![Sampled Lorenz attractor rendered as a three-dimensional point trajectory](docs/assets/lorenz.png)](docs/assets/lorenz.png) |
-| A 140 × 140 regular grid, with color mapped to amplitude. | 19,000 numerical trajectory samples, with color mapped to z. |
+### Compare learning curves
+
+<a href="docs/assets/training-loss.png"><img src="docs/assets/training-loss.png" alt="Three synthetic learning curves on a logarithmic loss axis with an illustrative interval around Model A" width="760"></a>
+
+Multi-series lines, log scales, readable labels and an explicit interval. **Synthetic models and illustrative bounds; not measured confidence intervals or benchmark results.**
+
+### Explore dense measurements
+
+<a href="docs/assets/density.png"><img src="docs/assets/density.png" alt="One million synthetic samples aggregated into a density map with a labeled count-per-bin colorbar" width="760"></a>
+
+1,000,000 generated samples aggregated into screen-space bins. Color means **count per bin**.
+
+### Inspect mathematical surfaces
+
+<a href="docs/assets/surface.png"><img src="docs/assets/surface.png" alt="Interference surface on a regular grid with color labeled as amplitude" width="760"></a>
+
+A 140 × 140 regular grid, with color mapped to amplitude.
+
+### Follow nonlinear dynamics
+
+<a href="docs/assets/lorenz.png"><img src="docs/assets/lorenz.png" alt="A Lorenz trajectory rendered as 19000 three-dimensional points colored by z" width="760"></a>
+
+19,000 numerical trajectory samples, with color mapped to z. The PNGs are 1520 × 1000 pixels; their typography is sized for the preview as well as the full image.
 
 The [original gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. The [comparison gallery](examples/web/compare.html) adds **3 multi-panel experiments**, the [statistics gallery](examples/web/statistics.html) adds **6**, and [linked inspection](examples/web/linked.html) adds **one 200,000-row experiment**, bringing the total to 26. Pages remain separate to limit simultaneous GPU contexts. Every experiment includes Python and JavaScript code, PNG export and interactive HTML export.
 
@@ -183,7 +232,7 @@ Python functions run in Python, and JavaScript functions run in JavaScript. Supp
 
 ## Get started
 
-Build the v0.6 packages from this checkout with Node.js 22.12+ and Python 3.10+:
+Build the v0.8 packages from this checkout with Node.js 22.12+ and Python 3.10+:
 
 ```bash
 python -m pip install "setuptools>=77" wheel
@@ -192,14 +241,14 @@ npm run build
 npm run package:release
 ```
 
-The result is `dist/release-v0.6.0`: a Python wheel, core and React npm tarballs, five standalone demos and `SHA256SUMS.txt`. Packaging alone does not publish a release. The already published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for the previous feature set.
+The result is `dist/release-v0.8.0`: a Python wheel, core and React npm tarballs, seven standalone demos, a provenance manifest and `SHA256SUMS.txt`. Packaging alone does not publish a release. The already published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for the previous feature set.
 
 ### Python: a plot in a few lines
 
 With Python 3.10+, install the wheel you built:
 
 ```bash
-python -m pip install ./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl
+python -m pip install ./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl
 ```
 
 ```python
@@ -227,7 +276,7 @@ fig.show()
 Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
 
 ```bash
-python -m pip install "./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl[notebook]"
+python -m pip install "./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl[notebook]"
 ```
 
 ### JavaScript / TypeScript: the same engine in your app
@@ -235,7 +284,7 @@ python -m pip install "./dist/release-v0.6.0/vesora-0.6.0-py3-none-any.whl[noteb
 Copy the built tarball into your frontend project and install it:
 
 ```bash
-npm install ./vesora-core-0.6.0.tgz
+npm install ./vesora-core-0.8.0.tgz
 ```
 
 Add a mount element to your HTML:
@@ -274,7 +323,7 @@ The core package includes TypeScript declarations and has **no runtime npm depen
 | Dense data | Automatic scatter count aggregation, extrema-preserving line reduction and representation inspection. | Line simplification, marker subsampling and Agg path chunking are available. |
 | 3D | Regular-grid surfaces and 3D scatter with depth testing. | `mplot3d` supports a wider range of 3D plot types. |
 | Export | PNG, including axes and labels; self-contained interactive HTML with bookmarks. | PNG, SVG, PDF and other formats, depending on backend. |
-| Maturity | v0.6 preview; React adapter, themes, date/number formatting, linked observations, statistics and fixed 2D grids. | An established plotting library with extensive configuration and documentation. |
+| Maturity | v0.8 preview; bounded streaming, interval bands, shared-x inspection, explicit PNG sizing, React, themes and fixed 2D grids. | An established plotting library with extensive configuration and documentation. |
 
 Choose Vesora when sharing one engine between Python and a browser application is central to your workflow. Prefer Matplotlib today when you need its broader plotting catalog, publication layout controls or vector export. Vesora does not implement the Matplotlib API, and this project makes **no unmeasured speedup claim** against it.
 
@@ -304,13 +353,13 @@ The Python adapter manages the local viewer connection. Numeric buffers retain t
 
 | Available in the preview | Planned extensions |
 | --- | --- |
-| `plot`, `scatter`, `heatmap`, `surface`, `scatter3d`, `hist`, `bar`/`barh`, `boxplot` | Violin plots, vector fields and adaptive function sampling |
-| Fixed 2D grids, shared numeric/categorical axes, text and reference lines | Error bars, confidence bands and more layout tools |
+| `plot`, `fill_between`, `scatter`, `heatmap`, `surface`, `scatter3d`, `hist`, `bar`/`barh`, `boxplot` | Violin plots, vector fields and adaptive function sampling |
+| Fixed 2D grids, shared axes, source-sample x inspection, text and reference lines | Error bars and more layout tools |
 | Desktop Python, notebook adapter and browser JS/TS | Additional data providers and host integrations |
-| In-memory adaptive representations and cancellable queries | Indexed disk data, tiles, chunks and streaming |
-| PNG and self-contained HTML export, named view bookmarks | SVG/PDF export and additional render backends |
+| In-memory adaptive representations, bounded numeric streaming and cancellable queries | Indexed disk data, tiles and additional streaming plot types |
+| Sized PNG export, readable typography, self-contained HTML and view bookmarks | SVG/PDF export and additional render backends |
 
-Line/scatter viewport data scans are currently **O(n)** and workers may copy source buffers. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, 3D panels, indexed out-of-core data, streaming and general mesh/volume rendering are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
+Scatter and general line queries can scan **O(n)** source rows; sorted numeric lines narrow the visible x interval. Workers copy source buffers and reuse immutable chunks when streaming. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, 3D panels, indexed out-of-core data, statistical/3D streaming and general mesh/volume rendering are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
 
 ## Develop and validate
 
@@ -338,6 +387,7 @@ The checks cover scene equivalence, real rendered pixels, invalid values and gap
 | [Development and benchmarks](docs/development.md) | Packaging, validation, measured performance and support limits |
 | [Scientific gallery](examples/web/), [comparisons](examples/web/compare.html), [statistics](examples/web/statistics.html) and [linked views](examples/web/linked.html) | Twenty-six experiments with Python and JS source |
 | [Signal Studio](examples/react-saas/README.md) and [React API](packages/react/README.md) | A working SaaS starter and typed chart component |
-| [v0.6 overview](docs/releases/v0.6.0.md) | React, presentation, compatibility and package preparation |
+| [v0.7 overview](docs/releases/v0.7.0.md) | Readability, bands, shared inspection, exports and compatibility |
+| [v0.8 overview](docs/releases/v0.8.0.md) and [streaming guide](docs/streaming.md) | Bounded telemetry, runtime recovery, row identity and release validation |
 
 Have a reproducible rendering issue or a scientific workflow Vesora should support? [Open an issue](https://github.com/U-C4N/Vesora/issues) with a small dataset, the expected result and your environment.

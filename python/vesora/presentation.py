@@ -10,6 +10,8 @@ from ._timezones import TIME_ZONES
 
 
 PRESENTATION_PROTOCOL_VERSION = 5
+QUALITY_PROTOCOL_VERSION = 6
+FONT_SIZE_TOKENS = {"titleFontSize", "labelFontSize", "tickFontSize", "legendFontSize"}
 LIGHT_THEME = {
     "background": "#ffffff", "foreground": "#334155", "muted": "#475569",
     "grid": "#e2e8f0", "axis": "#cbd5e1", "tooltipBackground": "#0f172a",
@@ -50,7 +52,7 @@ def resolve_theme(value: Any) -> dict[str, Any]:
         return copy.deepcopy(DARK_THEME if value == "dark" else LIGHT_THEME)
     if not isinstance(value, dict):
         raise TypeError("Theme tokens must be an object")
-    unknown = value.keys() - LIGHT_THEME.keys()
+    unknown = value.keys() - LIGHT_THEME.keys() - FONT_SIZE_TOKENS
     if unknown:
         raise TypeError(f"Unknown theme token(s): {', '.join(sorted(unknown))}")
     theme = {**copy.deepcopy(LIGHT_THEME), **copy.deepcopy(value)}
@@ -59,9 +61,10 @@ def resolve_theme(value: Any) -> dict[str, Any]:
     family = theme["fontFamily"]
     if not isinstance(family, str) or not family.strip() or len(family) > 200 or re.search(r"[\x00-\x1f\x7f]", family):
         raise ValueError("Theme fontFamily must be nonempty text of at most 200 characters")
-    size = theme["fontSize"]
-    if isinstance(size, bool) or not isinstance(size, (int, float)) or not math.isfinite(size) or not 8 <= size <= 32:
-        raise ValueError("Theme fontSize must be between 8 and 32")
+    for name in {"fontSize"} | (FONT_SIZE_TOKENS & theme.keys()):
+        size = theme[name]
+        if isinstance(size, bool) or not isinstance(size, (int, float)) or not math.isfinite(size) or not 8 <= size <= 32:
+            raise ValueError(f"Theme {name} must be between 8 and 32")
     palette = theme["palette"]
     if not isinstance(palette, list) or not 1 <= len(palette) <= 32:
         raise ValueError("Theme palette must contain 1 to 32 colors")

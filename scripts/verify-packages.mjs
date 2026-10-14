@@ -1,6 +1,7 @@
 // Validate release archives as installed consumers, outside the checkout.
 // Usage: node scripts/verify-packages.mjs [release-directory]
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -152,6 +153,42 @@ async function verifyPresentationHTML(browser, name, path, outputDirectory) {
   } finally {await context.close();}
 }
 
+async function verifyQualityHTML(browser, name, path, outputDirectory) {
+  const context = await browser.newContext({offline: true, acceptDownloads: true, viewport: {width: 1100, height: 800}});
+  const page = await context.newPage(), errors = [], network = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => {if (/^https?:/i.test(request.url())) network.push(request.url());});
+  try {
+    await page.goto(pathToFileURL(path).href);
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]', {timeout: 45_000});
+    const payload = JSON.parse(await page.locator('#vesora-payload').textContent());
+    const scene = payload.snapshot.figure;
+    assert.equal(scene.protocolVersion, 6);
+    assert.equal(scene.hoverMode, 'x');
+    assert.equal(scene.theme.tickFontSize, 14);
+    assert.equal(scene.theme.labelFontSize, 16);
+    const band = scene.layers.find(layer => layer.kind === 'band');
+    assert.deepEqual(Object.keys(band.data).sort(), ['lower', 'upper', 'x']);
+    assert.equal(band.style.opacity, .18);
+    assert.equal(scene.layers.find(layer => layer.kind === 'heatmap').style.colorbarLabel, 'Amplitude');
+    assert.equal(await page.locator('#vesora-layer option').count(), 3);
+    await page.locator('#vesora-layer').selectOption(band.id);
+    assert.match(await page.locator('#vesora-representation').innerText(), /band|interval/i);
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Download PNG', exact: true}).click();
+    const download = await downloadPromise, png = join(outputDirectory, `${name}-quality.png`);
+    await download.saveAs(png);
+    assert.equal(await download.failure(), null);
+    const bytes = await readFile(png);
+    assert.ok(bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+    assert.ok(bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0);
+    await page.screenshot({path: join(outputDirectory, `${name}-quality-viewer.png`), fullPage: true});
+    assert.deepEqual(errors, []);assert.deepEqual(network, []);
+    console.log(`${name}: installed protocol 6, offline bands, typography, colorbar label and PNG passed.`);
+    return {html: path, png};
+  } finally {await context.close();}
+}
+
 async function main() {
   if (process.argv.length > 3) throw new Error('Usage: node scripts/verify-packages.mjs [release-directory]');
   const files = await readdir(archiveDirectory);
@@ -178,6 +215,7 @@ async function main() {
   const pythonHTML = join(outputDirectory, 'python-figure.html');
   const pythonLinkedHTML = join(outputDirectory, 'python-linked.html');
   const pythonPresentationHTML = join(outputDirectory, 'python-presentation.html');
+  const pythonQualityHTML = join(outputDirectory, 'python-quality.html');
   const pythonScript = join(pythonDirectory, 'verify.py');
   await writeFile(pythonScript, `import json
 import sys
@@ -237,15 +275,25 @@ presentation.set_axes(xscale='time')
 presentation.set_axis_format('y', {'kind': 'currency', 'currency': 'USD'})
 presentation.save_html(sys.argv[5])
 presentation.close()
+quality = vs.subplots(1, 2, title='Installed Python quality', width=1000, height=500,
+                      theme={'titleFontSize': 20, 'labelFontSize': 16, 'tickFontSize': 14, 'legendFontSize': 14})
+quality.fill_between([0, 1, 2, 3], [.8, 1.8, float('nan'), 3.8], [1.2, 2.2, float('nan'), 4.2], label='Interval')
+quality.plot([0, 1, 2, 3], [1, 2, 3, 4], label='Samples')
+quality.panel(0, 1).heatmap([0, 1], [0, 1], [[1, 2], [3, 4]], colorbar_label='Amplitude')
+quality.set_hover_mode('x')
+assert quality.snapshot()['figure']['protocolVersion'] == 6
+quality.save_html(sys.argv[6])
+quality.close()
 print(json.dumps({"version": vs.__version__, "module": str(module), "html": sys.argv[2]}))
 `, 'utf8');
-  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, expectedVersion, pythonLinkedHTML, pythonPresentationHTML], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
+  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, expectedVersion, pythonLinkedHTML, pythonPresentationHTML, pythonQualityHTML], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
 
   await writeFile(join(npmDirectory, 'package.json'), JSON.stringify({ name: 'vesora-release-consumer', version: '1.0.0', private: true, type: 'module' }, null, 2), 'utf8');
   run(process.execPath, [npmCLI(), 'install', '--global=false', '--prefix', npmDirectory, '--ignore-scripts', '--no-audit', '--no-fund', '--offline', tarball], npmDirectory, 'Installing the npm tarball in a clean offline consumer…');
   const javascriptHTML = join(outputDirectory, 'javascript-figure.html');
   const javascriptLinkedHTML = join(outputDirectory, 'javascript-linked.html');
   const javascriptPresentationHTML = join(outputDirectory, 'javascript-presentation.html');
+  const javascriptQualityHTML = join(outputDirectory, 'javascript-quality.html');
   const javascriptScript = join(npmDirectory, 'verify.mjs');
   await writeFile(javascriptScript, `import assert from 'node:assert/strict';
 import { readFile, realpath, writeFile } from 'node:fs/promises';
@@ -299,12 +347,21 @@ presentation.setView({xScale: 'time'});
 presentation.setAxisFormat('y', {kind: 'currency', currency: 'USD'});
 await writeFile(${JSON.stringify(javascriptPresentationHTML)}, toHTML(presentation), 'utf8');
 presentation.close();
+const quality = subplots({rows: 1, cols: 2, title: 'Installed JavaScript quality', width: 1000, height: 500,
+  theme: {titleFontSize: 20, labelFontSize: 16, tickFontSize: 14, legendFontSize: 14}});
+quality.fillBetween([0, 1, 2, 3], [.8, 1.8, NaN, 3.8], [1.2, 2.2, NaN, 4.2], {label: 'Interval'});
+quality.plot([0, 1, 2, 3], [1, 2, 3, 4], {label: 'Samples'});
+quality.panel(0, 1).heatmap([0, 1], [0, 1], [[1, 2], [3, 4]], {colorbarLabel: 'Amplitude'});
+quality.setHoverMode('x');
+assert.equal(quality.snapshot().figure.protocolVersion, 6);
+await writeFile(${JSON.stringify(javascriptQualityHTML)}, toHTML(quality), 'utf8');
+quality.close();
 console.log(JSON.stringify({ version: packageJSON.version, module: modulePath, html: ${JSON.stringify(javascriptHTML)} }));
 `, 'utf8');
   run(process.execPath, [javascriptScript], npmDirectory, 'Verifying installed ESM import and HTML export without a DOM…');
 
   const typeScript = join(npmDirectory, 'verify-types.ts');
-  await writeFile(typeScript, `import { figure, subplots, toHTML, downloadHTML, type Figure, type Panel, type Annotation, type ViewSpec, type ViewBookmark } from '@vesora/core';
+  await writeFile(typeScript, `import { figure, subplots, toHTML, downloadHTML, type Figure, type Panel, type Annotation, type ViewSpec, type ViewBookmark, type FillBetweenOptions, type ExportPNGOptions, type XHoverEvent } from '@vesora/core';
 const chart: Figure = figure({ title: 'Typed consumer' });
 chart.scatter(new Float64Array([1, 2]), new Float64Array([3, 4]));
 const view: ViewSpec = chart.snapshot().figure.view;
@@ -335,6 +392,14 @@ const b = linked.panel(0, 1).scatter([2, 3], [1, 2]);
 const h = linked.panel(0, 2).hist([1, 2]);
 const link = linked.linkSelection({scatter: [a, b], histogram: h});
 link.clear();link.remove();linked.close();
+const quality: Figure = figure({theme: {titleFontSize: 20, labelFontSize: 16, tickFontSize: 14, legendFontSize: 14}});
+const bandStyle: FillBetweenOptions = {color: '#3569c8', opacity: .18};
+quality.fillBetween([0, 1], [1, 2], [2, 3], bandStyle).setData({lower: [.5, 1.5]});
+quality.plot([0, 1], [1.5, 2.5]);quality.setHoverMode('x');
+quality.on('xhover', (event: XHoverEvent | null) => {if (event) console.log(event.cursorX, event.items[0]?.index);});
+const exportOptions: ExportPNGOptions = {width: 1000, height: 600, scale: 2};
+const savePNG: (options?: ExportPNGOptions) => Promise<Blob> = options => quality.savefig(options);
+void savePNG;void exportOptions;quality.close();
 `, 'utf8');
   run(process.execPath, [join(checkout, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022,DOM', typeScript], npmDirectory, 'Type-checking installed declarations with NodeNext resolution…');
 
@@ -350,12 +415,17 @@ link.clear();link.remove();linked.close();
       javascriptLinked: await verifyLinkedHTML(browser, 'javascript', javascriptLinkedHTML, outputDirectory),
       pythonPresentation: await verifyPresentationHTML(browser, 'python', pythonPresentationHTML, outputDirectory),
       javascriptPresentation: await verifyPresentationHTML(browser, 'javascript', javascriptPresentationHTML, outputDirectory),
+      pythonQuality: await verifyQualityHTML(browser, 'python', pythonQualityHTML, outputDirectory),
+      javascriptQuality: await verifyQualityHTML(browser, 'javascript', javascriptQualityHTML, outputDirectory),
     };
   } finally {
     await browser.close();
   }
-  const result = { version: expectedVersion, wheel, tarball, workspace, outputs };
+  const archiveHashes = Object.fromEntries(await Promise.all([wheel, tarball].map(async path => [path, createHash('sha256').update(await readFile(path)).digest('hex')])));
+  const result = { version: expectedVersion, wheel, tarball, archiveHashes, recordedAt: new Date().toISOString(), workspace, outputs };
   await writeFile(join(workspace, 'verification.json'), JSON.stringify(result, null, 2), 'utf8');
+  await mkdir(join(checkout, 'artifacts', 'consumers'), { recursive: true });
+  await writeFile(join(checkout, 'artifacts', 'consumers', 'packages.json'), JSON.stringify(result, null, 2), 'utf8');
   console.log('Release package verification passed.');
   console.log(JSON.stringify(result, null, 2));
 }

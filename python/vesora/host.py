@@ -9,6 +9,7 @@ import secrets
 import threading
 import uuid
 from typing import TYPE_CHECKING, Any
+from .transport import TransferQueue, binary_packet
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -25,6 +26,7 @@ class LocalHost:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: Any = None
         self._sockets: set[Any] = set()
+        self._views: dict[Any, TransferQueue] = {}
         self._started = threading.Event()
         self.ready = threading.Event()
         self._state_lock = threading.RLock()
@@ -34,6 +36,10 @@ class LocalHost:
         self._exports: dict[str, Future[bytes]] = {}
         self._exports_lock = threading.Lock()
         self._closed = False
+        self._transfer_timer: asyncio.TimerHandle | None = None
+        self._outbound_scheduled = False
+        self._outbound_dirty = False
+        self._legacy_snapshot: dict[str, Any] | None = None
 
     @property
     def origin(self) -> str:
@@ -138,37 +144,52 @@ class LocalHost:
         await socket.prepare(request)
         self._sockets.add(socket)
         try:
-            with self._state_lock:
+            with self.figure._lock, self._state_lock:
                 message = {"type": "snapshot", "snapshot": self.figure.snapshot(), "revision": self._revision}
             await socket.send_json(message)
             async for message in socket:
                 if message.type == WSMsgType.TEXT:
                     try:
-                        self._receive(message.json())
+                        self._receive(message.json(), socket)
                     except (ValueError, TypeError, KeyError) as exc:
                         await socket.send_json({"type": "error", "message": str(exc)})
                 elif message.type == WSMsgType.ERROR:
                     break
         finally:
             self._sockets.discard(socket)
+            self._views.pop(socket, None)
             if not self._sockets:
                 self.ready.clear()
                 self._fail_exports("Viewer disconnected during export")
         return socket
 
-    def _receive(self, message: dict[str, Any]) -> None:
+    def _receive(self, message: dict[str, Any], socket: Any = None) -> None:
         if not isinstance(message, dict):
             raise ValueError("Protocol message must be an object")
         kind = message.get("type")
-        if kind == "ready":
+        if kind == "hello" and message.get("transportVersion") == 2 and socket is not None:
+            with self.figure._lock, self._state_lock:
+                self._views[socket] = TransferQueue(self.figure._frozen_transfer, self._revision)
+            self._schedule_outbound()
+        elif kind in ("ack", "resync") and socket in self._views:
+            with self._state_lock:
+                view = self._views[socket]
+                if kind == "resync":
+                    view.resync()
+                elif view.acknowledge(message.get("transferId"), message.get("revision")) and message.get("revision") == self._revision:
+                    self.render_error = None
+                    self.ready.set()
+            self._schedule_outbound()
+        elif kind == "ready":
             with self._state_lock:
                 if message.get("revision") == self._revision:
                     self.render_error = None
                     self.ready.set()
         elif kind == "event":
             if message.get("event") in ("viewchange", "selection", "click"):
-                with self._state_lock:
-                    if message.get("revision") != self._revision:
+                with self.figure._lock, self._state_lock:
+                    view = self._views.get(socket)
+                    if message.get("revision") != self._revision and not (view and view.accepts_events(message.get("revision"))):
                         return
                     self.figure._emit(message["event"], message.get("payload"))
                 return
@@ -205,25 +226,86 @@ class LocalHost:
 
     async def _broadcast(self, message: dict[str, Any]) -> None:
         for socket in tuple(self._sockets):
+            if message.get("type") == "snapshot" and socket in self._views:
+                continue
             if not socket.closed:
                 try:
                     await socket.send_json(message)
                 except (ConnectionError, RuntimeError):
                     self._sockets.discard(socket)
 
+    async def _flush_transfers(self) -> None:
+        if self._closed:
+            return
+        for socket in tuple(self._views):
+            with self.figure._lock, self._state_lock:
+                queue = self._views.get(socket)
+                packet = queue.next() if queue is not None else None
+            if packet is not None and not socket.closed:
+                try:
+                    await socket.send_bytes(binary_packet(*packet))
+                except (ConnectionError, RuntimeError):
+                    self._views.pop(socket, None)
+        if self._transfer_timer is not None:
+            self._transfer_timer.cancel()
+            self._transfer_timer = None
+        with self._state_lock:
+            delays = [delay for queue in self._views.values() if (delay := queue.retry_after()) is not None]
+        if delays and self._loop is not None:
+            self._transfer_timer = self._loop.call_later(min(delays), self._schedule_outbound)
+
+    def _schedule_outbound(self) -> None:
+        """At most one queued callback/drain, independently of producer speed."""
+        with self._state_lock:
+            if self._closed or self._loop is None:
+                return
+            self._outbound_dirty = True
+            if self._outbound_scheduled:
+                return
+            self._outbound_scheduled = True
+            self._loop.call_soon_threadsafe(lambda: self._loop.create_task(self._drain_outbound()))
+
+    async def _drain_outbound(self) -> None:
+        try:
+            while not self._closed:
+                with self._state_lock:
+                    message, self._legacy_snapshot = self._legacy_snapshot, None
+                    self._outbound_dirty = False
+                if message is not None:
+                    await self._broadcast(message)
+                await self._flush_transfers()
+                with self._state_lock:
+                    if not self._outbound_dirty:
+                        self._outbound_scheduled = False
+                        return
+                await asyncio.sleep(0)
+        except BaseException:
+            with self._state_lock:
+                self._outbound_scheduled = False
+            raise
+        with self._state_lock:
+            self._outbound_scheduled = False
+
     def publish(self) -> None:
         if self._loop is not None and not self._closed:
-            with self._state_lock:
+            with self.figure._lock, self._state_lock:
                 self._revision += 1
                 self.ready.clear()
                 self.render_error = None
-                message = {"type": "snapshot", "snapshot": self.figure.snapshot(), "revision": self._revision}
-                asyncio.run_coroutine_threadsafe(self._broadcast(message), self._loop)
+                if any(socket not in self._views for socket in tuple(self._sockets)):
+                    self._legacy_snapshot = {"type": "snapshot", "snapshot": self.figure.snapshot(), "revision": self._revision}
+                for queue in self._views.values():
+                    queue.update(self._revision, self.figure._last_change)
+                if self._sockets or self._views:
+                    self._schedule_outbound()
 
-    def export(self) -> Future[bytes]:
+    def export(self, *, width: int | None = None, height: int | None = None,
+               scale: float | None = None, _frozen: Any = None) -> Future[bytes]:
+        from .export import png_options
+        options = png_options(width=width, height=height, scale=scale)
         if self.render_error is not None:
             raise self.render_error
-        if self._closed or self._loop is None or not self.ready.is_set():
+        if self._closed or self._loop is None or not (self.ready.is_set() or self._views):
             raise RuntimeError("Viewer is not ready for export")
         request_id = uuid.uuid4().hex
         future: Future[bytes] = Future()
@@ -233,7 +315,22 @@ class LocalHost:
             with self._exports_lock:
                 self._exports.pop(request_id, None)
         future.add_done_callback(remove)
-        asyncio.run_coroutine_threadsafe(self._broadcast({"type": "export", "requestId": request_id}), self._loop)
+        message = {"type": "export", "requestId": request_id}
+        if options:
+            message["options"] = options
+        if self._views and (_frozen is not None or self.figure._streams):
+            snapshot, buffers, _ = _frozen if _frozen is not None else self.figure._frozen_transfer()
+            message.update(type="stream-export", snapshot=snapshot, bufferLengths=[len(part) for part in buffers])
+            socket = next(iter(self._views))
+            async def send_snapshot() -> None:
+                try:
+                    await socket.send_bytes(binary_packet(message, buffers))
+                except (ConnectionError, RuntimeError) as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+            asyncio.run_coroutine_threadsafe(send_snapshot(), self._loop)
+        else:
+            asyncio.run_coroutine_threadsafe(self._broadcast(message), self._loop)
         return future
 
     def _fail_exports(self, reason: str) -> None:
@@ -244,6 +341,9 @@ class LocalHost:
                 future.set_exception(RuntimeError(reason))
 
     async def _shutdown(self) -> None:
+        if self._transfer_timer is not None:
+            self._transfer_timer.cancel()
+            self._transfer_timer = None
         for socket in tuple(self._sockets):
             await socket.close()
         await self._runner.cleanup()

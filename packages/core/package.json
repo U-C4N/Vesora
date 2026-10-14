@@ -1,12 +1,32 @@
 {
-  "name": "@vesora/core", "version": "0.6.0", "type": "module",
+  "name": "@vesora/core",
+  "version": "0.8.0",
+  "type": "module",
   "license": "MIT",
-  "publishConfig": {"access": "public"},
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Shared scientific visualization engine for Python and JavaScript",
-  "repository": {"type": "git", "url": "git+https://github.com/U-C4N/Vesora.git", "directory": "packages/core"},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/U-C4N/Vesora.git",
+    "directory": "packages/core"
+  },
   "homepage": "https://github.com/U-C4N/Vesora#readme",
-  "bugs": {"url": "https://github.com/U-C4N/Vesora/issues"},
-  "main": "./dist/index.js", "types": "./dist/index.d.ts",
-  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}, "./worker": "./dist/worker.js"},
-  "files": ["dist"], "sideEffects": false
+  "bugs": {
+    "url": "https://github.com/U-C4N/Vesora/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": "./dist/worker.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false
 }

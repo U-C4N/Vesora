@@ -1,0 +1,38 @@
+{
+  "browser": "155.0.8059.41",
+  "finalState": {
+    "url": "http://127.0.0.1:52085/examples/web/streaming.html",
+    "ready": "complete",
+    "probe": {
+      "id": "201d33c9-4384-4431-96ae-36a1194d0362",
+      "events": [
+        {
+          "type": "pageshow",
+          "persisted": false
+        },
+        {
+          "type": "pagehide",
+          "persisted": true
+        },
+        {
+          "type": "pageshow",
+          "persisted": true
+        },
+        {
+          "type": "pagehide",
+          "persisted": true
+        },
+        {
+          "type": "pageshow",
+          "persisted": true
+        }
+      ]
+    },
+    "status": "Live · 2,000 retained samples per model · 3,200 received",
+    "pause": "Pause",
+    "figures": 1,
+    "canvases": 2
+  },
+  "notRestored": [],
+  "errors": []
+}

@@ -11,11 +11,13 @@ import random
 import vesora as vs
 
 OUT = Path(__file__).resolve().parents[1] / "docs" / "assets"
+PREVIEW_THEME = {"fontSize": 24, "tickFontSize": 24, "labelFontSize": 26,
+                 "titleFontSize": 28, "legendFontSize": 24}
 
 
 def export(fig, name):
     try:
-        path = fig.savefig(OUT / f"{name}.png")
+        path = fig.savefig(OUT / f"{name}.png", width=760, height=500, scale=2)
         print(f"Rendered {path.name}: {path.stat().st_size:,} bytes", flush=True)
     finally:
         fig.close()
@@ -23,7 +25,7 @@ def export(fig, name):
 
 
 def training():
-    fig = vs.figure(title="Training loss · synthetic models", width=760, height=500)
+    fig = vs.figure(title="Synthetic training loss", width=760, height=500, theme=PREVIEW_THEME)
     steps = [i * 100 for i in range(201)]
     for label, color, rate, floor in (
         ("Model A", "#3569c8", 3500, 0.24),
@@ -32,8 +34,13 @@ def training():
     ):
         loss = [(3.6 * math.exp(-step / rate) + floor)
                 * (1 + 0.022 * math.sin(step / 190)) for step in steps]
+        if label == "Model A":
+            # Illustrative bounds, not a measured or estimated confidence interval.
+            fig.fill_between(steps, [v * .88 for v in loss], [v * 1.12 for v in loss],
+                             color=color, opacity=.18)
         fig.plot(steps, loss, color=color, width=2.5, label=label)
-    fig.set_axes(xlabel="Training step", ylabel="Loss (lower is better)", yscale="log")
+    fig.set_axes(xlabel="Training step", ylabel="Loss · log scale", yscale="log")
+    fig.set_hover_mode("x")
     export(fig, "training-loss")
 
 
@@ -46,8 +53,8 @@ def density():
         a, b = rng.gauss(0, 0.85), rng.gauss(0, 0.38)
         x.append(cx + a)
         y.append(cy + b + 0.4 * a)
-    fig = vs.figure(title="1,000,000 samples · count aggregation", width=760, height=500)
-    fig.scatter(x, y, representation="auto", colormap="magma", size=2)
+    fig = vs.figure(title="1M synthetic samples", width=760, height=500, theme=PREVIEW_THEME)
+    fig.scatter(x, y, representation="auto", colormap="magma", size=2, colorbar_label="Count / bin")
     fig.set_axes(xlabel="x", ylabel="y", xlim=(-6, 6), ylim=(-4, 4))
     export(fig, "density")
 
@@ -56,9 +63,9 @@ def surface():
     axis = [-6 + 12 * i / 139 for i in range(140)]
     z = [[math.sin(math.hypot(x + 1.6, y)) * math.cos(0.65 * y)
           * math.exp(-0.035 * (x*x + y*y)) for x in axis] for y in axis]
-    fig = vs.figure(title="Wave interference · regular-grid surface", width=760, height=500)
-    fig.surface(axis, axis, z, colormap="viridis")
-    fig.set_axes(xlabel="x", ylabel="y", zlabel="Amplitude")
+    fig = vs.figure(title="Wave interference", width=760, height=500, theme=PREVIEW_THEME)
+    fig.surface(axis, axis, z, colormap="viridis", colorbar_label="Amplitude")
+    fig.set_axes(xlabel="x", ylabel="y", zlabel="z")
     export(fig, "surface")
 
 
@@ -72,8 +79,8 @@ def lorenz():
             x.append(a)
             y.append(b)
             z.append(c)
-    fig = vs.figure(title="Lorenz attractor · 3D trajectory samples", width=760, height=500)
-    fig.scatter3d(x, y, z, values=z, colormap="viridis", size=2)
+    fig = vs.figure(title="Lorenz trajectory", width=760, height=500, theme=PREVIEW_THEME)
+    fig.scatter3d(x, y, z, values=z, colormap="viridis", size=2, colorbar_label="z")
     fig.set_axes(xlabel="x", ylabel="y", zlabel="z")
     export(fig, "lorenz")
 

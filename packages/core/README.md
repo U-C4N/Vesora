@@ -1,18 +1,18 @@
 # @vesora/core
 
-A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, scatter, and heatmaps; fixed 2D grids with shared axes; scientific text and reference lines; and single-panel 3D surfaces and scatter. PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
+A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; fixed 2D grids with shared axes; scientific text and reference lines; and single-panel 3D surfaces and scatter. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
 
-**0.6 developer preview, MIT licensed:** the API is evolving. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative SaaS charts.
+**0.7 developer preview, MIT licensed:** the API is evolving. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative SaaS charts.
 
 ## Installation
 
-From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). Copy `dist/release-v0.6.0/vesora-core-0.6.0.tgz` into your frontend project:
+From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). Copy `dist/release-v0.8.0/vesora-core-0.8.0.tgz` into your frontend project:
 
 ```bash
-npm install ./vesora-core-0.6.0.tgz
+npm install ./vesora-core-0.8.0.tgz
 ```
 
-Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [v0.6 overview](../../docs/releases/v0.6.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication.
+Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [v0.8 overview](../../docs/releases/v0.8.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication.
 
 ## Match your application theme and metrics
 
@@ -51,6 +51,27 @@ fig.mount(chart);
 
 `await fig.ready()` waits for pending rendering to finish; `await fig.savefig()` returns a PNG `Blob`. Update layers with `setData`, `setStyle`, and `setVisible`. Call `fig.close()` when removing a figure from the page.
 
+## Draw intervals and inspect source samples
+
+```typescript
+import {figure} from '@vesora/core';
+
+const fig = figure({title: 'Synthetic interval', theme: {tickFontSize: 14, labelFontSize: 16}});
+const x = [0, 1, 2, 3];
+fig.fillBetween(x, [2.8, 1.5, .8, .5], [3.6, 2.1, 1.2, .9], {color: '#3569c8'});
+fig.plot(x, [3.2, 1.8, 1, .7], {color: '#3569c8', label: 'Model A'});
+fig.setView({yScale: 'log'}).setHoverMode('x');
+fig.on('xhover', event => console.log(event?.cursorX, event?.items));
+fig.mount(document.querySelector('#chart')!);
+const png = await fig.savefig({width: 1000, height: 600, scale: 2});
+```
+
+`fillBetween` accepts explicit `x`, `lower` and `upper` channels on figures and panels. Numeric x values must be finite and strictly increasing; bounds must have equal lengths and finite pairs must satisfy `lower <= upper`. Nonfinite bounds break the band. The default opacity is `0.18`; styles are limited to `color`, `opacity` and `label`. The engine does not estimate uncertainty. Band axes allow linear/log/time x and linear/log y.
+
+`setHoverMode('x')` inspects visible numeric/time lines using original source samples. It reports the nearest sample within the cursor's valid run and includes each sample's actual x; it neither interpolates nor bridges gaps. `nearest` remains the default. `xhover` clears with `null`; Python serializes the mode without receiving per-pointer callbacks. React exposes a corresponding multi-series tooltip.
+
+Role tokens `titleFontSize`, `labelFontSize`, `tickFontSize` and `legendFontSize` are optional, each in the 8–32 logical-pixel range. `colorbarLabel` names a scalar or density scale without changing its meaning. Explicit PNG width/height are a pair of logical safe integers at least 200 × 180; positive finite scale sets raster density. Set all three to make pixel dimensions predictable, within the 32-million-pixel and active GPU limits. No-argument export retains its existing size/DPR behavior.
+
 ## Compare two panels
 
 ```javascript
@@ -74,7 +95,7 @@ downloadHTML(fig, 'comparison.html');
 
 `subplots` returns a `Figure`; panel indices are zero-based. `shareX` and `shareY` default to `false`; when enabled, the corresponding scale and limits are shared by all panels. Labels stay independent. The figure owns one WebGL context, data registry and worker. Mount the figure to show it in a page; HTML export does not require mounting.
 
-Panel methods are `plot`, `scatter`, `heatmap`, `hist`, `bar`, `barh`, `boxplot`, `setTitle`, `setView`, `text`, `axhline`, and `axvline`. Annotation handles support flattened `update` options and `remove()`. Grid shape is fixed; 3D panels are not supported. Explicit linked observation selection is available for two numeric scatters and one count histogram. Existing figure plotting and axis methods address the main panel.
+Panel methods include `plot`, `fillBetween`, `scatter`, `heatmap`, `hist`, `bar`, `barh`, `boxplot`, `setTitle`, `setView`, `text`, `axhline`, and `axvline`. Annotation handles support flattened `update` options and `remove()`. Grid shape is fixed; 3D panels are not supported. Explicit linked observation selection is available for two numeric scatters and one count histogram. Existing figure plotting and axis methods address the main panel.
 
 ## Follow the same observations
 
@@ -114,7 +135,22 @@ downloadHTML(fig, 'measurements.html'); // Browser download.
 
 The file embeds the engine, worker, and original source data. It opens offline directly from disk and includes bookmarks, reset, PNG download, and a representation inspector. In a grid, bookmarks restore every panel view and PNG captures the whole layout. Bookmarks do not capture historical annotations, styles or data. The file does not include application callbacks or live connections. `removeBookmark(name)` removes a saved view. Reusing a bookmark name updates it in place.
 
-The v0.6 engine accepts scene protocols 1–5. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, links v4 and presentation extensions v5. HTML embeds its matching runtime. The package continues to have no runtime npm dependencies.
+The v0.8 engine accepts scene protocols 1–6. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, links v4 and base presentation extensions v5. Bands, explicit hover mode, role typography and colorbar labels use v6. Export-size options and streaming runtime metadata do not change scene protocol. HTML embeds its matching runtime and a static snapshot of retained source values. The package continues to have no runtime npm dependencies.
+
+## Append live measurements
+
+```js
+const fig = figure({title: 'Live signal'});
+const line = fig.plot([], [], {label: 'Signal'}).enableStreaming({maxPoints: 100_000});
+fig.mount(document.querySelector('#chart'));
+await line.appendData({x: [0, 1, 2], y: [3, 2, 1]});
+await fig.ready({timeoutMs: 10_000});
+console.log(fig.getStreamingState(line.id), fig.diagnostics());
+```
+
+Numeric 2D lines/scatters retain the latest `maxPoints` rows. Append all existing channels with matching lengths/dtypes; await the returned promise to pace the producer. `fig.appendDataBatch([{layer, data}, ...])` commits several series atomically. `setData` resets the stream epoch; `disableStreaming` keeps the retained values as static data. Style/theme changes preserve source versions. Bands, categories, statistics, 3D and linked-selection streaming are unsupported.
+
+See the [streaming guide](../../docs/streaming.md) for row identity, backpressure, runtime budgets, recovery and export contracts. [The live example](../../examples/web/streaming.html) supplies three synthetic curves and pause/reset/export controls.
 
 ## Documentation
 

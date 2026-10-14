@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import asyncio
 import base64
+import threading
 import uuid
 from typing import Any
+from .transport import TransferQueue
 
 
 def make_widget(figure: Any) -> Any:
@@ -27,12 +29,20 @@ def make_widget(figure: Any) -> Any:
             super().__init__()
             self._vesora_closed = False
             self._export_requests: dict[str, asyncio.Future[bytes]] = {}
+            self._views: dict[str, TransferQueue] = {}
+            self._transfer_timer: threading.Timer | None = None
             self.on_msg(self._receive)
             figure._listeners.append(self._update)
             self._update()
 
         def _update(self) -> None:
             with figure._lock:
+                if self._views:
+                    self.revision += 1
+                    for queue in self._views.values():
+                        queue.update(self.revision, figure._last_change)
+                    self._send_transfers()
+                    return
                 snapshot = figure.snapshot()
                 buffers = [figure._data_bytes(source["id"], source["version"]) for source in snapshot["sources"]]
                 with self.hold_sync():
@@ -40,9 +50,62 @@ def make_widget(figure: Any) -> Any:
                     self.snapshot = snapshot
                     self.revision += 1
 
+        def _send_transfers(self) -> None:
+            with figure._lock:
+                if self._vesora_closed:
+                    return
+                for view_id, queue in tuple(self._views.items()):
+                    transfer = queue.next()
+                    if transfer is not None:
+                        header, buffers = transfer
+                        self.send({**header, "viewId": view_id}, buffers=buffers)
+                if self._transfer_timer is not None:
+                    self._transfer_timer.cancel()
+                    self._transfer_timer = None
+                delays = [delay for queue in self._views.values() if (delay := queue.retry_after()) is not None]
+                if delays:
+                    self._transfer_timer = threading.Timer(min(delays), self._send_transfers)
+                    self._transfer_timer.daemon = True
+                    self._transfer_timer.start()
+
+        @staticmethod
+        def _finish_export(future: asyncio.Future[bytes], payload: bytes | None = None,
+                           error: Exception | None = None) -> None:
+            # Modern notebook kernels can dispatch comm messages on a different
+            # thread from the cell's asyncio loop. Wake that loop explicitly.
+            def finish() -> None:
+                if not future.done():
+                    if error is not None:
+                        future.set_exception(error)
+                    else:
+                        future.set_result(payload)
+            future.get_loop().call_soon_threadsafe(finish)
+
         def _receive(self, widget: Any, content: Any, buffers: Any) -> None:
-            if isinstance(content, dict) and content.get("type") == "event":
-                if content.get("event") in ("viewchange", "selection", "click", "error") and content.get("revision") != self.revision:
+            with figure._lock:
+                self._receive_locked(widget, content, buffers)
+
+        def _receive_locked(self, widget: Any, content: Any, buffers: Any) -> None:
+            if not isinstance(content, dict):
+                return
+            kind, view_id = content.get("type"), content.get("viewId")
+            if kind == "hello" and content.get("transportVersion") == 2 and isinstance(view_id, str):
+                self._views[view_id] = TransferQueue(figure._frozen_transfer, self.revision)
+                self._send_transfers()
+            elif kind == "dispose-view":
+                self._views.pop(view_id, None)
+                self._send_transfers()
+            elif kind in ("ack", "resync") and view_id in self._views:
+                queue = self._views[view_id]
+                if kind == "resync":
+                    queue.resync()
+                else:
+                    queue.acknowledge(content.get("transferId"), content.get("revision"))
+                self._send_transfers()
+            elif kind == "event":
+                queue = self._views.get(view_id)
+                current_frame = queue is not None and queue.accepts_events(content.get("revision"))
+                if content.get("event") in ("viewchange", "selection", "click", "error") and content.get("revision") != self.revision and not current_frame:
                     return
                 figure._emit(str(content.get("event", "")), content.get("payload"))
             elif isinstance(content, dict) and content.get("type") in ("export", "export-error"):
@@ -59,33 +122,52 @@ def make_widget(figure: Any) -> Any:
                     payload = base64.b64decode(data_url[len(prefix):], validate=True)
                     if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
                         raise ValueError("Widget returned invalid PNG bytes")
-                    future.set_result(payload)
+                    self._finish_export(future, payload=payload)
                 except Exception as exc:
-                    future.set_exception(exc)
+                    self._finish_export(future, error=exc)
 
-        async def export_png(self, *, timeout: float) -> bytes:
+        async def export_png(self, *, timeout: float, width: int | None = None,
+                             height: int | None = None, scale: float | None = None) -> bytes:
             if timeout <= 0:
                 raise ValueError("timeout must be positive")
+            from .export import png_options
+            options = png_options(width=width, height=height, scale=scale)
             if self._vesora_closed:
                 raise RuntimeError("Notebook widget is closed")
             request_id = uuid.uuid4().hex
             future = asyncio.get_running_loop().create_future()
             self._export_requests[request_id] = future
-            self.send({"type": "export", "requestId": request_id})
+            message = {"type": "export", "requestId": request_id}
+            if options:
+                message["options"] = options
+            if self._views or figure._streams:
+                snapshot, buffers, _ = figure._frozen_transfer()
+                message.update(type="stream-export", snapshot=snapshot,
+                               bufferLengths=[len(part) for part in buffers])
+                if self._views:
+                    message["viewId"] = next(iter(self._views))
+                self.send(message, buffers=buffers)
+            else:
+                self.send(message)
             try:
                 return await asyncio.wait_for(future, timeout)
             finally:
                 self._export_requests.pop(request_id, None)
 
         def close(self) -> None:
-            if not getattr(self, "_vesora_closed", True):
-                self._vesora_closed = True
-                if self._update in figure._listeners:
-                    figure._listeners.remove(self._update)
-                for future in self._export_requests.values():
-                    if not future.done():
-                        future.set_exception(RuntimeError("Widget closed during export"))
-                self._export_requests.clear()
+            with figure._lock:
+                if not getattr(self, "_vesora_closed", True):
+                    self._vesora_closed = True
+                    if self._update in figure._listeners:
+                        figure._listeners.remove(self._update)
+                    for future in tuple(self._export_requests.values()):
+                        if not future.done():
+                            self._finish_export(future, error=RuntimeError("Widget closed during export"))
+                    self._export_requests.clear()
+                    self._views.clear()
+                    if self._transfer_timer is not None:
+                        self._transfer_timer.cancel()
+                        self._transfer_timer = None
             super().close()
 
     return VesoraWidget()

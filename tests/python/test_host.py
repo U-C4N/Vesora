@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import struct
 from array import array
 
@@ -9,6 +10,18 @@ import vesora as vs
 from vesora import host as host_module
 
 aiohttp = pytest.importorskip("aiohttp")
+
+
+def unpack_transfer(message):
+    assert message.type == aiohttp.WSMsgType.BINARY
+    size, = struct.unpack("<I", message.data[:4])
+    header = json.loads(message.data[4:4 + size])
+    offset, buffers = 4 + size, []
+    for length in header["bufferLengths"]:
+        buffers.append(message.data[offset:offset + length])
+        offset += length
+    assert offset == len(message.data)
+    return header, buffers
 
 
 @pytest.fixture
@@ -46,6 +59,65 @@ def test_http_auth_binary_versions_and_shutdown(live_host):
             layer.set_data([5., 6.], [7., 8.])
             async with client.get(url) as response:
                 assert response.status == 409
+    asyncio.run(scenario())
+
+
+def test_binary_stream_snapshot_delta_resync_and_frozen_export(live_host):
+    host, fig, layer = live_host
+    layer.enable_streaming(max_points=3)
+    async def scenario():
+        async with aiohttp.ClientSession() as client:
+            async with client.ws_connect(f"{host.origin}/ws?token={host.token}", origin=host.origin) as socket:
+                await socket.receive_json(timeout=3)
+                await socket.send_json({"type": "hello", "transportVersion": 2})
+                initial, initial_buffers = unpack_transfer(await socket.receive(timeout=3))
+                assert initial["type"] == "stream-snapshot"
+                layer.append_data(x=array("d", [3.]), y=array("f", [5.]))
+                assert struct.unpack("<2d", initial_buffers[0]) == (1., 2.)
+                await socket.send_json({"type": "ack", "transferId": initial["transferId"], "revision": initial["revision"]})
+                delta, buffers = unpack_transfer(await socket.receive(timeout=3))
+                assert delta["type"] == "stream-delta"
+                assert delta["baseRevision"] == initial["revision"]
+                assert list(map(len, buffers)) == [8, 4]
+                await socket.send_json({"type": "ack", "transferId": delta["transferId"], "revision": delta["revision"]})
+                future = host.export()
+                layer.append_data(x=array("d", [4.]), y=array("f", [6.]))
+                exported = None
+                for _ in range(2):
+                    packet = unpack_transfer(await socket.receive(timeout=3))
+                    if packet[0]["type"] == "stream-export":
+                        exported = packet
+                        break
+                assert exported is not None
+                header, buffers = exported
+                assert struct.unpack("<3d", buffers[0]) == (1., 2., 3.)
+                png = b"\x89PNG\r\n\x1a\nstream export"
+                await socket.send_json({"type": "export", "requestId": header["requestId"],
+                                        "dataUrl": "data:image/png;base64," + base64.b64encode(png).decode()})
+                assert await asyncio.wait_for(asyncio.wrap_future(future), 3) == png
+                await socket.send_json({"type": "resync"})
+                while True:
+                    header, buffers = unpack_transfer(await socket.receive(timeout=3))
+                    if header["type"] == "stream-snapshot":
+                        break
+                assert struct.unpack("<3d", buffers[0]) == (2., 3., 4.)
+    asyncio.run(scenario())
+
+
+def test_binary_lost_ack_resyncs_without_new_activity(live_host, monkeypatch):
+    import vesora.transport as transport
+    monkeypatch.setattr(transport, "ACK_TIMEOUT", .03)
+    host, fig, layer = live_host
+    async def scenario():
+        async with aiohttp.ClientSession() as client:
+            async with client.ws_connect(f"{host.origin}/ws?token={host.token}", origin=host.origin) as socket:
+                await socket.receive_json(timeout=3)
+                await socket.send_json({"type": "hello", "transportVersion": 2})
+                first, _ = unpack_transfer(await socket.receive(timeout=3))
+                retry, _ = unpack_transfer(await socket.receive(timeout=3))
+                assert first["type"] == retry["type"] == "stream-snapshot"
+                assert first["revision"] == retry["revision"]
+                assert first["transferId"] != retry["transferId"]
     asyncio.run(scenario())
 
 

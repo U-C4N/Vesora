@@ -84,13 +84,17 @@ def process_events() -> None:
     _application().processEvents()
 
 
-def save_figure(figure: Any, path: Path, *, timeout: float) -> Path:
+def save_figure(figure: Any, path: Path, *, timeout: float, width: int | None = None,
+                height: int | None = None, scale: float | None = None) -> Path:
     if timeout <= 0:
         raise ValueError("timeout must be positive")
+    from .export import png_options
+    options = png_options(width=width, height=height, scale=scale)
+    frozen = figure._frozen_transfer() if figure._streams else None
     _ensure_window(figure, visible=False)
     host = figure._host
     deadline = time.monotonic() + timeout
-    while not host.ready.is_set():
+    while not host.ready.is_set() and not (frozen is not None and host._views):
         if figure._closed or figure._host is not host:
             raise RuntimeError("Viewer closed before export")
         if host.render_error is not None:
@@ -99,7 +103,7 @@ def save_figure(figure: Any, path: Path, *, timeout: float) -> Path:
             raise TimeoutError("Viewer did not become ready for PNG export")
         process_events()
         time.sleep(0.005)
-    future = host.export()
+    future = host.export(**options, **({"_frozen": frozen} if frozen is not None else {}))
     while not future.done():
         if time.monotonic() >= deadline:
             future.cancel()

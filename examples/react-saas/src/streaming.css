@@ -1,0 +1,11 @@
+.streaming-demo{max-width:1200px;min-height:100vh;margin:auto;padding:36px 28px;background:#f8fafc;color:#243247;font-family:system-ui,sans-serif}
+.streaming-demo[data-theme=dark]{background:#111827;color:#e2e8f0;color-scheme:dark}
+.streaming-demo header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:20px}
+.streaming-demo header p{font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.streaming-demo h1{font-size:clamp(28px,4vw,42px);letter-spacing:-.03em;line-height:1.2}
+.streaming-demo p,.streaming-demo footer{line-height:1.6;max-width:88ch}
+.streaming-demo nav{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0 16px}
+.streaming-demo button{border:1px solid #94a3b8;border-radius:6px;padding:9px 14px;background:transparent;color:inherit;min-height:40px}
+.streaming-demo a{text-decoration:underline;white-space:nowrap}
+.streaming-demo footer{font-size:13px;margin-top:24px;opacity:.8}
+@media(max-width:600px){.streaming-demo{padding:24px 12px}.streaming-demo header{align-items:flex-start;flex-direction:column}}

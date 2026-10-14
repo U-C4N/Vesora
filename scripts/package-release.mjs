@@ -74,7 +74,33 @@ try {
   saasFigure.bookmark('Overview');
   await writeFile(resolve(output, 'vesora-saas-demo.html'), toHTML(saasFigure), 'utf8');
 } finally { saasFigure.close(); }
-const files = [`vesora-${version}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html'];
+const qualityFigure = subplots({rows: 1, cols: 2, title: 'Readable scientific figures', width: 1100, height: 520,
+  theme: {titleFontSize: 20, labelFontSize: 16, tickFontSize: 14, legendFontSize: 14}});
+try {
+  const steps = Array.from({length: 101}, (_, i) => i * 100);
+  const loss = steps.map(x => .2 + 3 * Math.exp(-x / 2500));
+  const curves = qualityFigure.panel(0, 0).setTitle('Synthetic illustrative interval');
+  curves.fillBetween(steps, loss.map(y => y * .85), loss.map(y => y * 1.15), {color: '#3569c8', opacity: .18});
+  curves.plot(steps, loss, {color: '#3569c8', label: 'Model A'});
+  curves.plot(steps, loss.map(y => y * 1.2), {color: '#d36a55', label: 'Model B'});
+  curves.setView({xLabel: 'Training step', yLabel: 'Loss', yScale: 'log'});
+  qualityFigure.panel(0, 1).setTitle('Scalar units').heatmap([0, 1, 2], [0, 1, 2], [[1, 2, 3], [2, 4, 6], [3, 6, 9]], {colorbarLabel: 'Amplitude'});
+  qualityFigure.setHoverMode('x').bookmark('Overview');
+  await writeFile(resolve(output, 'vesora-quality-demo.html'), toHTML(qualityFigure), 'utf8');
+} finally { qualityFigure.close(); }
+const streamingFigure=figure({title:'Retained synthetic telemetry snapshot',width:1100,height:520});
+try{
+  const layers=['#3569c8','#137f8b','#d36a55'].map((color,i)=>streamingFigure.plot([],[],{color,label:`Model ${String.fromCharCode(65+i)}`}).enableStreaming({maxPoints:500}));
+  streamingFigure.setView({xLabel:'Training step',yLabel:'Synthetic loss'});streamingFigure.setHoverMode('x');
+  for(let start=0;start<2000;start+=100){const x=Array.from({length:100},(_,i)=>start+i);await streamingFigure.appendDataBatch(layers.map((layer,j)=>({layer,data:{x,y:x.map(t=>(j+1)*.15+3*Math.exp(-t/2000)+.08*Math.sin(t*.07+j))}})));}
+  await writeFile(resolve(output,'vesora-streaming-demo.html'),toHTML(streamingFigure),'utf8');
+}finally{streamingFigure.close();}
+const files = [`vesora-${version}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html', 'vesora-quality-demo.html','vesora-streaming-demo.html'];
+const hash=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
+const commit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+const dirty=!!execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+const manifest={version,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:[1,2,3,4,5,6],runtime:{index:await hash(resolve(root,'packages/core/dist/index.js')),worker:await hash(resolve(root,'packages/core/dist/worker.js'))},files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
+await writeFile(resolve(output,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n','utf8');files.push('release-manifest.json');
 const sums = [];
 for (const name of files) {
   const bytes = await readFile(resolve(output, name));

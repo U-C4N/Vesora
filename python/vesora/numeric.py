@@ -80,6 +80,65 @@ class NumericData:
         return self.shape[0]
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkedNumericData:
+    """Owned immutable stream chunks; contiguous bytes are made only on demand."""
+    dtype: NumericDType
+    shape: tuple[int, ...]
+    chunks: tuple[bytes, ...]
+
+    @property
+    def ndim(self) -> int:
+        return 1
+
+    @property
+    def size(self) -> int:
+        return self.shape[0]
+
+    @property
+    def nbytes(self) -> int:
+        return self.size * self.dtype.itemsize
+
+    def tobytes(self, order: str = "C") -> bytes:
+        if order != "C":
+            raise ValueError("Canonical numeric storage supports C order only")
+        return b"".join(self.chunks)
+
+    def __iter__(self) -> Iterator[int | float]:
+        for chunk in self.chunks:
+            for item in struct.iter_unpack("<" + self.dtype.code, chunk):
+                yield item[0]
+
+    def __len__(self) -> int:
+        return self.size
+
+    @classmethod
+    def from_data(cls, data: NumericData | ChunkedNumericData, limit: int) -> ChunkedNumericData:
+        if isinstance(data, cls):
+            return data.append(NumericData(data.dtype, (0,), b""), limit)
+        raw = data.tobytes()[-limit * data.dtype.itemsize:]
+        return cls(data.dtype, (min(data.size, limit),), (raw,) if raw else ())
+
+    def append(self, data: NumericData, limit: int) -> ChunkedNumericData:
+        if data.dtype != self.dtype:
+            raise TypeError("Streaming append must preserve each channel's dtype")
+        chunks = list(self.chunks)
+        raw = data.tobytes()
+        if raw:
+            # Small producer batches share bounded immutable chunks, keeping the
+            # chunk index bounded without copying the retained history.
+            if chunks and len(chunks[-1]) + len(raw) <= 65536:
+                raw = chunks.pop() + raw
+            chunks.append(raw)
+        retained = min(self.size + data.size, limit)
+        discard = (self.size + data.size - retained) * self.dtype.itemsize
+        while chunks and discard >= len(chunks[0]):
+            discard -= len(chunks.pop(0))
+        if discard and chunks:
+            chunks[0] = chunks[0][discard:]
+        return type(self)(self.dtype, (retained,), tuple(chunks))
+
+
 def _integer(value: int, name: str) -> int:
     if not -_EXACT_INTEGER_LIMIT <= value <= _EXACT_INTEGER_LIMIT:
         raise ValueError(f"{name}: int64/uint64 values outside the exact Float64 integer range are unsupported")
@@ -197,7 +256,7 @@ def _from_sequence(value: Any, name: str) -> NumericData:
 
 def as_numeric(value: Any, name: str) -> NumericData:
     """Normalize arrays, buffers and rectangular iterables without importing NumPy."""
-    if isinstance(value, NumericData):
+    if isinstance(value, (NumericData, ChunkedNumericData)):
         return value  # Safe to reuse: shape, dtype and owned bytes are immutable.
     try:
         view = memoryview(value)

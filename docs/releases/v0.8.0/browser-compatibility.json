@@ -1,0 +1,31 @@
+{
+  "recordedAt": "2026-10-14T19:15:38.858Z",
+  "platform": "Windows",
+  "command": "npx playwright test --config playwright.compat.config.ts --output=artifacts/playwright-v08-compat",
+  "passed": 2,
+  "failed": 0,
+  "durationSeconds": 5.9,
+  "browsers": [
+    {
+      "name": "Firefox",
+      "version": "155.0",
+      "playwrightRevision": 1543
+    },
+    {
+      "name": "WebKit",
+      "version": "26.6",
+      "playwrightRevision": 2359
+    }
+  ],
+  "checks": [
+    "WebGL2 rendered color pixels",
+    "bounded stream retained=3 evicted=2 nextSequence=5",
+    "keyboard End emits sequence4",
+    "400x300 PNG signature and dimensions",
+    "standalone HTML loads offline and downloads PNG",
+    "zero uncaught browser errors"
+  ],
+  "limitations": [
+    "Playwright browser builds on Windows; this does not establish Safari, iOS or macOS validation."
+  ]
+}

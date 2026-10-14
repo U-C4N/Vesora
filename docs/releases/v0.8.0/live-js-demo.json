@@ -1,0 +1,20 @@
+{
+  "status": "Paused · 2.000 retained samples per model · 2.200 received",
+  "sources": {
+    "layers": 3,
+    "rows": [
+      2000,
+      2000,
+      2000,
+      2000,
+      2000,
+      2000
+    ]
+  },
+  "png": [
+    2200,
+    1200
+  ],
+  "errors": [],
+  "browser": "155.0.8059.41"
+}

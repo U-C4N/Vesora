@@ -1,0 +1,62 @@
+{
+  "module": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-8s1CMK\\python-consumer\\venv\\Lib\\site-packages\\vesora\\__init__.py",
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-8s1CMK\\python-consumer\\venv\\Scripts\\python.exe",
+  "wheel_sha256": "fdc80a03700d05b51c0e0c97d7428c03aafabe79b5d18a2c3ba3614885afc8b3",
+  "versions": {
+    "vesora": "0.8.0",
+    "PySide6": "6.12.0",
+    "aiohttp": "3.14.5",
+    "anywidget": "0.11.0",
+    "ipykernel": "7.4.0",
+    "jupyterlab": "4.6.4",
+    "pytest": "9.1.1"
+  },
+  "recorded_at_utc": "2026-10-14T19:15:21.375568+00:00",
+  "wheel": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\dist\\release-v0.8.0\\vesora-0.8.0-py3-none-any.whl",
+  "source_checkout_imported": false,
+  "isolation_evidence": [
+    "CPU and Qt invoked installed Python with -I and pytest -o pythonpath=",
+    "Notebook server and first real kernel cell both assert installed-package origin; kernel PYTHONPATH is empty",
+    "Installed transport exposes MAX_PENDING_UPDATES == 1024"
+  ],
+  "checks": {
+    "cpu": {
+      "passed": 64,
+      "failed": 0,
+      "duration_seconds": 7.64,
+      "tests": [
+        "test_streaming.py",
+        "test_notebook.py",
+        "test_host.py",
+        "test_quality.py"
+      ],
+      "artifacts": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\pytest-installed-host-cpu-v08"
+    },
+    "qt": {
+      "passed": 3,
+      "failed": 0,
+      "duration_seconds": 17.35,
+      "tests": [
+        "test_quality_desktop.py",
+        "test_streaming_desktop.py"
+      ],
+      "artifacts": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\pytest-installed-qt-v08",
+      "raw_timing": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\pytest-installed-qt-v08\\test_qt_streaming_latency_thre0\\qt-streaming-benchmark.json"
+    },
+    "jupyter": {
+      "passed": 1,
+      "failed": 0,
+      "executed_cells": 16,
+      "duration_reported": "1.3m (Playwright rounded console duration)",
+      "artifacts": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\jupyter-installed-v08\\jupyter-real-JupyterLab-ru-69736-through-actual-widget-comms",
+      "raw_timing": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\jupyter-installed-v08\\jupyter-real-JupyterLab-ru-69736-through-actual-widget-comms\\jupyter-streaming-benchmark.json",
+      "result": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\jupyter-installed-v08\\.last-run.json"
+    }
+  },
+  "junit_xml": null,
+  "release_latency_evidence": {
+    "qt": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\pytest-final-all-qt-20261014-3\\test_qt_streaming_latency_thre0\\qt-streaming-benchmark.json",
+    "jupyter": "C:\\Users\\VECTOR\\Documents\\GitHub\\Vesora\\artifacts\\jupyter-stream-v08-final\\jupyter-real-JupyterLab-ru-69736-through-actual-widget-comms\\jupyter-streaming-benchmark.json"
+  }
+}

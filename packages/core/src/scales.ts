@@ -67,6 +67,20 @@ export function ticks(domain: Domain, kind: ScaleKind = 'linear', count = 6): nu
   count = Math.max(2, Math.min(100, Math.floor(count)));
   if(kind==='time')return timeTicks(domain,count);
   if (kind === 'log') {
+    // Sub-decade/scientific ranges need meaningful 1–2–5 labels, not arbitrary
+    // geometric fractions of the padded domain (for example 0.221, 0.465, ...).
+    if(Math.log10(domain[1])-Math.log10(domain[0])<2){
+      const candidates:number[]=[];
+      for(let power=Math.floor(Math.log10(domain[0]));power<=Math.ceil(Math.log10(domain[1]));power++)for(const multiple of [1,2,5]){
+        const value=multiple*10**power;
+        if(Number.isFinite(value)&&value>=domain[0]&&value<=domain[1]&&value>0&&!candidates.includes(value))candidates.push(value);
+      }
+      if(candidates.length>=2){
+        if(candidates.length<=count)return candidates;
+        return Array.from({length:count},(_,i)=>candidates[Math.round(i*(candidates.length-1)/(count-1))]);
+      }
+      return ticks(domain,'linear',count);
+    }
     const first = Math.ceil(Math.log10(domain[0])), last = Math.floor(Math.log10(domain[1]));
     if (last >= first) {
       const step = Math.max(1, Math.ceil((last - first + 1) / count));

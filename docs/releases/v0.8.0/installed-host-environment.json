@@ -1,0 +1,15 @@
+{
+  "module": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-8s1CMK\\python-consumer\\venv\\Lib\\site-packages\\vesora\\__init__.py",
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\VECTOR\\AppData\\Local\\Temp\\vesora-packages-8s1CMK\\python-consumer\\venv\\Scripts\\python.exe",
+  "wheel_sha256": "fdc80a03700d05b51c0e0c97d7428c03aafabe79b5d18a2c3ba3614885afc8b3",
+  "versions": {
+    "vesora": "0.8.0",
+    "PySide6": "6.12.0",
+    "aiohttp": "3.14.5",
+    "anywidget": "0.11.0",
+    "ipykernel": "7.4.0",
+    "jupyterlab": "4.6.4",
+    "pytest": "9.1.1"
+  }
+}

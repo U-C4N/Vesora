@@ -37,11 +37,18 @@ async function pixels(page,selector='#chart'){
     return {ink,hash:hash>>>0,error:gl.getError()};
   },selector);
 }
-// Single-panel test scenes use 640x420, no title, and explicit domains.
-const point=(x,y,xd,yd)=>({x:85+(x-xd[0])/(xd[1]-xd[0])*470,y:28+(1-(y-yd[0])/(yd[1]-yd[0]))*310});
-async function hover(page,x,y,xd,yd){const p=point(x,y,xd,yd);await page.mouse.move(p.x,p.y);}
+// Labels and statistics now determine the gutters; interact in data coordinates
+// using the committed frame rather than assuming fixed pixel margins.
+async function hover(page,x,y,xd,yd){
+  const p=await page.evaluate(({x,y,xd,yd})=>{
+    const panel=fig.view.panels[0],r=panel.rect,offset=fig.view.overlay.getBoundingClientRect();
+    return {x:offset.left+r.left+(x-xd[0])/(xd[1]-xd[0])*r.width,y:offset.top+r.top+(1-(y-yd[0])/(yd[1]-yd[0]))*r.height};
+  },{x,y,xd,yd});
+  await page.mouse.move(p.x,p.y);
+}
 async function selectAll(page){
-  await page.keyboard.down('Shift');await page.mouse.move(86,29);await page.mouse.down();await page.mouse.move(554,337,{steps:5});await page.mouse.up();await page.keyboard.up('Shift');
+  const p=await page.evaluate(()=>{const r=fig.view.panels[0].rect,offset=fig.view.overlay.getBoundingClientRect();return {left:offset.left+r.left+1,top:offset.top+r.top+1,right:offset.left+r.left+r.width-1,bottom:offset.top+r.top+r.height-1};});
+  await page.keyboard.down('Shift');await page.mouse.move(p.left,p.top);await page.mouse.down();await page.mouse.move(p.right,p.bottom,{steps:5});await page.mouse.up();await page.keyboard.up('Shift');
 }
 
 test('statistics and categorical charts draw real pixels in four panels and PNG',async({page})=>{

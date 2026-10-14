@@ -182,4 +182,90 @@ importedPresentation.applySnapshot(presentationResult.snapshot,new Map(Object.en
 assert.equal(presentationResult.snapshot.figure.protocolVersion,5);
 assert.deepEqual(normalize(importedPresentation),normalize(presentation),'Python and JavaScript presentation scenes must agree');
 presentation.close();importedPresentation.close();
-console.log('Python and JavaScript produce equivalent v1–v5 scenes, themes, formats, time axes, linked groups, categorical/statistical defaults, dtypes, raw buffers, updates and package versions.');
+const qualityCode=`import json,base64
+from array import array
+import vesora as vs
+fig=vs.subplots(1,2,title='Quality parity',width=1000,height=480,theme={'titleFontSize':24,'labelFontSize':14,'tickFontSize':11,'legendFontSize':12})
+left=fig.panel(0,0)
+band=left.fill_between(array('d',[0.,86400000.,172800000.,259200000.]),array('f',[1.,2.,float('nan'),3.]),array('f',[3.,4.,float('nan'),6.]),color='#3569c8',label='Observed interval')
+line=left.plot(array('d',[0.,86400000.,172800000.,259200000.]),array('f',[2.,3.,float('nan'),4.]),color='#3569c8',label='Mean')
+band.set_data(lower=array('f',[.5,1.5,float('nan'),2.5]))
+line.set_data(y=array('f',[2.25,3.25,float('nan'),4.25]))
+left.set_axes(xscale='time',yscale='log',ylabel='Response')
+left.set_axis_format('x',{'kind':'date','locale':'en-US','timeZone':'UTC','options':{'month':'short','day':'numeric'}})
+right=fig.panel(0,1)
+grid=right.heatmap([0.,1.],[0.,1.],[[1.,2.],[3.,4.]],colorbarLabel='Temperature / °C')
+grid.set_style(colorbarLabel='Temperature / K')
+fig.set_hover_mode('x')
+before=fig.snapshot()
+try:
+    band.set_data(lower=[4.,1.5,float('nan'),2.5])
+    raise AssertionError('Invalid band update unexpectedly succeeded')
+except ValueError:
+    pass
+assert fig.snapshot()==before
+try:
+    line.set_data(x=[0.,0.,172800000.,259200000.])
+    raise AssertionError('Invalid inspection update unexpectedly succeeded')
+except ValueError:
+    pass
+assert fig.snapshot()==before
+fig.bookmark('Overview')
+left.set_axes(xlim=(0.,86400000.))
+fig.bookmark('Detail')
+fig.restore_bookmark('Overview')
+fig.text(0.,2.,'Interval',font_size=12)
+s=fig.snapshot()
+print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']}}))
+fig.close()
+`;
+const qualityResult=JSON.parse(execFileSync(python,['-X','utf8','-c',qualityCode],{env:{...process.env,PYTHONPATH:resolve('python')},encoding:'utf8'}));
+const quality=subplots({rows:1,cols:2,title:'Quality parity',width:1000,height:480,theme:{titleFontSize:24,labelFontSize:14,tickFontSize:11,legendFontSize:12}});
+const qualityLeft=quality.panel(0,0);
+const qualityBand=qualityLeft.fillBetween(new Float64Array([0,86400000,172800000,259200000]),new Float32Array([1,2,NaN,3]),new Float32Array([3,4,NaN,6]),{color:'#3569c8',label:'Observed interval'});
+const qualityLine=qualityLeft.plot(new Float64Array([0,86400000,172800000,259200000]),new Float32Array([2,3,NaN,4]),{color:'#3569c8',label:'Mean'});
+qualityBand.setData({lower:new Float32Array([.5,1.5,NaN,2.5])});qualityLine.setData({y:new Float32Array([2.25,3.25,NaN,4.25])});
+qualityLeft.setView({xScale:'time',yScale:'log',yLabel:'Response'});
+qualityLeft.setAxisFormat('x',{kind:'date',locale:'en-US',timeZone:'UTC',options:{month:'short',day:'numeric'}});
+const qualityGrid=quality.panel(0,1).heatmap([0,1],[0,1],[[1,2],[3,4]],{colorbarLabel:'Temperature / °C'});
+qualityGrid.setStyle({colorbarLabel:'Temperature / K'});quality.setHoverMode('x');
+const beforeQuality=quality.snapshot();
+assert.throws(()=>qualityBand.setData({lower:[4,1.5,NaN,2.5]}));assert.deepEqual(quality.snapshot(),beforeQuality);
+assert.throws(()=>qualityLine.setData({x:[0,0,172800000,259200000]}));assert.deepEqual(quality.snapshot(),beforeQuality);
+quality.bookmark('Overview');qualityLeft.setView({xDomain:[0,86400000]});quality.bookmark('Detail');quality.restoreBookmark('Overview');quality.text(0,2,'Interval',{fontSize:12});
+const importedQuality=figure();
+const qualityBuffers=new Map(Object.entries(qualityResult.buffers).map(([id,value])=>{const bytes=Buffer.from(value,'base64');return [id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)];}));
+importedQuality.applySnapshot(qualityResult.snapshot,qualityBuffers);
+assert.equal(qualityResult.snapshot.figure.protocolVersion,6);
+assert.deepEqual(normalize(importedQuality),normalize(quality),'Python and JavaScript bands, inspection and presentation must agree');
+const downgradedQuality=structuredClone(qualityResult.snapshot);downgradedQuality.figure.protocolVersion=5;
+assert.throws(()=>importedQuality.applySnapshot(downgradedQuality,qualityBuffers),/version 6/);
+assert.deepEqual(normalize(importedQuality),normalize(quality),'Rejected imports must leave protocol 6 scenes intact');
+quality.close();importedQuality.close();
+const streamingCode=`import json,base64
+from array import array
+import vesora as vs
+fig=vs.figure(title='Streaming parity',width=800,height=500)
+layers=[fig.plot(array('d',range(16)),array('f',(n*(series+1) for n in range(16))),label='Curve '+str(series)).enable_streaming(max_points=32) for series in range(3)]
+for batch in range(6):
+    points=range(16+batch*10,26+batch*10)
+    for series,layer in enumerate(layers):
+        layer.append_data(x=array('d',points),y=array('f',(n*(series+1) for n in points)))
+s=fig.snapshot()
+print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']},'states':[{k:v for k,v in fig._streams[layer.id].items() if k!='streamId'} for layer in layers]}))
+fig.close()
+`;
+const streamingResult=JSON.parse(execFileSync(python,['-X','utf8','-c',streamingCode],{env:{...process.env,PYTHONPATH:resolve('python')},encoding:'utf8'}));
+const streaming=figure({title:'Streaming parity',width:800,height:500});
+const streamLayers=Array.from({length:3},(_,series)=>streaming.plot(Float64Array.from({length:16},(_,n)=>n),Float32Array.from({length:16},(_,n)=>n*(series+1)),{label:`Curve ${series}`}).enableStreaming({maxPoints:32}));
+for(let batch=0;batch<6;batch++)await Promise.all(streamLayers.map((layer,series)=>layer.appendData({x:Float64Array.from({length:10},(_,n)=>16+batch*10+n),y:Float32Array.from({length:10},(_,n)=>(16+batch*10+n)*(series+1))})));
+const importedStream=figure();
+importedStream.applySnapshot(streamingResult.snapshot,new Map(Object.entries(streamingResult.buffers).map(([id,value])=>{const bytes=Buffer.from(value,'base64');return [id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)];})));
+assert.deepEqual(normalize(importedStream),normalize(streaming),'Retained streaming scenes must agree');
+assert.deepEqual(streamLayers.map(layer=>{const {streamId,...state}=streaming.getStreamingState(layer.id);return state;}),streamingResult.states,'Stream state must agree across languages, excluding generated epoch IDs');
+for(let i=0;i<streamLayers.length;i++)for(const channel of ['x','y']){
+  const pythonSource=streamingResult.snapshot.figure.layers[i].data[channel],entry=streaming.registry.get(streamLayers[i].spec.data[channel]);
+  assert.equal(Buffer.from(entry.values.buffer,entry.values.byteOffset,entry.values.byteLength).toString('base64'),streamingResult.buffers[pythonSource],`Retained ${channel} bytes differ for curve ${i}`);
+}
+streaming.close();importedStream.close();
+console.log('Python and JavaScript produce equivalent v1–v6 scenes, retained three-curve streaming buffers/state, bands, inspection, presentation, linked groups, statistical defaults and package versions.');

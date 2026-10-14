@@ -20,7 +20,15 @@ Open the URL Vite prints. To build the standalone application:
 npm run build:example
 ```
 
-The output is `examples/react-saas/dist`. Charts require WebGL2. The package is a source-checkout example for the v0.6 developer preview; npm registry publication is a separate step.
+The output is `examples/react-saas/dist`. Charts require WebGL2. The package is a source-checkout example for the v0.8 developer preview; npm registry publication is a separate step.
+
+## Run live training telemetry
+
+Open the same Vite URL with `?demo=streaming`. The [streaming example](src/StreamingDemo.tsx) produces three synthetic loss curves in batches of 100 rows, keeping the latest 2,000 rows per model. Each batch awaits `appendRows` before producing the next batch. Starting a drag, zoom or sample inspection pauses the producer so the inspected rows remain available. Resume restores the current data window and continues updates; Restart stream replaces `data` and starts a new sequence.
+
+The chart uses `useRef<VesoraChartHandle<Sample>>(null)`, `streaming={{maxPoints: 2000}}` and `await chart.current.appendRows(rows)`. Keep the `data` array reference stable during appends: a new reference replaces the retained dataset. Theme changes and legend controls preserve the retained rows. Streaming supports numeric/time line and scatter charts without bands. The source contains the complete typed row definition and producer lifecycle, including StrictMode cleanup.
+
+PNG exports capture the displayed figure at the requested dimensions. HTML exports embed the retained window and matching viewer; they do not restart the live producer. These curves are illustrative synthetic values, not measured model results or a throughput benchmark.
 
 ## Explore the signals
 

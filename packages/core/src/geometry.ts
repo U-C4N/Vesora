@@ -1,7 +1,7 @@
 import type {DataRegistry} from './data';
 import {normalize, extent} from './scales';
 import {parseColor, colorMap} from './color';
-import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, ViewSpec, Domain} from './types';
+import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, BandResult, ViewSpec, Domain} from './types';
 import type {Geometry} from './renderer';
 
 export function gridEdges(values: NumericArray, scale:import('./types').ScaleKind): Float64Array {
@@ -54,8 +54,8 @@ function clipLine(ax:number,ay:number,bx:number,by:number):[number,number,number
   const coordinates=[...endpoint(lowSide,ax,ay),...endpoint(highSide,bx,by)].map(value=>Math.max(-1,Math.min(1,value)));
   return [...coordinates,low,high] as [number,number,number,number,number,number];
 }
-export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bounds, zDomain:Domain, view:ViewSpec, width:number,height:number,plan?:PointPlan|LineResult):Geometry {
-  const x=registry.get(layer.data.x).values,y=registry.get(layer.data.y).values;
+export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bounds, zDomain:Domain, view:ViewSpec, width:number,height:number,plan?:PointPlan|LineResult|BandResult):Geometry {
+  const x=registry.get(layer.data.x).values,y=registry.get(layer.data.y??layer.data.lower).values;
   const z=layer.data.z?registry.get(layer.data.z).values:undefined;
   const scalar=layer.data.color?registry.get(layer.data.color).values:undefined;
   const base=parseColor(layer.style.color,layer.style.opacity??1);
@@ -77,7 +77,28 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
   const quad=(x0:number,y0:number,x1:number,y1:number,rgba:number[])=>{
     push(x0,y0,0,rgba);push(x1,y0,0,rgba);push(x1,y1,0,rgba);push(x0,y0,0,rgba);push(x1,y1,0,rgba);push(x0,y1,0,rgba);
   };
-  if(plan?.kind==='density'){
+  if(layer.kind==='band'&&plan?.kind==='band'){
+    const upper=registry.get(layer.data.upper).values;
+    for(const segment of plan.segments)for(let j=1;j<segment.length;j++){
+      const a=segment[j-1],b=segment[j];
+      let polygon:number[][]=[[nX(x[a]),nY(y[a])],[nX(x[b]),nY(y[b])],[nX(x[b]),nY(upper[b])],[nX(x[a]),nY(upper[a])]];
+      if(polygon.some(p=>!p.every(Number.isFinite)))continue;
+      // Clip the paired envelope as one polygon before converting to float32.
+      for(const [axis,edge,sign] of [[0,-1,1],[0,1,-1],[1,-1,1],[1,1,-1]]){
+        const next:number[][]=[];
+        for(let k=0;k<polygon.length;k++){
+          const from=polygon[k],to=polygon[(k+1)%polygon.length],inside=(from[axis]-edge)*sign>=0,nextInside=(to[axis]-edge)*sign>=0;
+          if(inside)next.push(from);
+          if(inside!==nextInside){
+            const other=1-axis,magnitude=Math.max(1,...from.map(Math.abs),...to.map(Math.abs));
+            const slope=(to[other]/magnitude-from[other]/magnitude)/(to[axis]/magnitude-from[axis]/magnitude);
+            const point=[0,0];point[axis]=edge;point[other]=(from[other]/magnitude-from[axis]/magnitude*slope)*magnitude+edge*slope;next.push(point);
+          }
+        }polygon=next;if(!polygon.length)break;
+      }
+      for(let k=1;k+1<polygon.length;k++)for(const p of [polygon[0],polygon[k],polygon[k+1]])push(Math.max(-1,Math.min(1,p[0])),Math.max(-1,Math.min(1,p[1])),0,base);
+    }
+  }else if(plan?.kind==='density'){
     const domain:Domain=layer.style.colorDomain??[0,Math.max(1,plan.max)];
     for(let r=0;r<plan.rows;r++)for(let c=0;c<plan.columns;c++){
       const count=plan.counts[r*plan.columns+c];if(!count)continue;
@@ -123,5 +144,5 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
       push(a,b,c,color(scalar?.[i]));
     }
   }
-  return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:plan?.kind==='density'||layer.kind==='line'||layer.kind==='heatmap'||layer.kind==='surface'?'triangles':'points',size:layer.style.size??5};
+  return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:plan?.kind==='density'||layer.kind==='band'||layer.kind==='line'||layer.kind==='heatmap'||layer.kind==='surface'?'triangles':'points',size:layer.style.size??5};
 }

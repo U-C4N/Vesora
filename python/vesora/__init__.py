@@ -1,10 +1,10 @@
 """Vesora: Python data APIs backed by one shared TypeScript visualization engine."""
 from __future__ import annotations
 from typing import Any
-from .figure import Figure, Layer, Panel, Annotation, SelectionLink, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION
+from .figure import Figure, Layer, Panel, Annotation, SelectionLink, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION
 
-__version__ = "0.6.0"
-__all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "figure", "subplots", "plot", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
+__version__ = "0.8.0"
+__all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "figure", "subplots", "plot", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
 _last_figure: Figure | None = None
 
 
@@ -32,6 +32,10 @@ def _convenience(method: str, *args: Any, **options: Any) -> Layer:
 
 def plot(*args: Any, **options: Any) -> Layer:
     return _convenience("plot", *args, **options)
+
+
+def fill_between(x: Any, lower: Any, upper: Any, **options: Any) -> Layer:
+    return _convenience("fill_between", x, lower, upper, **options)
 
 
 def scatter(*args: Any, **options: Any) -> Layer:

@@ -12,7 +12,10 @@ export const DARK_THEME: Readonly<ThemeTokens> = Object.freeze({...LIGHT_THEME,
   tooltipBackground:'#e2e8f0',tooltipForeground:'#0f172a',selection:'#fb923c',error:'#f87171',
 });
 const colorKeys=['background','foreground','muted','grid','axis','tooltipBackground','tooltipForeground','selection','error'] as const;
-const themeKeys=new Set([...colorKeys,'fontFamily','fontSize','palette']);
+const requiredThemeKeys=new Set([...colorKeys,'fontFamily','fontSize','palette']);
+export const TYPOGRAPHY_KEYS=['titleFontSize','labelFontSize','tickFontSize','legendFontSize'] as const;
+const themeKeys=new Set([...requiredThemeKeys,...TYPOGRAPHY_KEYS]);
+export function hasTypography(theme:ThemeTokens):boolean{return TYPOGRAPHY_KEYS.some(key=>theme[key]!==undefined);}
 const hex=(color:string)=>'#'+parseColor(color).slice(0,3).map(value=>Math.round(value*255).toString(16).padStart(2,'0')).join('');
 
 /** Resolve presets and isolate caller-owned palette storage before committing. */
@@ -27,12 +30,13 @@ export function resolveTheme(input:ThemeInput='light'):ThemeTokens {
   for(const key of colorKeys){if(typeof theme[key]!=='string')throw new TypeError(`Theme ${key} must be a color`);theme[key]=hex(theme[key]);}
   if(typeof theme.fontFamily!=='string'||!theme.fontFamily.trim()||theme.fontFamily.length>200||/[\u0000-\u001f\u007f]/.test(theme.fontFamily))throw new TypeError('Theme fontFamily must be nonempty text of at most 200 characters');
   if(!Number.isFinite(theme.fontSize)||theme.fontSize<8||theme.fontSize>32)throw new RangeError('Theme fontSize must be between 8 and 32');
+  for(const key of TYPOGRAPHY_KEYS)if(theme[key]!==undefined&&(!Number.isFinite(theme[key])||theme[key]!<8||theme[key]!>32))throw new RangeError(`Theme ${key} must be between 8 and 32`);
   if(!Array.isArray(theme.palette)||theme.palette.length<1||theme.palette.length>32)throw new RangeError('Theme palette must contain 1 to 32 colors');
   theme.palette=theme.palette.map(color=>{if(typeof color!=='string')throw new TypeError('Palette entries must be colors');return hex(color);});
   return theme;
 }
 export function validateTheme(theme:ThemeTokens):void {
-  if(!theme||Object.keys(theme).length!==themeKeys.size||[...themeKeys].some(key=>!Object.hasOwn(theme,key)))throw new TypeError('Serialized themes require every theme token');
+  if(!theme||[...requiredThemeKeys].some(key=>!Object.hasOwn(theme,key)))throw new TypeError('Serialized themes require every base theme token');
   resolveTheme(theme);
 }
 

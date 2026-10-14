@@ -57,6 +57,52 @@ export function decodeData(descriptor: DataDescriptor, buffer: ArrayBuffer): Num
   return new Constructor(copy);
 }
 
+/** Immutable owned chunks share retained prefixes without copying a whole window.
+ * Materialization happens only for consumers that actually need an array. */
+export function chunkEntry(descriptor: DataDescriptor, chunks: readonly NumericArray[]): DataEntry {
+  validateDescriptor(descriptor);
+  const Constructor = constructors[descriptor.dtype];
+  if (descriptor.shape.length !== 1 || chunks.some(chunk => chunk.constructor !== Constructor)
+    || chunks.reduce((n, chunk) => n + chunk.length, 0) !== descriptor.shape[0]) throw new RangeError('Chunks do not match their data descriptor');
+  const owned = Object.freeze([...chunks]);
+  let materialized: NumericArray | undefined;
+  return {descriptor, chunks: owned, get values() {
+    if (!materialized) {
+      if (owned.length === 1) materialized = owned[0];
+      else {
+        materialized = new Constructor(descriptor.shape[0]);
+        let offset = 0;
+        for (const chunk of owned) {materialized.set(chunk, offset); offset += chunk.length;}
+      }
+    }
+    return materialized;
+  }};
+}
+
+/** Copy a partial first chunk so evicted buffers cannot keep a large batch alive. */
+export function retainChunks(chunks: readonly NumericArray[], maxPoints: number): NumericArray[] {
+  let skip = Math.max(0, chunks.reduce((n, chunk) => n + chunk.length, 0) - maxPoints);
+  const retained: NumericArray[] = [];
+  for (const chunk of chunks) {
+    if (skip >= chunk.length) {skip -= chunk.length; continue;}
+    retained.push(skip ? chunk.slice(skip) as NumericArray : chunk); skip = 0;
+  }
+  return retained;
+}
+
+/** Ordinary sequences may be appended to a typed stream only without narrowing. */
+export function streamValues(input: ArrayLike<number>, dtype: DataDescriptor['dtype']): NumericArray {
+  const values = toNumericArray(input), Constructor = constructors[dtype];
+  if (ArrayBuffer.isView(input) && values.constructor !== Constructor) throw new TypeError('Streaming append must preserve the source dtype');
+  if (values.constructor === Constructor) return values;
+  const converted = new Constructor(values.length);
+  for (let i = 0; i < values.length; i++) {
+    converted[i] = values[i];
+    if (!Object.is(converted[i], values[i]) && !(Number.isNaN(converted[i]) && Number.isNaN(values[i]))) throw new RangeError('Append values cannot be represented exactly in the source dtype');
+  }
+  return converted;
+}
+
 export class DataRegistry {
   readonly store: DataStore = new Map();
   get size(): number {return this.store.size;}

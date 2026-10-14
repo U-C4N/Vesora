@@ -35,10 +35,13 @@ test('typed hover and click preserve row identity, coordinates and clear on leav
     fig.on('hover',value=>events.push({event:'hover',value}));fig.on('click',value=>events.push({event:'click',value}));
     fig.mount(document.querySelector('#chart'));await fig.ready();
   });
-  await page.mouse.click(320,153); // Center of the single-panel data rectangle.
+  const point=await page.evaluate(()=>{const r=fig.view.panels[0].rect,o=fig.view.overlay.getBoundingClientRect();return {x:o.left+r.left+r.width/2,y:o.top+r.top+r.height/2,localX:r.left+r.width/2,localY:r.top+r.height/2,leaveX:o.right-1,leaveY:o.bottom-1};});
+  await page.mouse.click(point.x,point.y);
   const click=await page.evaluate(()=>events.find(item=>item.event==='click')?.value);
-  expect(click).toMatchObject({kind:'point',index:0,x:1,y:1,pointerPosition:{clientX:320,clientY:153,x:320,y:153}});
-  expect(click.layerId).toBe(await page.evaluate(()=>layer.id));await page.mouse.move(639,359);
+  expect(click).toMatchObject({kind:'point',index:0,x:1,y:1});
+  expect(click.pointerPosition.clientX).toBeCloseTo(point.x,4);expect(click.pointerPosition.clientY).toBeCloseTo(point.y,4);
+  expect(click.pointerPosition.x).toBeCloseTo(point.localX,4);expect(click.pointerPosition.y).toBeCloseTo(point.localY,4);
+  expect(click.layerId).toBe(await page.evaluate(()=>layer.id));await page.mouse.move(point.leaveX,point.leaveY);
   await expect.poll(()=>page.evaluate(()=>events.at(-1)?.value)).toBe(null);expect(errors).toEqual([]);await page.evaluate(()=>fig.close());
 });
 
@@ -98,9 +101,10 @@ for(const kind of ['bar','boxplot'])test(`horizontal ${kind} native tooltip form
     if(kind==='bar')fig.barh(['A'],[500]);else fig.boxplot([[100,200,300,400,500]],{labels:['A'],orientation:'horizontal'});
     fig.on('hover',event=>hoverEvents.push(event));fig.mount(document.querySelector('#chart'));await fig.ready();texts.length=0;
   },kind);
-  await page.mouse.move(kind==='bar'?203:226,153);
+  const point=await page.evaluate(value=>{const panel=fig.view.panels[0],r=panel.rect,o=fig.view.overlay.getBoundingClientRect();return {x:o.left+r.left+(value-panel.bounds.x[0])/(panel.bounds.x[1]-panel.bounds.x[0])*r.width,y:o.top+r.top+r.height/2};},kind==='bar'?250:300);
+  await page.mouse.move(point.x,point.y);
   const output=await page.evaluate(()=>({event:hoverEvents.filter(Boolean).at(-1),tooltip:texts.findLast(text=>text.includes(' · '))}));
-  expect(output.event).toMatchObject({position:0,index:0});expect(output.event.pointerPosition.clientY).toBe(153);
+  expect(output.event).toMatchObject({position:0,index:0});expect(output.event.pointerPosition.clientY).toBeCloseTo(point.y,4);
   if(kind==='bar'){
     expect(output.event).toMatchObject({kind:'bar',category:'A',value:500,start:0,end:500,orientation:'horizontal'});
     expect(output.tooltip).toContain('value=$500.00');expect(output.tooltip).toContain('start=$0.00');

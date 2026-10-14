@@ -3,12 +3,14 @@ export const EXTENDED_PROTOCOL_VERSION = 2;
 export const STATISTICS_PROTOCOL_VERSION = 3;
 export const LINKED_PROTOCOL_VERSION = 4;
 export const PRESENTATION_PROTOCOL_VERSION = 5;
+export const QUALITY_PROTOCOL_VERSION = 6;
 export type NumericArray = Float64Array | Float32Array | Int32Array | Uint32Array | Int16Array | Uint16Array | Int8Array | Uint8Array;
 export type ScaleKind = "linear" | "log" | "time";
 export interface ThemeTokens {
   background: string; foreground: string; muted: string; grid: string; axis: string;
   tooltipBackground: string; tooltipForeground: string; selection: string; error: string;
   fontFamily: string; fontSize: number; palette: string[];
+  titleFontSize?: number; labelFontSize?: number; tickFontSize?: number; legendFontSize?: number;
 }
 export type ThemeInput = 'light' | 'dark' | Partial<ThemeTokens>;
 export type AxisFormat =
@@ -17,6 +19,9 @@ export type AxisFormat =
   | {kind: 'date'; locale?: string; timeZone?: string; options?: Intl.DateTimeFormatOptions};
 export interface PresentationOptions {tooltip?: boolean; legend?: boolean}
 export interface PointerPosition {x: number; y: number; clientX: number; clientY: number}
+export type HoverMode = 'nearest' | 'x';
+export interface XHoverItem {layerId: string; index: number; x: number; y: number; streamId?: string; sequence?: number}
+export interface XHoverEvent {cursorX: number; panelId?: string; pointerPosition: PointerPosition; items: XHoverItem[]}
 export interface HoverEvent {
   kind: 'point' | 'bar' | 'bin' | 'box' | 'outlier' | 'density' | 'cell';
   layerId: string; panelId?: string; index?: number; sourceIndex?: number;
@@ -28,13 +33,14 @@ export interface ViewChangeEvent extends Omit<ViewSpec,'xDomain'|'yDomain'|'zDom
   panelId?: string; panelViews?: Record<string, Omit<ViewSpec,'xDomain'|'yDomain'|'zDomain'> & {xDomain:Domain|null;yDomain:Domain|null;zDomain:Domain|null}>;
 }
 export interface FigureEventMap {
-  selection: Selection; hover: HoverEvent | null; click: HoverEvent;
+  selection: Selection; hover: HoverEvent | null; click: HoverEvent; xhover: XHoverEvent | null;
   viewchange: ViewChangeEvent;
   representation: Array<RepresentationInfo & {layerId: string; panelId?: string}>;
-  error: {message: string};
+  error: {message: string; code?: string; phase?: string; recoverable?: boolean};
+  runtimechange: {status: 'ready' | 'recovering' | 'fallback' | 'failed'};
 }
 export type Domain = [number, number];
-export type LayerKind = "line" | "scatter" | "heatmap" | "surface" | "scatter3d" | "hist" | "bar" | "boxplot";
+export type LayerKind = "line" | "scatter" | "heatmap" | "surface" | "scatter3d" | "hist" | "bar" | "boxplot" | "band";
 export type Orientation = 'vertical' | 'horizontal';
 export type BarMode = 'group' | 'stack' | 'overlay';
 export interface HistogramSpecOptions {bins: number | number[]; range?: Domain; density: boolean; cumulative: boolean}
@@ -50,7 +56,10 @@ export interface LayerStyle {
   color?: string; size?: number; width?: number; opacity?: number; label?: string;
   colormap?: "viridis" | "magma"; representation?: RepresentationMode;
   colorDomain?: Domain;
+  colorbarLabel?: string;
 }
+export type FillBetweenOptions = Pick<LayerStyle, 'color' | 'opacity' | 'label'>;
+export interface ExportPNGOptions {width?: number; height?: number; scale?: number}
 export interface LayerSpec {
   id: string; kind: LayerKind; data: Record<string, string>; style: LayerStyle; visible: boolean;
   panelId?: string;
@@ -89,6 +98,7 @@ export interface FigureSpec {
   barModes?: Record<string, BarMode>;
   selectionLink?: SelectionLinkSpec;
   theme?: ThemeTokens;
+  hoverMode?: HoverMode;
 }
 /** Observation identity is the fixed, explicitly aligned source row ordinal. */
 export interface SelectionLinkSpec {
@@ -102,7 +112,7 @@ export interface LinkedSelection {
   count: number; total: number; fraction: number; indices: number[]; truncated: boolean;
 }
 export interface Snapshot {figure: FigureSpec; sources: DataDescriptor[]}
-export interface DataEntry {descriptor: DataDescriptor; values: NumericArray}
+export interface DataEntry {descriptor: DataDescriptor; readonly values: NumericArray; readonly chunks?: readonly NumericArray[]}
 export type DataStore = Map<string, DataEntry>;
 export interface Bounds {x: Domain; y: Domain}
 export interface Query {
@@ -110,19 +120,25 @@ export interface Query {
   pointBudget: number; mode: RepresentationMode; previous?: "points" | "density";
 }
 export interface RepresentationInfo {
-  kind: "points" | "density" | "line" | "grid" | "surface" | "hist" | "bar" | "boxplot";
+  kind: "points" | "density" | "line" | "grid" | "surface" | "hist" | "bar" | "boxplot" | "band";
   total: number; visible: number; rendered: number; exact: boolean; method: string;
   valid?: number; omitted?: number; rangeExcluded?: number;
 }
 export interface PointsResult {kind: "points"; indices: Uint32Array; info: RepresentationInfo}
 export interface DensityResult {kind: "density"; counts: Uint32Array; columns: number; rows: number; max: number; bounds: Bounds; info: RepresentationInfo}
 export interface LineResult {kind: "line"; segments: Uint32Array[]; info: RepresentationInfo}
+export interface BandResult {kind: "band"; segments: Uint32Array[]; info: RepresentationInfo}
 export type PointPlan = PointsResult | DensityResult;
 export type Selection =
   | LinkedSelection
-  | {kind: "points"; layerId: string; panelId?: string; indices: number[]; count: number; truncated: boolean}
-  | {kind: "density"; layerId: string; panelId?: string; bounds: Bounds; count: number}
+  | {kind: "points"; layerId: string; panelId?: string; indices: number[]; count: number; truncated: boolean; streamId?: string; revision?: number; sequences?: number[]}
+  | {kind: "density"; layerId: string; panelId?: string; bounds: Bounds; count: number; streamId?: string; revision?: number}
   | {kind: "bars" | "bins" | "boxes"; layerId: string; panelId?: string; indices: number[]; count: number; truncated: boolean};
 export interface BackendCapabilities {name: string; supports3d: boolean; rasterExport: boolean; vectorExport: boolean}
-export interface FigureOptions {title?: string; width?: number; height?: number; kind?: "2d" | "3d"; theme?: ThemeInput}
+export interface StreamingOptions {maxPoints: number}
+/** Runtime metadata is deliberately excluded from static scene serialization. */
+export interface StreamState {streamId: string; maxPoints: number; nextSequence: number; revision: number; retained: number; evicted: number}
+export interface ReadyOptions {signal?: AbortSignal; timeoutMs?: number}
+export interface RuntimeOptions {maxCacheBytes?: number; maxSourceBytes?: number; maxGeometryBytes?: number; workerStartupTimeoutMs?: number; workerStallTimeoutMs?: number}
+export interface FigureOptions {title?: string; width?: number; height?: number; kind?: "2d" | "3d"; theme?: ThemeInput; runtime?: RuntimeOptions}
 export interface SubplotsOptions extends Omit<FigureOptions, 'kind'> {rows: number; cols: number; shareX?: boolean; shareY?: boolean}

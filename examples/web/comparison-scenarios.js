@@ -5,6 +5,9 @@ function signalComparison(fig) {
   const measured = fitted.map((v,i)=>v+residual[i]);
   const top=fig.panel(0,0), bottom=fig.panel(1,0);
   top.setTitle('Measurement and fit');
+  // User-supplied synthetic bounds, not an estimated confidence interval.
+  top.fillBetween(x,fitted.map(v=>v-.15),fitted.map(v=>v+.15),
+    {label:'Illustrative ±0.15 bounds',color:'#d48c43',opacity:.18});
   top.plot(x,measured,{label:'Measurement',color:'#137f8b'});
   top.plot(x,fitted,{label:'Fit',color:'#d48c43'});
   top.setView({yLabel:'Amplitude'});
@@ -13,6 +16,7 @@ function signalComparison(fig) {
   bottom.setView({xLabel:'Time (s)',yLabel:'Residual'});
   bottom.axhline(0,{color:'#64748b'});
   top.text(2,1.05,'Shared time axis',{fontSize:12});
+  fig.setHoverMode('x');
   fig.bookmark('Overview');
   bottom.setView({xDomain:[2,4]});
   fig.bookmark('Two-second detail',{note:'Both panels use the same time interval.'});
@@ -41,7 +45,7 @@ function heatmapComparison(fig) {
     const phase=(row*2+col)*Math.PI/2,panel=fig.panel(row,col);
     const z=Array.from(axis,y=>Array.from(axis,x=>Math.sin(x+phase)*Math.cos(y)));
     panel.setTitle(`Phase ${row*2+col}`);
-    panel.heatmap(axis,axis,z,{colormap:'viridis',colorDomain:[-1,1]});
+    panel.heatmap(axis,axis,z,{colormap:'viridis',colorDomain:[-1,1],colorbarLabel:'Field amplitude'});
     panel.setView({xLabel:'x',yLabel:'y'});
     panel.axvline(0,{color:'#ffffff',width:1});
   }
@@ -61,8 +65,8 @@ const heatmapLayout={rows:2,cols:2,shareX:true,shareY:true};
 
 export const comparisonExamples=[
   {id:'signal-comparison',dimension:'2d',title:'Read the signal and its residual',type:'PANELS / SHARED TIME AXIS',
-    description:'A synthetic measurement, fitted signal and residual with one shared time axis.',
-    tags:['Two panels','Shared x','Annotations'],insight:'Zoom either panel to inspect the same interval in both.',
+    description:'A synthetic measurement, fitted signal and residual with a shared time axis and illustrative ±0.15 bounds.',
+    tags:['Two panels','Shared x hover','Illustrative band'],insight:'Hover to compare source samples in the active panel; zoom either panel to share its time interval. The supplied bounds are illustrative, not an estimated confidence interval.',
     layout:signalLayout,create:signalComparison,javascript:javascript(signalComparison,signalLayout),
     python:python(`fig = vs.subplots(2, 1, sharex=True, height=640)
 x = [i/100 for i in range(1200)]
@@ -70,6 +74,9 @@ fitted = [math.sin(t) for t in x]
 residual = [.12*math.sin(17*t) for t in x]
 top, bottom = fig.panel(0, 0), fig.panel(1, 0)
 top.set_title("Measurement and fit")
+# User-supplied synthetic bounds, not an estimated confidence interval.
+top.fill_between(x, [v-.15 for v in fitted], [v+.15 for v in fitted],
+                 label="Illustrative ±0.15 bounds", color="#d48c43", opacity=.18)
 top.plot(x, [v+r for v,r in zip(fitted,residual)], label="Measurement", color="#137f8b")
 top.plot(x, fitted, label="Fit", color="#d48c43")
 top.set_axes(ylabel="Amplitude")
@@ -78,6 +85,7 @@ bottom.plot(x, residual, label="Measurement − fit", color="#3569c8")
 bottom.set_axes(xlabel="Time (s)", ylabel="Residual")
 bottom.axhline(0, color="#64748b")
 top.text(2, 1.05, "Shared time axis", font_size=12)
+fig.set_hover_mode("x")
 fig.bookmark("Overview")
 bottom.set_axes(xlim=(2, 4))
 fig.bookmark("Two-second detail", note="Both panels use the same time interval.")
@@ -112,7 +120,7 @@ for row in range(2):
         panel = fig.panel(row, col)
         panel.set_title(f"Phase {row*2+col}")
         panel.heatmap(axis, axis, [[math.sin(x+phase)*math.cos(y) for x in axis] for y in axis],
-                      colormap="viridis", color_domain=(-1, 1))
+                      colormap="viridis", color_domain=(-1, 1), colorbar_label="Field amplitude")
         panel.set_axes(xlabel="x", ylabel="y")
         panel.axvline(0, color="#ffffff", width=1)
 fig.bookmark("Overview")

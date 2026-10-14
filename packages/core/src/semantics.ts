@@ -1,5 +1,6 @@
 import {toNumericArray} from './data';
 import {validateDomain} from './scales';
+import {validateInspectionX} from './inspection';
 import type {BarSpecOptions, BoxplotSpecOptions, FigureSpec, HistogramSpecOptions, LayerKind, LayerSpec, NumericArray, StatisticalOptions, ViewSpec} from './types';
 
 export type AxisSeries = ArrayLike<number> | readonly string[];
@@ -102,7 +103,9 @@ export function validateStatisticalData(layer: LayerSpec, values: Record<string,
 }
 
 /** Validate axis identity and cross-layer layout against a fully staged update. */
-export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Record<string,NumericArray>): void {
+export interface SemanticChecks {inspection(layer:LayerSpec,values:NumericArray):void;time(layer:LayerSpec,axis:'x'|'y',values:NumericArray):void}
+export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Record<string,NumericArray>, checks?:SemanticChecks): void {
+  if(spec.hoverMode!==undefined&&!['nearest','x'].includes(spec.hoverMode))throw new TypeError('Hover mode must be nearest or x');
   const panels = spec.panels?.map(panel=>({id:panel.id,view:panel.id === 'main' ? spec.view : panel.view!})) ?? [{id:'main',view:spec.view}];
   const keys = new Set(panels.flatMap(panel=>(['x','y'] as const).map(axis=>categoryKey(spec,panel.id,axis))));
   if (spec.categories !== undefined) {
@@ -120,7 +123,14 @@ export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Rec
     const bars = layers.filter(layer=>layer.kind==='bar'), mode = spec.barModes?.[panel.id] ?? 'group';
     for (const layer of layers) {
       const values=read(layer);
-      for(const axis of ['x','y'] as const)if((panel.view[`${axis}Scale`]==='time'||panel.view[`${axis}Format`]?.kind==='date')&&values[axis]?.some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be epoch milliseconds within the JavaScript Date range');
+      if(layer.kind==='band'&&(panel.view.kind!=='2d'||panel.view.yScale==='time'||panel.view.yFormat?.kind==='date'))throw new Error('Bands require 2D numeric y axes; x may use time');
+      if(spec.hoverMode==='x'&&layer.kind==='line'&&layer.visible){
+        if(panel.view.kind!=='2d'||layer.categorical?.x||layer.categorical?.y)throw new Error('X inspection requires numeric 2D line coordinates');
+        if(checks)checks.inspection(layer,values.x);else validateInspectionX(values.x);
+      }
+      for(const axis of ['x','y'] as const)if((panel.view[`${axis}Scale`]==='time'||panel.view[`${axis}Format`]?.kind==='date')&&values[axis]){
+        if(checks)checks.time(layer,axis,values[axis]);else if(values[axis].some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be epoch milliseconds within the JavaScript Date range');
+      }
       if (layer.categorical !== undefined) {
         if (!layer.categorical || typeof layer.categorical !== 'object' || Array.isArray(layer.categorical) || Object.entries(layer.categorical).some(([axis,value])=>!['x','y'].includes(axis)||value!==true)) throw new Error('Invalid categorical channel metadata');
       }

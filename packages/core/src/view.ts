@@ -1,5 +1,14 @@
-import type {Figure} from './figure';
+import {Figure} from './figure';
+import {DataRegistry} from './data';
+import {validateExportPNGOptions,validateExportRaster} from './export-options';
+import {buildXInspectionIndex,nearestWithinRun} from './inspection';
+import type {XInspectionIndex} from './inspection';
+import type {BandResult,ExportPNGOptions,XHoverEvent,ReadyOptions,Snapshot,NumericArray} from './types';
 import {QueryScheduler} from './scheduler';
+import {runSteps} from './planning';
+import {hoverIndexSteps,hoverCandidates} from './interaction';
+import type {HoverIndex} from './interaction';
+import {entryExtent} from './source-metadata';
 import type {LinkedResult} from './linked';
 import type {SelectionLinkSpec,LinkedSelection} from './types';
 import {extent,normalize,denormalize,ticks,formatTick} from './scales';
@@ -16,10 +25,14 @@ import type {Geometry,PlotRect} from './renderer';
 import type {Bounds,Domain,LayerSpec,PointPlan,LineResult,Query,RepresentationInfo,Selection,ViewSpec} from './types';
 
 type PanelInfo=RepresentationInfo&{layerId:string;panelId?:string};
+type AxisTick={value:number;label:string;position:number};
+type RenderTarget={width:number;height:number;scale:number};
 interface PanelFrame {
   id:string;title:string;view:ViewSpec;layers:LayerSpec[];
   cell:PlotRect;rect:PlotRect;bounds:Bounds;zDomain:Domain;legendRows:number;statusHeight:number;
   colorLayer?:LayerSpec;colorDomain?:Domain;colorDensity?:boolean;
+  reservedColor:boolean;reservedDensity:boolean;
+  xTicks:AxisTick[];yTicks:AxisTick[];xOffset:number;yOffset:number;legendTop:number;labelY:number;
 }
 export class FigureView {
   private root:HTMLDivElement;
@@ -27,11 +40,11 @@ export class FigureView {
   private overlay:HTMLCanvasElement;
   private renderer:WebGLRenderer;
   // One scheduler/worker and one GPU context are shared by every panel.
-  private scheduler=new QueryScheduler();
+  private scheduler:QueryScheduler;
   private observer:ResizeObserver;
   private width=800;private height=520;private dpr=1;
   private panels:PanelFrame[]=[];
-  private plans=new Map<string,PointPlan|LineResult>();
+  private plans=new Map<string,PointPlan|LineResult|BandResult>();
   private geometries=new Map<string,{key:string;geometry:Geometry}>();
   private extents=new Map<string,{key:string;domain?:Domain}>();
   private statistics=new Map<string,PreparedStatistics>();
@@ -46,20 +59,44 @@ export class FigureView {
   private clearSelectionButton:HTMLButtonElement;
   private selectionStatus:HTMLSpanElement;
   private generation=0;private completed=0;private raf=0;private disposed=false;
+  private requestedRevision=0;private committedRevision=0;private frameRevision=0;private rendering=false;
+  private renderingFigure?:Figure;private committedFigure?:Figure;
+  private overlaySource?:Figure;
+  private lastFrameMs=0;private frameStarted=0;private completedFrames=0;
+  private committedGeometryBytes=0;
+  private hoverRaf=0;private pendingHover?:[number,number];private selectionSequence=0;
   private failure?:Error;
-  private waiters:Array<{resolve:()=>void;reject:(error:Error)=>void}>=[];
+  private waiters:Array<{revision:number;resolve:()=>void;reject:(error:Error)=>void}>=[];
   private cleanup:Array<()=>void>=[];
   private drag?:{pointerId:number;panelId:string;x:number;y:number;lastX:number;lastY:number;select:boolean;pan:boolean;bounds:Bounds;rect:PlotRect;moved?:boolean};
   private box?:[number,number,number,number];
   private tooltip?:{x:number;y:number;text:string};
   private hoverHit?:HoverEvent;
+  private xHover?:XHoverEvent;
+  private xPinned=false;
+  private inspection=new Map<string,{key:string;index:XInspectionIndex}>();
+  private hoverIndices=new Map<string,{plan:PointPlan|LineResult;index?:HoverIndex}>();
+  private lastHover?:[number,number];
+  private exportQueue:Promise<unknown>=Promise.resolve();
+  private exportReservations=new Set<AbortController>();
   private pointerPosition:PointerPosition={x:0,y:0,clientX:0,clientY:0};
   private fontKey='';
   private fontReady:Promise<void>=Promise.resolve();
-  private get theme():ThemeTokens{return this.figure.spec.theme??LIGHT_THEME as ThemeTokens;}
-  constructor(private figure:Figure,container:HTMLElement){
+  /** A frame and its inspection callbacks must read the same immutable source versions. */
+  private get source():Figure{return this.overlaySource??this.renderingFigure??this.committedFigure??this.figure;}
+  private get displayedSource():Figure{return this.committedFigure??this.figure;}
+  private captureFigure():Figure{
+    const captured=Object.create(this.figure) as Figure,registry=new DataRegistry();
+    for(const [id,entry]of this.figure.registry.entries())registry.store.set(id,entry);
+    Object.defineProperties(captured,{spec:{value:structuredClone(this.figure.spec)},registry:{value:registry},presentation:{value:{...this.figure.presentation}},streams:{value:new Map([...this.figure.streams].map(([id,state])=>[id,{...state}]))},pendingLink:{value:structuredClone(this.figure.selectionRequest())}});
+    return captured;
+  }
+  private get theme():ThemeTokens{return this.source.spec.theme??LIGHT_THEME as ThemeTokens;}
+  private get fonts(){const t=this.theme;return {title:t.titleFontSize??t.fontSize+4,label:t.labelFontSize??t.fontSize+1,tick:t.tickFontSize??t.fontSize,legend:t.legendFontSize??t.fontSize};}
+  constructor(private figure:Figure,container:HTMLElement,private renderTarget?:RenderTarget,sharedGL?:WebGL2RenderingContext){
+    this.scheduler=new QueryScheduler(figure.runtime);
     this.root=document.createElement('div');this.root.className='vesora-figure';this.root.style.cssText='position:relative;width:100%;overflow:auto;background:white;color:#0f172a;font-family:system-ui,sans-serif;';
-    this.root.style.height=`${figure.spec.height}px`;this.root.setAttribute('role','img');this.root.setAttribute('aria-label',figure.spec.title||'Scientific visualization');
+    this.root.style.height=`${renderTarget?.height??figure.spec.height}px`;this.root.setAttribute('role','img');this.root.setAttribute('aria-label',figure.spec.title||'Scientific visualization');
     this.stage=document.createElement('div');this.stage.style.cssText='position:relative;';
     const canvas=document.createElement('canvas');canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;';
     this.overlay=document.createElement('canvas');this.overlay.style.cssText='position:absolute;inset:0;width:100%;height:100%;touch-action:none;';
@@ -71,12 +108,13 @@ export class FigureView {
     this.clearSelectionButton.addEventListener('click',()=>{const link=this.figure.selectionRequest();if(link)this.figure.clearLinkedSelection(link.id);});
     controls.append(this.selectionStatus,this.clearSelectionButton);this.root.append(controls);container.appendChild(this.root);
     controls.hidden=!figure.spec.selectionLink;controls.style.display=figure.spec.selectionLink?'flex':'none';
-    try{this.renderer=new WebGLRenderer(canvas,message=>this.fail(new Error(message)));}catch(error){this.root.remove();this.scheduler.dispose();throw error;}
+    try{this.renderer=new WebGLRenderer(canvas,message=>this.fail(new Error(message)),sharedGL,()=>{this.geometries.clear();this.failure=undefined;this.schedule();});}catch(error){this.root.remove();this.scheduler.dispose();throw error;}
     this.observer=new ResizeObserver(()=>this.schedule());this.observer.observe(this.root);
     this.listen('wheel',this.wheel as EventListener,{passive:false});
     this.listen('pointerdown',this.pointerDown as EventListener);this.listen('pointermove',this.pointerMove as EventListener);this.listen('pointerup',this.pointerUp as EventListener);
     this.listen('pointercancel',(()=>{this.clearInteraction();this.drawOverlay();}) as EventListener);
-    this.listen('pointerleave',(()=>{if(!this.drag){this.clearHover();this.drawOverlay();}}) as EventListener);
+    this.listen('pointerleave',(()=>{if(!this.drag&&!this.xPinned){this.clearHover();this.drawOverlay();}}) as EventListener);
+    this.listen('keydown',this.keyDown as EventListener);
     this.listen('dblclick',((event:MouseEvent)=>{
       const panel=this.panelAt(...this.location(event));if(!panel)return;
       this.figure.restorePanelView(panel.id,{...this.figure.panelView(panel.id),xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]});
@@ -90,7 +128,7 @@ export class FigureView {
     for(const key of this.statisticsRequests)this.scheduler.cancel(key);
     for(const source of this.sources)this.scheduler.release(source);
     this.sources.clear();this.statisticsRequests.clear();
-    this.extents.clear();this.geometries.clear();this.plans.clear();this.statistics.clear();this.barCache.clear();this.previous.clear();
+    this.inspection.clear();this.hoverIndices.clear();this.extents.clear();this.geometries.clear();this.plans.clear();this.statistics.clear();this.barCache.clear();this.previous.clear();
     for(const id of this.linkedSpec?.scatter??[])this.scheduler.cancel(`${id}:selected`);
     this.linkedResult=undefined;this.linkedSpec=undefined;this.selectedPlans.clear();this.scheduler.cancel('__linked');
     this.clearInteraction();
@@ -100,41 +138,77 @@ export class FigureView {
     this.drag=undefined;this.box=undefined;this.clearHover();
   }
   private listen(name:string,callback:EventListener,options?:AddEventListenerOptions):void{this.overlay.addEventListener(name,callback,options);this.cleanup.push(()=>this.overlay.removeEventListener(name,callback,options));}
-  schedule():void{
-    if(this.disposed)return;this.prepareFont();this.generation++;this.failure=undefined;
+  schedule(streaming=false):void{
+    if(this.disposed)return;this.clearXHover();this.prepareFont();this.requestedRevision++;if(!streaming||!this.rendering)this.generation++;this.failure=undefined;
     const link=this.figure.selectionRequest(),controls=this.clearSelectionButton.parentElement!;
     this.scheduler.cancel('__linked');
     for(const id of new Set([...(this.linkedSpec?.scatter??[]),...(link?.scatter??[])]))this.scheduler.cancel(`${id}:selected`);
     controls.hidden=!link;controls.style.display=link?'flex':'none';controls.style.top=this.figure.spec.title?'34px':'8px';
     if(link){this.selectionStatus.textContent='Updating selection…';this.root.setAttribute('aria-busy','true');this.root.dispatchEvent(new Event('vesora-selection-pending',{bubbles:true}));}
-    if(!this.raf)this.raf=requestAnimationFrame(()=>{this.raf=0;void this.render(this.generation);});
+    this.queueFrame();
   }
-  async ready():Promise<void>{let pending;do{pending=this.fontReady;await pending;}while(pending!==this.fontReady);if(this.disposed)throw new Error('Figure view disposed');if(this.failure)throw this.failure;if(this.completed===this.generation)return;return new Promise((resolve,reject)=>this.waiters.push({resolve,reject}));}
+  private queueFrame():void{
+    if(this.disposed||this.rendering||this.raf)return;
+    this.raf=requestAnimationFrame(()=>{
+      this.raf=0;if(this.disposed)return;this.rendering=true;this.frameRevision=this.requestedRevision;this.frameStarted=performance.now();this.renderingFigure=this.captureFigure();
+      void this.render(this.generation).finally(()=>{
+        this.rendering=false;this.renderingFigure=undefined;
+        if(!this.disposed&&this.requestedRevision>this.frameRevision){this.generation++;this.failure=undefined;this.queueFrame();}
+      });
+    });
+  }
+  ready(options:ReadyOptions={}):Promise<void>{
+    if(options.timeoutMs!==undefined&&(!Number.isFinite(options.timeoutMs)||options.timeoutMs<=0))return Promise.reject(new RangeError('ready timeoutMs must be positive'));
+    if(options.signal?.aborted)return Promise.reject(new DOMException('Ready wait aborted','AbortError'));
+    const revision=this.requestedRevision;
+    return new Promise((resolve,reject)=>{
+      let timer:ReturnType<typeof setTimeout>|undefined,settled=false;
+      const cleanup=()=>{clearTimeout(timer);options.signal?.removeEventListener('abort',abort);const at=this.waiters.indexOf(waiter);if(at>=0)this.waiters.splice(at,1);};
+      const finish=(error?:Error)=>{if(settled)return;settled=true;cleanup();if(error)reject(error);else resolve();};
+      const abort=()=>finish(new DOMException('Ready wait aborted','AbortError'));
+      const waiter={revision,resolve:()=>finish(),reject:(error:Error)=>finish(error)};
+      options.signal?.addEventListener('abort',abort,{once:true});
+      if(options.timeoutMs!==undefined)timer=setTimeout(()=>finish(new DOMException('Ready wait timed out','TimeoutError')),options.timeoutMs);
+      void (async()=>{let pending;do{pending=this.fontReady;await pending;}while(pending!==this.fontReady);if(settled)return;if(this.disposed)return finish(new Error('Figure view disposed'));if(this.failure)return finish(this.failure);if(this.committedRevision>=revision&&this.completed===this.generation)return finish();this.waiters.push(waiter);})();
+    });
+  }
+  diagnostics(){const sourceBytes=[...this.figure.registry.entries()].reduce((sum,[,entry])=>sum+entry.descriptor.byteLength,0),geometryBytes=this.committedGeometryBytes;return {backend:'WebGL2',contextLost:this.renderer.gl.isContextLost(),sourceBytes,geometryBytes,estimatedGPUBytes:geometryBytes,pendingExports:this.exportReservations.size,lastFrameMs:this.lastFrameMs,completedFrames:this.completedFrames,requestedRevision:this.requestedRevision,committedRevision:this.committedRevision,...this.scheduler.stats};}
   private prepareFont():void{
-    const theme=this.theme,key=`${theme.fontSize}px ${theme.fontFamily}`;if(key===this.fontKey)return;this.fontKey=key;
+    const theme=this.figure.spec.theme??LIGHT_THEME,key=`${theme.fontSize}px ${theme.fontFamily}`;if(key===this.fontKey)return;this.fontKey=key;
     if(!document.fonts)return;
     try{if(document.fonts.check(key))return;const load=document.fonts.load(key);let timer:ReturnType<typeof setTimeout>;
       this.fontReady=Promise.race([load,new Promise<void>(resolve=>{timer=setTimeout(resolve,2000);})]).then(()=>{clearTimeout(timer!);if(!this.disposed)this.schedule();},()=>{clearTimeout(timer!);});
     }catch{/* Invalid or unavailable host fonts fall back to the browser sans-serif. */}
   }
   inspect():PanelInfo[]{return this.infos.map(info=>({...info}));}
-  private panelMetadata(id:string):{panelId?:string}{return this.figure.spec.layout?{panelId:id}:{};}
+  private panelMetadata(id:string,source=this.source):{panelId?:string}{return source.spec.layout?{panelId:id}:{};}
   private sourceExtent(layer:LayerSpec,axis:'x'|'y'|'z',scale:ScaleKind):Domain|undefined{
+    if(layer.kind==='band'&&axis!=='z'){
+      const xs=this.source.registry.get(layer.data.x),lo=this.source.registry.get(layer.data.lower),hi=this.source.registry.get(layer.data.upper);
+      const panel=this.source.panelView(layer.panelId??'main'),key=JSON.stringify([layer.data.x,xs.descriptor.version,layer.data.lower,lo.descriptor.version,layer.data.upper,hi.descriptor.version,panel.xScale,panel.yScale,axis]);
+      const cacheId=`band:${layer.id}:${axis}`,cached=this.extents.get(cacheId);if(cached?.key===key)return cached.domain;
+      let min=Infinity,max=-Infinity;
+      for(let i=0;i<xs.values.length;i++)if(Number.isFinite(lo.values[i])&&Number.isFinite(hi.values[i])&&(panel.xScale!=='log'||xs.values[i]>0)&&(panel.yScale!=='log'||lo.values[i]>0&&hi.values[i]>0)){
+        const a=axis==='x'?xs.values[i]:lo.values[i],b=axis==='x'?a:hi.values[i];min=Math.min(min,a);max=Math.max(max,b);
+      }
+      const domain:Domain|undefined=min===Infinity?undefined:[min,max];this.extents.set(cacheId,{key,domain});return domain;
+    }
     const source=layer.data[axis];if(!source)return undefined;
-    const entry=this.figure.registry.get(source),cacheKey=`${source}:${entry.descriptor.version}:${scale}:${layer.kind}:${axis}`;
+    const entry=this.source.registry.get(source),cacheKey=`${source}:${entry.descriptor.version}:${scale}:${layer.kind}:${axis}`;
     const cached=this.extents.get(source);if(cached?.key===cacheKey)return cached.domain;
+    if(layer.kind!=='heatmap'||axis==='z'){const domain=entryExtent(entry,scale);this.extents.set(source,{key:cacheKey,domain});return domain;}
     const values=layer.kind==='heatmap'&&(axis==='x'||axis==='y')?gridEdges(entry.values,scale):entry.values;
     // Pad only after linked panels have been unioned, including constant series.
     let min=Infinity,max=-Infinity;
     for(const value of values)if(Number.isFinite(value)&&(scale!=='log'||value>0)&&(scale!=='time'||Math.abs(value)<=8.64e15)){if(value<min)min=value;if(value>max)max=value;}
     const domain:Domain|undefined=min===Infinity?undefined:[min,max];this.extents.set(source,{key:cacheKey,domain});return domain;
   }
-  private categories(axis:'x'|'y',panelId:string):string[]|undefined{
-    const spec=this.figure.spec,shared=spec.layout?.[axis==='x'?'shareX':'shareY'];
+  private categories(axis:'x'|'y',panelId:string,source=this.source):string[]|undefined{
+    const spec=source.spec,shared=spec.layout?.[axis==='x'?'shareX':'shareY'];
     return spec.categories?.[`${axis}:${shared?'shared':panelId}`];
   }
   private axisValue(axis:'x'|'y',value:number,panelId:string):string|number{
-    return this.categories(axis,panelId)?.[value]??value;
+    return this.categories(axis,panelId,this.displayedSource)?.[value]??value;
   }
   private axisTicks(axis:'x'|'y',panel:PanelFrame,maximum:number):number[]{
     const labels=this.categories(axis,panel.id),domain=panel.bounds[axis];
@@ -146,10 +220,10 @@ export class FigureView {
   }
   private domain(axis:'x'|'y'|'z',panelId:string,view:ViewSpec,statistics:Map<string,PreparedStatistics>):Domain{
     const explicit=view[`${axis}Domain`];if(explicit)return explicit;
-    const scale=view[`${axis}Scale`],layout=this.figure.spec.layout;
+    const scale=view[`${axis}Scale`],layout=this.source.spec.layout;
     const extentScale=axis!=='z'&&view[`${axis}Format`]?.kind==='date'&&scale==='linear'?'time':scale;
     const shared=axis==='x'?layout?.shareX:axis==='y'?layout?.shareY:false;
-    const layers=(shared?this.figure.spec.layers:this.figure.panelLayers(panelId)).filter(l=>l.visible&&(l.data[axis]||axis!=='z'&&statistics.has(l.id)));
+    const layers=(shared?this.source.spec.layers:this.source.panelLayers(panelId)).filter(l=>l.visible&&(l.data[axis]||axis==='y'&&l.kind==='band'||axis!=='z'&&statistics.has(l.id)));
     if(axis!=='z'){
       const labels=this.categories(axis,panelId);
       if(labels){
@@ -172,113 +246,156 @@ export class FigureView {
     if(extentScale==='time'){padded[0]=Math.max(-8.64e15,padded[0]);padded[1]=Math.min(8.64e15,padded[1]);}
     return padded.every(Number.isFinite)&&padded[0]<padded[1]&&(scale!=='log'||padded[0]>0)?padded:domain;
   }
-  private layout(statistics:Map<string,PreparedStatistics>):PanelFrame[]{
-    const spec=this.figure.spec,grid=spec.layout,rows=grid?.rows??1,cols=grid?.cols??1;
-    this.root.style.height=`${spec.height}px`;this.root.style.background=this.theme.background;this.root.style.color=this.theme.foreground;this.root.style.fontFamily=this.theme.fontFamily;this.root.style.fontSize=`${this.theme.fontSize}px`;this.clearSelectionButton.style.cssText=`color:${this.theme.foreground};background:${this.theme.background};border:1px solid ${this.theme.axis};font:inherit;`;
-    this.width=Math.max(grid?cols*360:200,Math.round(this.root.clientWidth||spec.width));
-    const header=spec.selectionLink?(spec.title?70:44):grid&&spec.title?40:0;
-    this.height=grid?Math.max(spec.height,header+rows*260):spec.height;this.dpr=Math.min(2,window.devicePixelRatio||1);
+  private layout(statistics:Map<string,PreparedStatistics>,resolvedPlans?:Map<string,PointPlan|LineResult|BandResult>):PanelFrame[]{
+    const spec=this.source.spec,grid=spec.layout,rows=grid?.rows??1,cols=grid?.cols??1,f=this.fonts;
+    this.root.style.height=`${this.renderTarget?.height??spec.height}px`;this.root.style.background=this.theme.background;this.root.style.color=this.theme.foreground;this.root.style.fontFamily=this.theme.fontFamily;this.root.style.fontSize=`${this.theme.fontSize}px`;
+    this.clearSelectionButton.style.cssText=`color:${this.theme.foreground};background:${this.theme.background};border:1px solid ${this.theme.axis};font:inherit;`;
+    this.width=this.renderTarget?.width??Math.max(grid?cols*360:200,Math.round(this.root.clientWidth||spec.width));
+    const header=spec.selectionLink?(spec.title?f.title+54:44):grid&&spec.title?f.title+24:0;
+    this.height=this.renderTarget?.height??(grid?Math.max(spec.height,header+rows*260):spec.height);
+    this.dpr=this.renderTarget?.scale??Math.min(2,window.devicePixelRatio||1);
     this.stage.style.width=`${this.width}px`;this.stage.style.height=`${this.height}px`;
-    const measure=this.overlay.getContext('2d')!;measure.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;
-    return this.figure.panelEntries().map(entry=>{
-      const view=structuredClone(entry.view),layers=structuredClone(this.figure.panelLayers(entry.id).filter(l=>l.visible));
+    const measure=this.overlay.getContext('2d')!;
+    const panels=this.source.panelEntries().map(entry=>{
+      const view=structuredClone(entry.view),layers=structuredClone(this.source.panelLayers(entry.id).filter(l=>l.visible));
       if(spec.theme)for(const layer of layers)if(!layer.style.color)layer.style.color=this.theme.palette[spec.layers.findIndex(item=>item.id===layer.id)%this.theme.palette.length];
       const cell:PlotRect={left:entry.col*this.width/cols,top:header+entry.row*(this.height-header)/rows,width:this.width/cols,height:(this.height-header)/rows};
-      const link=spec.selectionLink;
-      if(link)for(const layer of layers)if(layer.id===link.histogram)layer.style.label='All observations';
-      let legendRows=0,used=0;const legendWidth=cell.width-(grid?110:170);
-      for(const layer of layers.filter(l=>l.style.label)){
-        const size=Math.min(legendWidth,measure.measureText(layer.style.label!).width+42);
-        if(!legendRows||used+size>legendWidth){legendRows++;used=0;}used+=size;
+      const link=spec.selectionLink;if(link)for(const layer of layers)if(layer.id===link.histogram)layer.style.label='All observations';
+      const linked=link&&layers.some(l=>link.scatter.includes(l.id)||link.histogram===l.id);
+      const density=(l:LayerSpec)=>l.kind==='scatter'&&(resolvedPlans?.has(l.id)?resolvedPlans.get(l.id)?.kind==='density':l.style.representation==='density'||l.style.representation!=='points'&&(this.previous.has(l.id)?this.previous.get(l.id)==='density':this.source.registry.get(l.data.x).values.length>256));
+      const possibleColor=layers.find(l=>l.kind==='heatmap'||l.kind==='surface'||l.data.color||density(l));
+      const possibleDensity=!!possibleColor&&density(possibleColor);
+      const statusHeight=linked?(layers.some(l=>l.id===link!.histogram)?90:44):possibleDensity?f.tick+10:0;
+      const panel:PanelFrame={id:entry.id,title:entry.title,view,layers,cell,rect:{...cell},bounds:{x:this.domain('x',entry.id,view,statistics),y:this.domain('y',entry.id,view,statistics)},zDomain:this.domain('z',entry.id,view,statistics),legendRows:0,statusHeight,reservedColor:!!possibleColor,reservedDensity:possibleDensity,xTicks:[],yTicks:[],xOffset:0,yOffset:0,legendTop:0,labelY:0};
+      const xSpan=panel.bounds.x[1]-panel.bounds.x[0],ySpan=panel.bounds.y[1]-panel.bounds.y[0];
+      panel.xOffset=!this.categories('x',entry.id)&&!view.xFormat&&view.xScale==='linear'&&Math.abs(panel.bounds.x[0])/xSpan>1e5?panel.bounds.x[0]:0;
+      panel.yOffset=!this.categories('y',entry.id)&&!view.yFormat&&view.yScale==='linear'&&Math.abs(panel.bounds.y[0])/ySpan>1e5?panel.bounds.y[0]:0;
+      const top=(grid?(entry.title?f.title+22:16):spec.title?f.title+26:16)+(panel.yOffset?f.tick+6:0);
+      let left=64,right=16;
+      measure.font=`${f.tick}px ${this.theme.fontFamily}`;
+      if(possibleColor){
+        let domain=possibleColor.style.colorDomain;
+        if(!domain&&!possibleDensity)domain=extent(this.source.registry.get(possibleColor.data.color??possibleColor.data.z).values);
+        const labels=domain?ticks(domain,'linear',5).map(v=>formatTick(v,domain[1]-domain[0])):[String(this.source.registry.get(possibleColor.data.x).values.length)];
+        right=42+Math.max(...labels.map(t=>measure.measureText(t).width))+(possibleColor.style.colorbarLabel||possibleDensity||view.zLabel?f.label+10:0);
       }
-      const linked=link&&layers.some(layer=>link.scatter.includes(layer.id)||link.histogram===layer.id);
-      const statusHeight=linked?(layers.some(layer=>layer.id===link!.histogram)?90:36):grid&&layers.some(l=>l.kind==='scatter'&&l.style.representation!=='points')?18:0;
-      const extra=grid?Math.max(0,legendRows-1)*18+statusHeight:0;
-      const top=grid?(entry.title?37:28):(spec.title?48:28);
-      // Embedded cards own their legend. Small, uncoloured series need less
-      // horizontal chrome; keep the full gutter for density and colour bars.
-      const compact=!grid&&!this.figure.presentation.legend&&view.kind==='2d'&&cell.width<480&&layers.every(layer=>
-        (layer.kind==='line'||layer.kind==='bar'||layer.kind==='scatter')&&!layer.data.color&&layer.style.representation!=='density'&&
-        (layer.kind!=='scatter'||layer.style.representation==='points'||this.figure.registry.get(layer.data.x).values.length<=256));
-      const left=grid?70:compact&&!view.yLabel?62:85,right=grid?85:compact?24:85;
-      const rect:PlotRect={left:cell.left+left,top:cell.top+top,width:Math.max(40,cell.width-left-right),height:Math.max(40,cell.height-top-82-extra)};
-      return {id:entry.id,title:entry.title,view,layers,cell,rect,bounds:{x:this.domain('x',entry.id,view,statistics),y:this.domain('y',entry.id,view,statistics)},zDomain:this.domain('z',entry.id,view,statistics),legendRows,statusHeight};
+      for(let pass=0;pass<3;pass++){
+        const plotWidth=Math.max(40,cell.width-left-right);
+        measure.font=`${f.legend}px ${this.theme.fontFamily}`;
+        let legendRows=0,used=0;
+        if(this.source.presentation.legend||this.renderTarget)for(const l of layers.filter(l=>l.style.label)){
+          const w=Math.min(plotWidth,measure.measureText(l.style.label!).width+36);
+          if(!legendRows||used+w>plotWidth){legendRows++;used=0;}used+=w;
+        }
+        panel.legendRows=legendRows;
+        const tickBlock=f.tick+14+(panel.xOffset?f.tick+6:0),labelBlock=view.xLabel?f.label+12:0;
+        const footer=12+statusHeight+(legendRows?legendRows*(f.legend+8)+8:0);
+        const plotHeight=Math.max(40,cell.height-top-tickBlock-labelBlock-footer);
+        panel.rect={left:cell.left+left,top:cell.top+top,width:plotWidth,height:plotHeight};
+        panel.labelY=panel.rect.top+plotHeight+tickBlock+f.label;
+        panel.legendTop=panel.rect.top+plotHeight+tickBlock+labelBlock+f.legend+6;
+        measure.font=`${f.tick}px ${this.theme.fontFamily}`;
+        panel.xTicks=this.measuredTicks('x',panel,measure);panel.yTicks=this.measuredTicks('y',panel,measure);
+        const yWidth=Math.max(0,...panel.yTicks.map(t=>measure.measureText(t.label).width));
+        left=Math.min(cell.width-right-40,Math.ceil(yWidth+16+(view.yLabel?f.label+16:0)));
+      }
+      return panel;
     });
+    return panels;
+  }
+  private measuredTicks(axis:'x'|'y',panel:PanelFrame,ctx:CanvasRenderingContext2D):AxisTick[]{
+    const {rect:r,bounds,view}=panel,span=bounds[axis][1]-bounds[axis][0],offset=axis==='x'?panel.xOffset:panel.yOffset;
+    const length=axis==='x'?r.width:r.height,categories=this.categories(axis,panel.id),size=this.fonts.tick;
+    const count=Math.max(2,Math.floor(length/(axis==='x'?55:size+18)));
+    const candidates=this.axisTicks(axis,panel,count).map(value=>({value,label:categories?categories[value]:this.axisLabel(axis,value-offset,panel,span),position:0}));
+    const result:AxisTick[]=[];let end=-Infinity;
+    if(axis==='y')candidates.reverse();
+    for(const item of candidates){
+      const coordinate=normalize(item.value,bounds[axis],view[`${axis}Scale`]);
+      if(axis==='x'){
+        item.label=this.fitText(ctx,item.label,Math.max(1,r.width));const width=ctx.measureText(item.label).width;
+        item.position=Math.max(r.left+width/2,Math.min(r.left+r.width-width/2,r.left+coordinate*r.width));
+        if(item.position-width/2<end+8)continue;end=item.position+width/2;
+      }else{item.position=r.top+(1-coordinate)*r.height;if(item.position-size/2<end+6)continue;end=item.position+size/2;}
+      result.push(item);
+    }
+    return result;
   }
   private async prepareStatistics(generation:number):Promise<Map<string,PreparedStatistics>>{
-    const prepared=new Map<string,PreparedStatistics>(),spec=this.figure.spec;
+    const prepared=new Map<string,PreparedStatistics>(),spec=this.source.spec;
     const visible=spec.layers.filter(layer=>(layer.visible||layer.id===spec.selectionLink?.histogram)&&(layer.kind==='hist'||layer.kind==='boxplot'));
     const requested=new Set(visible.map(layer=>layer.id));
     for(const id of this.statisticsRequests)if(!requested.has(id))this.scheduler.cancel(id);
     this.statisticsRequests=requested;
-    const sources=new Set(Array.from(this.figure.registry.entries(),([source])=>source));
+    const sources=new Set(Array.from(this.source.registry.entries(),([source])=>source));
     for(const source of this.sources)if(!sources.has(source)){this.scheduler.release(source);this.extents.delete(source);}
     this.sources=sources;
     const panelIds=new Set<string>();
-    for(const panel of this.figure.panelEntries()){
+    for(const panel of this.source.panelEntries()){
       panelIds.add(panel.id);
-      const layers=this.figure.panelLayers(panel.id).filter(layer=>layer.kind==='bar');
+      const layers=this.source.panelLayers(panel.id).filter(layer=>layer.kind==='bar');
       if(!layers.length){this.barCache.delete(panel.id);continue;}
       const mode=spec.barModes?.[panel.id]??'group';
-      const key=JSON.stringify([mode,layers.map(layer=>[layer.id,layer.visible,layer.options,Object.values(layer.data).map(source=>[source,this.figure.registry.get(source).descriptor.version])])]);
+      const key=JSON.stringify([mode,layers.map(layer=>[layer.id,layer.visible,layer.options,Object.values(layer.data).map(source=>[source,this.source.registry.get(source).descriptor.version])])]);
       let cached=this.barCache.get(panel.id);
-      if(cached?.key!==key){cached={key,prepared:prepareBars(layers,this.figure.registry,mode)};this.barCache.set(panel.id,cached);}
+      if(cached?.key!==key){cached={key,prepared:prepareBars(layers,this.source.registry,mode)};this.barCache.set(panel.id,cached);}
       for(const [id,value] of cached.prepared)prepared.set(id,value);
     }
     for(const id of this.barCache.keys())if(!panelIds.has(id))this.barCache.delete(id);
     await Promise.all(visible.map(async layer=>{
-      const result=await this.scheduler.queryStatistics(layer.id,structuredClone(layer),this.figure.registry);
+      const result=await this.scheduler.queryStatistics(layer.id,structuredClone(layer),this.source.registry);
       if(!this.disposed&&generation===this.generation)prepared.set(layer.id,result);
     }));
     return prepared;
   }
-  private async render(generation:number):Promise<void>{
+  private async render(generation:number,layoutPlans?:Map<string,PointPlan|LineResult|BandResult>):Promise<void>{
     try{
-      const spec=this.figure.spec;
+      const spec=this.source.spec;
       this.overlay.setAttribute('aria-label',spec.view.kind==='3d'
         ?'Plot controls: drag to orbit, wheel to zoom, Shift-drag to pan, double-click to reset'
+        :this.source.spec.hoverMode==='x'?'Plot controls: Left/Right to inspect samples, tap to pin, Escape to clear; drag to pan, wheel to zoom, Shift-drag to select'
         :'Plot controls: drag to pan, wheel to zoom, Shift-drag to select, double-click to reset');
       this.root.setAttribute('aria-label',spec.title||'Scientific visualization');
       // Prepare raw-data statistics and complete panel-local bar placement before
       // resolving automatic/shared extents. The committed frame stays untouched.
       const nextStatistics=await this.prepareStatistics(generation);
       if(this.disposed||generation!==this.generation)return;
-      const request=this.figure.selectionRequest(),link=request?structuredClone(request):undefined;
-      const linked=link?await this.scheduler.queryLinked('__linked',link,spec.layers,nextStatistics.get(link.histogram)!,this.figure.registry):undefined;
+      const request=this.source.selectionRequest(),link=request?structuredClone(request):undefined;
+      const linked=link?await this.scheduler.queryLinked('__linked',link,spec.layers,nextStatistics.get(link.histogram)!,this.source.registry):undefined;
       if(!link)this.scheduler.cancel('__linked');
       if(this.disposed||generation!==this.generation)return;
       const nextSelectedPlans=new Map<string,PointPlan>();
-      const panels=this.layout(nextStatistics),nextPlans=new Map<string,PointPlan|LineResult>(),nextGeometry=new Map<string,{key:string;geometry:Geometry}>();
+      const panels=this.layout(nextStatistics,layoutPlans),nextPlans=new Map<string,PointPlan|LineResult|BandResult>(),nextGeometry=new Map<string,{key:string;geometry:Geometry}>();
       const panelResults=await Promise.all(panels.map(async panel=>{
         const {bounds,zDomain,view,rect}=panel;
         const results=await Promise.all(panel.layers.map(async layer=>{
-          const versions=Object.values(layer.data).map(source=>`${source}:${this.figure.registry.get(source).descriptor.version}`);
+          const versions=Object.values(layer.data).map(source=>`${source}:${this.source.registry.get(source).descriptor.version}`);
           const member=!!link&&(link.scatter.includes(layer.id)||link.histogram===layer.id),active=member&&!!link?.selection;
           const baseStyle=active?{...layer.style,opacity:(layer.style.opacity??1)*.3}:layer.style;
           const key=JSON.stringify([versions,layer.options,baseStyle,bounds,zDomain,view.xScale,view.yScale,view.zScale,rect.width,rect.height,layer.kind==='bar'?this.barCache.get(panel.id)?.key:undefined]);
-          const cache=this.geometries.get(layer.id);let plan:PointPlan|LineResult|undefined,info:PanelInfo;
+          const cache=this.geometries.get(layer.id);let plan:PointPlan|LineResult|BandResult|undefined,info:PanelInfo;
           const prepared=nextStatistics.get(layer.id);
           if(prepared){
             info=this.statisticsInfo(prepared,panel);
-          }else if(layer.kind==='line'||layer.kind==='scatter'){
+          }else if(layer.kind==='line'||layer.kind==='scatter'||layer.kind==='band'){
             const query:Query={bounds,width:Math.round(rect.width),height:Math.round(rect.height),xScale:view.xScale,yScale:view.yScale,pointBudget:250_000,mode:layer.style.representation??'auto',previous:this.previous.get(layer.id)};
-            plan=await this.scheduler.query(layer.id,layer.kind==='line'?'line':'scatter',layer.data.x,layer.data.y,query,this.figure.registry);
+            plan=layer.kind==='band'?await this.scheduler.queryBand(layer.id,layer.data.x,layer.data.lower,layer.data.upper,query,this.source.registry):await this.scheduler.query(layer.id,layer.kind==='line'?'line':'scatter',layer.data.x,layer.data.y,query,this.source.registry);
             nextPlans.set(layer.id,plan);info={...plan.info,layerId:layer.id,...this.panelMetadata(panel.id)};
           }else{
-            const count=this.figure.registry.get(layer.data.z??layer.data.x).values.length;
+            const count=this.source.registry.get(layer.data.z??layer.data.x).values.length;
             if(count>1_000_000)throw new Error(`${layer.kind} exceeds the initial renderer budget of 1,000,000 values. Reduce the grid or use 2D density exploration.`);
             info={layerId:layer.id,...this.panelMetadata(panel.id),kind:layer.kind==='heatmap'?'grid':layer.kind==='surface'?'surface':'points',total:count,visible:count,rendered:count,exact:true,method:layer.kind==='surface'?'regular-grid triangulation':layer.kind==='heatmap'?'scalar grid':'raw points'};
           }
           if(this.disposed||generation!==this.generation)throw new DOMException('Superseded','AbortError');
           const geometry=cache?.key===key?cache.geometry:prepared
             ?buildStatisticsGeometry(prepared,bounds,view,rect.width,rect.height,baseStyle)
-            :buildGeometry({...layer,style:baseStyle},this.figure.registry,bounds,zDomain,view,rect.width,rect.height,plan);
+            :buildGeometry({...layer,style:baseStyle},this.source.registry,bounds,zDomain,view,rect.width,rect.height,plan);
           if(geometry.primitive==='points'){
             info.rendered=geometry.positions.length/3;info.visible=info.rendered;
             if(layer.data.color)info.method+='; non-finite scalar colors omitted';
           }else if(layer.kind==='surface'){
             info.rendered=geometry.positions.length/9;info.method='regular-grid triangles; invalid vertices omitted';
-            const xs=this.figure.registry.get(layer.data.x).values,ys=this.figure.registry.get(layer.data.y).values,zs=this.figure.registry.get(layer.data.z).values;
+            const xs=this.source.registry.get(layer.data.x).values,ys=this.source.registry.get(layer.data.y).values,zs=this.source.registry.get(layer.data.z).values;
             let valid=0;for(let i=0;i<zs.length;i++)if(Number.isFinite(normalize(xs[i%xs.length],bounds.x,view.xScale))&&Number.isFinite(normalize(ys[Math.floor(i/xs.length)],bounds.y,view.yScale))&&Number.isFinite(normalize(zs[i],zDomain,view.zScale)))valid++;
             info.visible=valid;
           }else if(layer.kind==='heatmap'){info.rendered=geometry.positions.length/18;info.visible=info.rendered;}
@@ -289,9 +406,9 @@ export class FigureView {
               highlight.id=`${layer.id}:selected`;selected.push(highlight);
             }else{
               const query:Query={bounds,width:Math.round(rect.width),height:Math.round(rect.height),xScale:view.xScale,yScale:view.yScale,pointBudget:250_000,mode:layer.style.representation??'auto'};
-              const selectionPlan=await this.scheduler.querySelectedScatter(`${layer.id}:selected`,layer.data.x,layer.data.y,linked.mask,query,this.figure.registry);
+              const selectionPlan=await this.scheduler.querySelectedScatter(`${layer.id}:selected`,layer.data.x,layer.data.y,linked.mask,query,this.source.registry);
               nextSelectedPlans.set(layer.id,selectionPlan);
-              const highlight=buildGeometry({...layer,id:`${layer.id}:selected`,data:{x:layer.data.x,y:layer.data.y},style:{...layer.style,color:this.theme.selection,opacity:1}},this.figure.registry,bounds,zDomain,view,rect.width,rect.height,selectionPlan);
+              const highlight=buildGeometry({...layer,id:`${layer.id}:selected`,data:{x:layer.data.x,y:layer.data.y},style:{...layer.style,color:this.theme.selection,opacity:1}},this.source.registry,bounds,zDomain,view,rect.width,rect.height,selectionPlan);
               if(selectionPlan.kind==='density'){
                 let vertex=0;const divisor=Math.log1p(selectionPlan.max)||1;
                 for(const count of selectionPlan.counts)if(count){const alpha=.15+.8*Math.log1p(count)/divisor;for(let i=0;i<6;i++,vertex++){highlight.colors.set([...parseColor(this.theme.selection).slice(0,3),alpha],vertex*4);}}
@@ -306,17 +423,22 @@ export class FigureView {
         if(panel.colorLayer){
           const layer=panel.colorLayer,plan=nextPlans.get(layer.id),density=plan?.kind==='density'?plan:undefined;
           panel.colorDensity=!!density;
-          panel.colorDomain=layer.style.colorDomain??(density?[0,Math.max(1,density.max)] as Domain:extent(this.figure.registry.get(layer.data.color??layer.data.z).values));
+          panel.colorDomain=layer.style.colorDomain??(density?[0,Math.max(1,density.max)] as Domain:extent(this.source.registry.get(layer.data.color??layer.data.z).values));
         }
         const items=results.flatMap(result=>[result.geometry,...result.selected]);if(view.kind==='3d')items.unshift(this.axes3d());
         return {panel,items,infos:results.map(result=>result.info)};
       }));
       if(this.disposed||generation!==this.generation)return;
+      // Representation is resolved from visible data. Reclaim the gutter when
+      // sparse zooms use points; reserve it before committing a density frame.
+      if(panels.some(panel=>panel.reservedColor!==!!panel.colorLayer||panel.reservedDensity!==!!panel.colorDensity))return await this.render(generation,nextPlans);
+      const geometryBytes=panelResults.reduce((total,result)=>total+result.items.reduce((sum,item)=>sum+item.positions.byteLength+item.colors.byteLength,0),0);
+      if(this.figure.runtime.maxGeometryBytes!==undefined&&geometryBytes>this.figure.runtime.maxGeometryBytes)throw new RangeError('Figure exceeds its geometry memory budget');
       // Neither canvas changes until every panel's current query succeeds.
-      const live=new Set(nextGeometry.keys());
+      const live=new Set(nextGeometry.keys());for(const id of this.inspection.keys())if(!live.has(id))this.inspection.delete(id);for(const id of this.hoverIndices.keys())if(!live.has(id))this.hoverIndices.delete(id);
       for(const key of this.geometries.keys())if(!live.has(key)){this.scheduler.cancel(key);this.previous.delete(key);}
-      const sources=new Set(Array.from(this.figure.registry.entries(),([source])=>source));
-      for(const source of this.extents.keys())if(!sources.has(source)){this.extents.delete(source);this.scheduler.release(source);}
+      const sources=new Set(Array.from(this.source.registry.entries(),([source])=>source));
+      for(const source of this.extents.keys())if(source.startsWith('band:')?![...live].some(id=>source===`band:${id}:x`||source===`band:${id}:y`):!sources.has(source)){this.extents.delete(source);if(!source.startsWith('band:'))this.scheduler.release(source);}
       this.renderer.beginFrame(this.width,this.height,this.dpr,parseColor(this.theme.background));
       for(const {panel,items} of panelResults){
         const {view,rect}=panel,matrix=view.kind==='3d'?cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,rect.width/rect.height,view.pan3d??[0,0]):identity;
@@ -326,7 +448,11 @@ export class FigureView {
       this.panels=panels;this.geometries=nextGeometry;this.plans=nextPlans;this.statistics=nextStatistics;this.infos=panelResults.flatMap(result=>result.infos);
       this.linkedResult=linked;this.linkedSpec=link;this.selectedPlans=nextSelectedPlans;
       for(const [id,plan] of nextPlans)if(plan.kind==='points'||plan.kind==='density')this.previous.set(id,plan.kind);
+      this.committedFigure=this.renderingFigure;this.committedRevision=this.frameRevision;this.lastFrameMs=performance.now()-this.frameStarted;this.completedFrames++;this.committedGeometryBytes=geometryBytes;
       this.drawOverlay();this.completed=generation;
+      // Any hover created while planning belonged to the previously displayed rows.
+      const hoverPosition=this.lastHover;
+      this.clearHover();if(hoverPosition&&!this.drag)this.hover(...hoverPosition);else this.drawOverlay();
       this.root.setAttribute('aria-busy','false');
       this.clearSelectionButton.disabled=!link?.selection;
       this.selectionStatus.textContent=link&&linked?this.selectionSummary(linked,!!link.selection):'';
@@ -337,7 +463,7 @@ export class FigureView {
       }
       this.figure.emit('representation',this.inspect());
       // A representation listener may synchronously invalidate this frame.
-      if(this.completed===this.generation)for(const waiter of this.waiters.splice(0))waiter.resolve();
+      if(this.completed===this.generation)for(const waiter of [...this.waiters])if(waiter.revision<=this.committedRevision)waiter.resolve();
     }catch(error){if(generation!==this.generation||this.disposed)return;this.fail(error instanceof Error?error:new Error(String(error)));}
   }
   private fail(error:Error):void{this.failure=error;this.completed=this.generation;this.figure.emit('error',{message:error.message});this.drawOverlay(error.message);for(const waiter of this.waiters.splice(0))waiter.reject(error);}
@@ -356,22 +482,26 @@ export class FigureView {
     return characters.slice(0,low).join('')+'…';
   }
   private drawOverlay(error?:string,target?:CanvasRenderingContext2D,exporting=false):void{
-    if(this.disposed)return;const ctx=target??this.ctx(),spec=this.figure.spec;ctx.clearRect(0,0,this.width,this.height);
+    const previous=this.overlaySource;this.overlaySource=this.displayedSource;
+    try{this.paintOverlay(error,target,exporting);}finally{this.overlaySource=previous;}
+  }
+  private paintOverlay(error?:string,target?:CanvasRenderingContext2D,exporting=false):void{
+    if(this.disposed)return;const ctx=target??this.ctx(),spec=this.source.spec;ctx.clearRect(0,0,this.width,this.height);
     ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;ctx.fillStyle=this.theme.foreground;ctx.strokeStyle=this.theme.axis;ctx.lineWidth=1;
     if(error){ctx.fillStyle=this.theme.background;ctx.fillRect(0,0,this.width,this.height);ctx.fillStyle=this.theme.error;ctx.textAlign='left';ctx.fillText(error,15,35,this.width-30);return;}
     if(spec.title){
-      const left=this.width<480?16:(this.panels[0]?.rect.left??85),available=this.width-left-16;let size=17;
-      ctx.font=`600 ${size}px ${this.theme.fontFamily}`;
-      while(size>13&&ctx.measureText(spec.title).width>available)ctx.font=`600 ${--size}px ${this.theme.fontFamily}`;
-      ctx.textAlign='left';ctx.fillText(this.fitText(ctx,spec.title,available),left,25);
+      const left=this.panels[0]?.rect.left??16,available=this.width-left-16;
+      ctx.font=`600 ${this.fonts.title}px ${this.theme.fontFamily}`;
+      ctx.textAlign='left';ctx.fillText(this.fitText(ctx,spec.title,available),left,this.fonts.title+9);
     }
     if(this.linkedSpec&&this.linkedResult){
       ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;ctx.fillStyle=this.theme.foreground;ctx.textAlign='left';
       ctx.fillText(this.fitText(ctx,this.selectionSummary(this.linkedResult,!!this.linkedSpec.selection),Math.max(100,this.width-250)),70,spec.title?52:26);
     }
     for(const panel of this.panels)this.drawPanelOverlay(ctx,panel,exporting);
+    if(this.xHover&&!exporting)this.drawXHover(ctx);
     if(this.box&&!exporting){const [a,b,c,d]=this.box;ctx.save();ctx.fillStyle=this.theme.selection;ctx.globalAlpha=.18;ctx.fillRect(a,b,c-a,d-b);ctx.restore();ctx.strokeStyle=this.theme.selection;ctx.strokeRect(a,b,c-a,d-b);}
-    if(this.tooltip&&this.figure.presentation.tooltip&&!exporting){const t=this.tooltip;ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;const text=this.fitText(ctx,t.text,Math.max(1,this.width-34)),w=ctx.measureText(text).width+18,x=Math.max(0,Math.min(this.width-w,t.x+12)),y=Math.max(20,t.y-12);ctx.fillStyle=this.theme.tooltipBackground;ctx.fillRect(x,y-18,w,27);ctx.fillStyle=this.theme.tooltipForeground;ctx.textAlign='left';ctx.fillText(text,x+9,y);}
+    if(this.tooltip&&this.source.presentation.tooltip&&!exporting){const t=this.tooltip;ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;const text=this.fitText(ctx,t.text,Math.max(1,this.width-34)),w=ctx.measureText(text).width+18,x=Math.max(0,Math.min(this.width-w,t.x+12)),y=Math.max(20,t.y-12);ctx.fillStyle=this.theme.tooltipBackground;ctx.fillRect(x,y-18,w,27);ctx.fillStyle=this.theme.tooltipForeground;ctx.textAlign='left';ctx.fillText(text,x+9,y);}
   }
   private selectionSummary(result:LinkedResult,active:boolean):string{
     if(!active)return 'Shift + drag in either scatter to compare observations';
@@ -379,29 +509,26 @@ export class FigureView {
     return `Selected ${result.count.toLocaleString('en-US')} / ${result.total.toLocaleString('en-US')} (${percent.toFixed(2)}%)${result.count===0?' · No observations in this selection':''}`;
   }
   private drawPanelOverlay(ctx:CanvasRenderingContext2D,panel:PanelFrame,exporting=false):void{
-    const {rect:r,cell,view,bounds,zDomain,layers}=panel,grid=!!this.figure.spec.layout,bottom=cell.top+cell.height;
+    const {rect:r,cell,view,bounds,zDomain,layers}=panel,grid=!!this.source.spec.layout,bottom=cell.top+cell.height;
     ctx.save();ctx.beginPath();ctx.rect(cell.left,cell.top,cell.width,cell.height);ctx.clip();
-    ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;ctx.fillStyle=this.theme.foreground;ctx.strokeStyle=this.theme.axis;ctx.lineWidth=1;
-    if(grid&&panel.title){ctx.font=`600 ${this.theme.fontSize+2}px ${this.theme.fontFamily}`;ctx.textAlign='left';ctx.fillText(this.fitText(ctx,panel.title,cell.width-90),cell.left+70,cell.top+19);ctx.font=`${this.theme.fontSize}px ${this.theme.fontFamily}`;}
+    const f=this.fonts;
+    ctx.font=`${f.tick}px ${this.theme.fontFamily}`;ctx.fillStyle=this.theme.foreground;ctx.strokeStyle=this.theme.axis;ctx.lineWidth=1;
+    if(grid&&panel.title){ctx.font=`600 ${f.title}px ${this.theme.fontFamily}`;ctx.textAlign='left';ctx.fillText(this.fitText(ctx,panel.title,cell.left+cell.width-r.left-12),r.left,cell.top+f.title+8);ctx.font=`${f.tick}px ${this.theme.fontFamily}`;}
     if(view.kind==='2d'){
-      const xSpan=bounds.x[1]-bounds.x[0],ySpan=bounds.y[1]-bounds.y[0];
-      const xLabels=this.categories('x',panel.id),yLabels=this.categories('y',panel.id);
-      const xOffset=!xLabels&&!view.xFormat&&view.xScale==='linear'&&Math.abs(bounds.x[0])/xSpan>1e5?bounds.x[0]:0;
-      const yOffset=!yLabels&&!view.yFormat&&view.yScale==='linear'&&Math.abs(bounds.y[0])/ySpan>1e5?bounds.y[0]:0;
       ctx.strokeRect(r.left,r.top,r.width,r.height);
-      for(const value of this.axisTicks('x',panel,Math.max(2,Math.floor(r.width/100)))){
-        const x=r.left+normalize(value,bounds.x,view.xScale)*r.width;ctx.strokeStyle=this.theme.grid;ctx.beginPath();ctx.moveTo(x,r.top);ctx.lineTo(x,r.top+r.height);ctx.stroke();
-        ctx.fillStyle=this.theme.foreground;ctx.textAlign='center';ctx.fillText(xLabels?this.fitText(ctx,xLabels[value],Math.max(20,Math.min(100,r.width/Math.max(1,Math.min(xLabels.length,r.width/100))))):this.axisLabel('x',value-xOffset,panel,xSpan),x,r.top+r.height+20);
+      for(const item of panel.xTicks){
+        const x=r.left+normalize(item.value,bounds.x,view.xScale)*r.width;ctx.strokeStyle=this.theme.grid;ctx.beginPath();ctx.moveTo(x,r.top);ctx.lineTo(x,r.top+r.height);ctx.stroke();
+        ctx.fillStyle=this.theme.foreground;ctx.textAlign='center';ctx.fillText(item.label,item.position,r.top+r.height+f.tick+8);
       }
-      for(const value of this.axisTicks('y',panel,Math.max(2,Math.floor(r.height/65)))){
-        const y=r.top+(1-normalize(value,bounds.y,view.yScale))*r.height;ctx.strokeStyle=this.theme.grid;ctx.beginPath();ctx.moveTo(r.left,y);ctx.lineTo(r.left+r.width,y);ctx.stroke();
-        const labelWidth=grid?45:Math.min(65,Math.max(20,r.left-cell.left-12));
-        ctx.textAlign='right';ctx.fillText(yLabels?this.fitText(ctx,yLabels[value],labelWidth):this.axisLabel('y',value-yOffset,panel,ySpan),r.left-9,y+4,labelWidth);
+      for(const item of panel.yTicks){
+        const y=item.position;ctx.strokeStyle=this.theme.grid;ctx.beginPath();ctx.moveTo(r.left,y);ctx.lineTo(r.left+r.width,y);ctx.stroke();
+        ctx.fillStyle=this.theme.foreground;ctx.textAlign='right';ctx.fillText(item.label,r.left-9,y+f.tick*.35);
       }
-      if(xOffset){ctx.textAlign='right';ctx.fillText(this.fitText(ctx,`offset ${xOffset>=0?'+':''}${xOffset}`,r.width),r.left+r.width,r.top+r.height+36);}
-      if(yOffset){ctx.textAlign='left';ctx.fillText(this.fitText(ctx,`offset ${yOffset>=0?'+':''}${yOffset}`,r.width),r.left,r.top-8);}
-      ctx.textAlign='center';ctx.fillText(this.fitText(ctx,view.xLabel,r.width),r.left+r.width/2,r.top+r.height+47);
-      ctx.save();ctx.translate(cell.left+17,r.top+r.height/2);ctx.rotate(-Math.PI/2);ctx.fillText(this.fitText(ctx,view.yLabel,r.height),0,0);ctx.restore();
+      if(panel.xOffset){ctx.textAlign='right';ctx.fillText(this.fitText(ctx,`offset ${panel.xOffset>=0?'+':''}${panel.xOffset}`,r.width),r.left+r.width,r.top+r.height+2*f.tick+14);}
+      if(panel.yOffset){ctx.textAlign='left';ctx.fillText(this.fitText(ctx,`offset ${panel.yOffset>=0?'+':''}${panel.yOffset}`,r.width),r.left,r.top-8);}
+      ctx.font=`${f.label}px ${this.theme.fontFamily}`;
+      ctx.textAlign='center';ctx.fillText(this.fitText(ctx,view.xLabel,r.width),r.left+r.width/2,panel.labelY);
+      ctx.save();ctx.translate(cell.left+f.label+1,r.top+r.height/2);ctx.rotate(-Math.PI/2);ctx.fillText(this.fitText(ctx,view.yLabel,r.height),0,0);ctx.restore();
       this.drawAnnotations(ctx,panel);
     }else{
       const m=cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,r.width/r.height,view.pan3d??[0,0]);
@@ -411,23 +538,31 @@ export class FigureView {
         for(const value of ticks(domain,view[`${axis}Scale`],3)){const t=normalize(value,domain,view[`${axis}Scale`]);if(t<.12)continue;const vector=[-1,-1,-1];vector[{x:0,y:1,z:2}[axis]]=t*2-1;const q=pos(vector[0],vector[1],vector[2]);ctx.fillText(formatTick(value,domain[1]-domain[0]),q[0]+12,q[1]+12);}
       }
     }
-    let legendX=r.left,legendY=bottom-13-panel.statusHeight-(grid?Math.max(0,panel.legendRows-1)*18:0);
-    const legendRight=grid?cell.left+cell.width-40:Infinity;
-    for(const layer of layers.filter(l=>(this.figure.presentation.legend||exporting)&&l.style.label)){
-      const label=this.fitText(ctx,layer.style.label!,Math.max(20,legendRight-r.left-42)),itemWidth=ctx.measureText(label).width+42;
-      if(grid&&legendX>r.left&&legendX+itemWidth>legendRight){legendX=r.left;legendY+=18;}
-      ctx.fillStyle=layer.style.color??this.theme.palette[0];ctx.fillRect(legendX,legendY-6,12,3);ctx.fillStyle=this.theme.muted;ctx.textAlign='left';ctx.fillText(label,legendX+18,legendY);legendX+=itemWidth;
+    ctx.font=`${f.legend}px ${this.theme.fontFamily}`;
+    let legendX=r.left,legendY=panel.legendTop;
+    const legendRight=r.left+r.width;
+    for(const layer of layers.filter(l=>(this.source.presentation.legend||exporting)&&l.style.label)){
+      const label=this.fitText(ctx,layer.style.label!,Math.max(1,r.width-36)),itemWidth=ctx.measureText(label).width+36;
+      if(legendX>r.left&&legendX+itemWidth>legendRight){legendX=r.left;legendY+=f.legend+8;}
+      ctx.fillStyle=layer.style.color??this.theme.palette[0];ctx.fillRect(legendX,legendY-6,12,layer.kind==='band'?6:3);ctx.fillStyle=this.theme.muted;ctx.textAlign='left';ctx.fillText(label,legendX+18,legendY);legendX+=itemWidth;
     }
+    ctx.font=`${f.tick}px ${this.theme.fontFamily}`;
     const colorLayer=panel.colorLayer;
     if(colorLayer){
-      const density=panel.colorDensity,domain=panel.colorDomain!;
-      const x=r.left+r.width+16,h=Math.min(r.height,180);
-      for(let i=0;i<h;i++){const c=colorMap(1-i/h,[0,1],colorLayer.style.colormap);ctx.fillStyle=`rgb(${c[0]*255},${c[1]*255},${c[2]*255})`;ctx.fillRect(x,r.top+i,12,1.5);}
-      ctx.fillStyle=this.theme.muted;ctx.textAlign='left';const labelWidth=Math.max(24,cell.left+cell.width-x-22);ctx.fillText(formatTick(domain[1]),x+17,r.top+8,labelWidth);ctx.fillText(formatTick(domain[0]),x+17,r.top+h,labelWidth);
-      if(density){ctx.save();ctx.translate(x+8,r.top+h+12);ctx.rotate(Math.PI/2);ctx.fillText('count / bin',0,0);ctx.restore();}
+      const density=panel.colorDensity,domain=panel.colorDomain!,x=r.left+r.width+16,h=r.height;
+      for(let i=0;i<h;i++){const c=colorMap(1-i/Math.max(1,h-1),[0,1],colorLayer.style.colormap);ctx.fillStyle=`rgb(${c[0]*255},${c[1]*255},${c[2]*255})`;ctx.fillRect(x,r.top+i,12,1.5);}
+      ctx.fillStyle=this.theme.muted;ctx.textAlign='left';let end=-Infinity,maxWidth=0;
+      const values=ticks(domain,'linear',Math.max(2,Math.min(5,Math.floor(h/(f.tick+16))))).filter(v=>!density||Number.isInteger(v)).reverse();
+      for(const value of values){
+        const y=r.top+(1-normalize(value,domain))*h,baseline=Math.max(r.top+f.tick,Math.min(r.top+h,y+f.tick*.35));
+        if(baseline<end+f.tick+6)continue;end=baseline;
+        const label=formatTick(value,domain[1]-domain[0]);ctx.fillText(label,x+18,baseline);maxWidth=Math.max(maxWidth,ctx.measureText(label).width);
+      }
+      const label=colorLayer.style.colorbarLabel??(density?'count / bin':view.zLabel);
+      if(label){ctx.save();ctx.font=`${f.label}px ${this.theme.fontFamily}`;ctx.translate(x+25+maxWidth+f.label,r.top+h/2);ctx.rotate(-Math.PI/2);ctx.textAlign='center';ctx.fillText(this.fitText(ctx,label,h),0,0);ctx.restore();}
     }
     const density=this.infos.find(i=>i.kind==='density'&&layers.some(layer=>layer.id===i.layerId));
-    if(density){ctx.fillStyle=this.theme.muted;ctx.textAlign='right';ctx.fillText(this.fitText(ctx,`Density · count · ${density.visible.toLocaleString()} records`,r.width),r.left+r.width,bottom-13);}
+    if(density){ctx.fillStyle=this.theme.muted;ctx.textAlign='right';ctx.fillText(this.fitText(ctx,`${density.visible.toLocaleString()} visible / ${density.total.toLocaleString()} total`,r.width),r.left+r.width,bottom-10);}
     const link=this.linkedSpec,result=this.linkedResult;
     const linkedHistogram=link&&layers.find(layer=>layer.id===link.histogram);
     if(linkedHistogram){
@@ -451,7 +586,7 @@ export class FigureView {
   private drawAnnotations(ctx:CanvasRenderingContext2D,panel:PanelFrame):void{
     const {rect:r,bounds,view}=panel;
     ctx.save();ctx.beginPath();ctx.rect(r.left,r.top,r.width,r.height);ctx.clip();
-    for(const annotation of this.figure.spec.annotations??[]){
+    for(const annotation of this.source.spec.annotations??[]){
       if((annotation.panelId??'main')!==panel.id)continue;
       const {style}=annotation;ctx.strokeStyle=ctx.fillStyle=style.color??this.theme.muted;ctx.lineWidth=style.width??1;ctx.globalAlpha=style.opacity??1;
       const x=annotation.x===undefined?NaN:r.left+normalize(annotation.x,bounds.x,view.xScale)*r.width;
@@ -465,8 +600,54 @@ export class FigureView {
     ctx.restore();
   }
   private location(event:MouseEvent):[number,number]{const rect=this.overlay.getBoundingClientRect();const x=event.clientX-rect.left,y=event.clientY-rect.top;this.pointerPosition={x,y,clientX:event.clientX,clientY:event.clientY};return [x,y];}
-  private clearHover():void{this.tooltip=undefined;const hadHit=this.hoverHit!==undefined;this.hoverHit=undefined;if(hadHit)this.figure.emit('hover',null);}
-  private emitHit(payload:Omit<HoverEvent,'pointerPosition'>):void{const event={...payload,pointerPosition:{...this.pointerPosition}} as HoverEvent;this.hoverHit=event;this.figure.emit('hover',event);}
+  private clearXHover():void{const had=!!this.xHover;this.xHover=undefined;this.xPinned=false;if(had)this.figure.emit('xhover',null);}
+  private clearHover():void{this.lastHover=undefined;this.pendingHover=undefined;this.clearXHover();this.tooltip=undefined;const hadHit=this.hoverHit!==undefined;this.hoverHit=undefined;if(hadHit)this.figure.emit('hover',null);}
+  private sourceInspection(layer:LayerSpec,panel:PanelFrame):XInspectionIndex{
+    const x=this.displayedSource.registry.get(layer.data.x),y=this.displayedSource.registry.get(layer.data.y);
+    const key=JSON.stringify([layer.data.x,x.descriptor.version,layer.data.y,y.descriptor.version,panel.view.xScale,panel.view.yScale]);
+    let cached=this.inspection.get(layer.id);
+    if(cached?.key!==key){cached={key,index:buildXInspectionIndex(x.values,{y:y.values},{xScale:panel.view.xScale,yScale:panel.view.yScale})};this.inspection.set(layer.id,cached);}
+    return cached.index;
+  }
+  private inspectX(cursorX:number,panel:PanelFrame):void{
+    this.tooltip=undefined;
+    const items:XHoverEvent['items']=[];
+    for(const layer of panel.layers.filter(l=>l.kind==='line')){
+      const index=this.sourceInspection(layer,panel),at=nearestWithinRun(index,cursorX);
+      if(at!==null)items.push({layerId:layer.id,index:at,x:index.x[at],y:this.displayedSource.registry.get(layer.data.y).values[at],...this.streamIdentity(layer.id,at)});
+    }
+    this.xHover={cursorX,pointerPosition:{...this.pointerPosition},...this.panelMetadata(panel.id,this.displayedSource),items};
+    this.figure.emit('xhover',this.xHover);this.drawOverlay();
+  }
+  private keyDown=(event:KeyboardEvent):void=>{
+    if(event.key==='Escape'){this.clearHover();this.drawOverlay();return;}
+    if(this.displayedSource.spec.hoverMode!=='x'||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)||!this.committedFigure)return;
+    const panel=this.panels.find(p=>p.id===(this.xHover?.panelId??'main'))??this.panels[0],layer=panel?.layers.find(l=>l.kind==='line');if(!layer)return;
+    const index=this.sourceInspection(layer,panel),xs=index.x,dir=event.key==='ArrowLeft'||event.key==='End'?-1:1;
+    let at=event.key==='End'?xs.length-1:0;
+    if(event.key.startsWith('Arrow')&&this.xHover){
+      let low=0,high=xs.length;while(low<high){const mid=low+Math.floor((high-low)/2);if(xs[mid]<this.xHover.cursorX)low=mid+1;else high=mid;}
+      const current=this.xHover.items.find(item=>item.layerId===layer.id);at=current?current.index+dir:dir>0?low:low-1;
+    }
+    while(at>=0&&at<xs.length&&(!index.valid[at]||xs[at]<panel.bounds.x[0]||xs[at]>panel.bounds.x[1]))at+=dir;
+    if(at<0||at>=xs.length)return;event.preventDefault();this.xPinned=true;this.inspectX(xs[at],panel);
+    this.selectionStatus.textContent=`${this.axisLabel('x',xs[at],panel)}: ${this.xHover!.items.map(item=>`${panel.layers.find(l=>l.id===item.layerId)?.style.label??'Series'} ${this.axisLabel('y',item.y,panel)}`).join(', ')}`;
+  };
+  private drawXHover(ctx:CanvasRenderingContext2D):void{
+    const event=this.xHover!,panel=this.panels.find(p=>p.id===(event.panelId??'main'));if(!panel)return;
+    const r=panel.rect,x=r.left+normalize(event.cursorX,panel.bounds.x,panel.view.xScale)*r.width;
+    ctx.save();ctx.beginPath();ctx.rect(r.left,r.top,r.width,r.height);ctx.clip();
+    ctx.strokeStyle=this.theme.muted;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,r.top);ctx.lineTo(x,r.top+r.height);ctx.stroke();
+    for(const item of event.items){const layer=panel.layers.find(l=>l.id===item.layerId)!;const px=r.left+normalize(item.x,panel.bounds.x,panel.view.xScale)*r.width,py=r.top+(1-normalize(item.y,panel.bounds.y,panel.view.yScale))*r.height;ctx.fillStyle=layer.style.color??this.theme.palette[0];ctx.beginPath();ctx.arc(px,py,4,0,Math.PI*2);ctx.fill();}
+    ctx.restore();if(!this.source.presentation.tooltip)return;
+    const lines=[this.axisLabel('x',event.cursorX,panel),...panel.layers.filter(l=>l.kind==='line').map((layer,i)=>{const hit=event.items.find(v=>v.layerId===layer.id);return `${layer.style.label??`Series ${i+1}`}: ${hit?`${this.axisLabel('y',hit.y,panel)} · x=${this.axisLabel('x',hit.x,panel)}`:'—'}`;})];
+    ctx.font=`${this.fonts.tick}px ${this.theme.fontFamily}`;const width=Math.min(this.width-16,Math.max(...lines.map(t=>ctx.measureText(t).width))+20),lineHeight=this.fonts.tick+7,height=lines.length*lineHeight+14;
+    const left=Math.max(8,Math.min(this.width-width-8,x+14)),top=Math.max(4,Math.min(this.height-height-4,r.top+12));
+    ctx.fillStyle=this.theme.tooltipBackground;ctx.fillRect(left,top,width,height);ctx.fillStyle=this.theme.tooltipForeground;ctx.textAlign='left';
+    lines.forEach((line,i)=>ctx.fillText(this.fitText(ctx,line,width-20),left+10,top+this.fonts.tick+7+i*lineHeight));
+  }
+  private streamIdentity(layerId:string,index?:number,source=this.displayedSource):{streamId?:string;sequence?:number;revision?:number}{const state=source.getStreamingState(layerId);return state?{streamId:state.streamId,revision:state.revision,...(index===undefined?{}:{sequence:state.nextSequence-state.retained+index})}:{};}
+  private emitHit(payload:Omit<HoverEvent,'pointerPosition'>):void{const event={...payload,...this.streamIdentity(payload.layerId as string,payload.index as number|undefined),pointerPosition:{...this.pointerPosition}} as HoverEvent;this.hoverHit=event;this.figure.emit('hover',event);}
   private axisLabel(axis:'x'|'y',value:number,panel:PanelFrame,span?:number):string{const format=panel.view[`${axis}Format`];return panel.view[`${axis}Scale`]==='time'&&(!format||format.kind==='date')?formatTimeTick(value,span??(panel.bounds[axis][1]-panel.bounds[axis][0]),format):formatValue(value,format,span);}
   /** Browser gestures stay inside calendar limits; explicit API validation remains strict. */
   private gestureDomain(domain:Domain,axis:'x'|'y',view:ViewSpec):Domain|undefined{
@@ -488,12 +669,12 @@ export class FigureView {
   };
   private pointerDown=(event:PointerEvent):void=>{
     const [x,y]=this.location(event),panel=this.panelAt(x,y);if(!panel||event.button!==0)return;
-    this.overlay.setPointerCapture(event.pointerId);this.tooltip=undefined;
+    this.xPinned=false;this.overlay.focus({preventScroll:true});this.overlay.setPointerCapture(event.pointerId);this.tooltip=undefined;
     this.drag={pointerId:event.pointerId,panelId:panel.id,x,y,lastX:x,lastY:y,select:event.shiftKey&&panel.view.kind==='2d',pan:event.shiftKey,bounds:structuredClone(panel.bounds),rect:{...panel.rect}};
   };
   private pointerMove=(event:PointerEvent):void=>{
     const [x,y]=this.location(event),d=this.drag;
-    if(!d){this.hover(x,y);return;}
+    if(!d){this.pendingHover=[x,y];if(!this.hoverRaf)this.hoverRaf=requestAnimationFrame(()=>{this.hoverRaf=0;const pending=this.pendingHover;this.pendingHover=undefined;if(pending&&!this.disposed)this.hover(...pending);});return;}
     if(!d.select&&!d.moved&&Math.hypot(x-d.x,y-d.y)<4)return;
     if(Math.hypot(x-d.x,y-d.y)>=4)d.moved=true;
     const r=d.rect;
@@ -514,7 +695,7 @@ export class FigureView {
     const d=this.drag;if(!d)return;const panel=this.panels.find(panel=>panel.id===d.panelId);
     if(d.select&&this.box&&panel)this.select(this.box,panel);
     const [x,y]=this.location(event),clicked=!d.select&&!d.moved&&Math.hypot(x-d.x,y-d.y)<4;this.drag=undefined;this.box=undefined;if(this.overlay.hasPointerCapture(event.pointerId))this.overlay.releasePointerCapture(event.pointerId);
-    if(clicked){this.hover(x,y);if(this.hoverHit)this.figure.emit('click',this.hoverHit);}this.drawOverlay();this.figure.emitViewChange(d.panelId);
+    if(clicked){this.hover(x,y,true);if(this.hoverHit)this.figure.emit('click',this.hoverHit);if(this.displayedSource.spec.hoverMode==='x'&&panel){this.inspectX(this.pointToData(x,y,panel)[0],panel);this.xPinned=event.pointerType==='touch';}}this.drawOverlay();this.figure.emitViewChange(d.panelId);
   };
   private pointToData(x:number,y:number,panel:PanelFrame):[number,number]{const {rect:r,bounds,view}=panel;return [denormalize((x-r.left)/r.width,bounds.x,view.xScale),denormalize(1-(y-r.top)/r.height,bounds.y,view.yScale)];}
   private statisticsInfo(prepared:PreparedStatistics,panel:PanelFrame):PanelInfo{
@@ -556,7 +737,7 @@ export class FigureView {
     const item=prepared.items[hit.itemIndex];if(!item)return false;
     const horizontal=item.kind==='bar'?item.orientation==='horizontal':item.kind==='boxplot'&&layer.options&&'orientation' in layer.options&&layer.options.orientation==='horizontal';
     const valueAxis=horizontal?'x':'y';
-    const metadata={layerId:layer.id,...this.panelMetadata(panel.id)},format=(value:number)=>formatValue(value,panel.view[`${valueAxis}Format`]);
+    const metadata={layerId:layer.id,...this.panelMetadata(panel.id,this.displayedSource)},format=(value:number)=>formatValue(value,panel.view[`${valueAxis}Format`]);
     if(item.kind==='hist'){
       const rightClosed=item.binIndex===prepared.items.length-1;
       this.tooltip={x,y,text:`[${formatValue(item.left,panel.view.xFormat)}, ${formatValue(item.right,panel.view.xFormat)}${rightClosed?']':')'} · count=${item.count} · height=${format(item.height)}`};
@@ -579,9 +760,12 @@ export class FigureView {
     }
     return true;
   }
-  private hover(x:number,y:number):void{
-    const hadHit=this.hoverHit!==undefined;this.tooltip=undefined;this.hoverHit=undefined;const panel=this.panelAt(x,y);if(!panel||panel.view.kind==='3d'||this.completed!==this.generation||this.failure){if(hadHit)this.figure.emit('hover',null);this.drawOverlay(this.failure?.message);return;}
-    const {rect:r,view,bounds}=panel,metadata=this.panelMetadata(panel.id);
+  private hover(x:number,y:number,forceNearest=false):void{
+    this.lastHover=[x,y];
+    const hadHit=this.hoverHit!==undefined;this.tooltip=undefined;this.hoverHit=undefined;const panel=this.panelAt(x,y);if(!panel||panel.view.kind==='3d'||!this.committedFigure||this.failure){if(hadHit)this.figure.emit('hover',null);this.drawOverlay(this.failure?.message);return;}
+    const source=this.displayedSource;
+    if(source.spec.hoverMode==='x'&&!forceNearest){if(!this.xPinned)this.inspectX(this.pointToData(x,y,panel)[0],panel);return;}
+    const {rect:r,view,bounds}=panel,metadata=this.panelMetadata(panel.id,source);
     for(const layer of [...panel.layers].reverse()){
       const prepared=this.statistics.get(layer.id);
       if(prepared){if(this.statisticsHover(prepared,layer,x,y,panel))break;continue;}
@@ -590,23 +774,33 @@ export class FigureView {
         const c=Math.min(plan.columns-1,Math.floor((x-r.left)/r.width*plan.columns)),row=Math.min(plan.rows-1,Math.floor((1-(y-r.top)/r.height)*plan.rows)),count=plan.counts[row*plan.columns+c];
         if(!count)continue;this.tooltip={x,y,text:`${count.toLocaleString()} records / bin`};this.emitHit({kind:'density',layerId:layer.id,...metadata,count,column:c,row});break;
       }
-      const xs=this.figure.registry.get(layer.data.x).values,ys=this.figure.registry.get(layer.data.y).values;
+      if(layer.kind==='band')continue;
+      const xs=source.registry.get(layer.data.x).values,ys=source.registry.get(layer.data.y).values;
       if(plan?.kind==='points'||plan?.kind==='line'){
-        const groups=plan.kind==='points'?[plan.indices]:plan.segments;let best=64,index=-1;
-        for(const group of groups)for(const i of group){const px=r.left+normalize(xs[i],bounds.x,view.xScale)*r.width,py=r.top+(1-normalize(ys[i],bounds.y,view.yScale))*r.height;const dist=(px-x)**2+(py-y)**2;if(dist<best){best=dist;index=i;}}
+        const groups=plan.kind==='points'?[plan.indices]:plan.segments;let best=64,index=-1,candidates:Iterable<number>[] = groups;
+        if(!forceNearest&&plan.info.rendered>2000){
+          let cached=this.hoverIndices.get(layer.id);
+          if(cached?.plan!==plan){
+            const revision=this.committedRevision;cached={plan};this.hoverIndices.set(layer.id,cached);const target=cached;
+            void runSteps(hoverIndexSteps(xs,ys,groups,bounds,r.width,r.height,view.xScale,view.yScale),()=>this.disposed||this.committedRevision!==revision).then(index=>{if(this.disposed||revision!==this.committedRevision||this.hoverIndices.get(layer.id)!==target)return;target.index=index;if(this.lastHover)this.hover(...this.lastHover);},()=>{if(this.hoverIndices.get(layer.id)===target)this.hoverIndices.delete(layer.id);});
+          }
+          if(!cached.index)continue;candidates=[hoverCandidates(cached.index,x-r.left,y-r.top)];
+        }
+        for(const group of candidates)for(const i of group){const px=r.left+normalize(xs[i],bounds.x,view.xScale)*r.width,py=r.top+(1-normalize(ys[i],bounds.y,view.yScale))*r.height;const dist=(px-x)**2+(py-y)**2;if(dist<best){best=dist;index=i;}}
         if(index>=0){const xv=this.axisValue('x',xs[index],panel.id),yv=this.axisValue('y',ys[index],panel.id);this.tooltip={x,y,text:`x=${typeof xv==='number'?this.axisLabel('x',xv,panel):xv}  y=${typeof yv==='number'?this.axisLabel('y',yv,panel):yv}`};this.emitHit({kind:'point',layerId:layer.id,...metadata,index,x:xv,y:yv,...(layer.categorical?{xCoordinate:xs[index],yCoordinate:ys[index]}:{})});break;}
       }else if(layer.kind==='heatmap'){
         const [vx,vy]=this.pointToData(x,y,panel),xe=gridEdges(xs,view.xScale),ye=gridEdges(ys,view.yScale);
         const col=xe.findIndex((v,i)=>i<xe.length-1&&vx>=v&&vx<xe[i+1]),row=ye.findIndex((v,i)=>i<ye.length-1&&vy>=v&&vy<ye[i+1]);
-        if(col>=0&&row>=0){const value=this.figure.registry.get(layer.data.z).values[row*xs.length+col];this.tooltip={x,y,text:`value=${value}`};this.emitHit({kind:'cell',layerId:layer.id,...metadata,row,column:col,value});break;}
+        if(col>=0&&row>=0){const value=source.registry.get(layer.data.z).values[row*xs.length+col];this.tooltip={x,y,text:`value=${value}`};this.emitHit({kind:'cell',layerId:layer.id,...metadata,row,column:col,value});break;}
       }
     }if(!this.hoverHit&&hadHit)this.figure.emit('hover',null);this.drawOverlay();
   }
   private select(box:[number,number,number,number],panel:PanelFrame):void{
-    if(this.completed!==this.generation||this.failure)return;
+    if(!this.committedFigure||this.failure)return;
+    const sequence=++this.selectionSequence,revision=this.committedRevision,source=this.displayedSource;
     const a=this.pointToData(box[0],box[1],panel),b=this.pointToData(box[2],box[3],panel);const bounds:Bounds={x:[Math.min(a[0],b[0]),Math.max(a[0],b[0])],y:[Math.min(a[1],b[1]),Math.max(a[1],b[1])]};
     for(const layer of panel.layers){
-      if(this.figure.spec.selectionLink?.scatter.includes(layer.id)){this.figure.selectLinked(layer.id,bounds);continue;}
+      if(source.spec.selectionLink?.scatter.includes(layer.id)){if(this.figure.spec.selectionLink?.id===source.spec.selectionLink.id&&this.figure.spec.selectionLink.scatter.includes(layer.id))this.figure.selectLinked(layer.id,bounds);continue;}
       const prepared=this.statistics.get(layer.id);
       if(prepared){
         const selected=new Set<number>();
@@ -615,30 +809,69 @@ export class FigureView {
           if(target.x[0]<=bounds.x[1]&&target.x[1]>=bounds.x[0]&&target.y[0]<=bounds.y[1]&&target.y[1]>=bounds.y[0])selected.add(prepared.items[mark.itemIndex].index);
         }
         const indices=Array.from(selected).sort((a,b)=>a-b).slice(0,10000);
-        const result:Selection={kind:prepared.kind==='hist'?'bins':prepared.kind==='bar'?'bars':'boxes',layerId:layer.id,...this.panelMetadata(panel.id),indices,count:selected.size,truncated:selected.size>indices.length};
+        const result:Selection={kind:prepared.kind==='hist'?'bins':prepared.kind==='bar'?'bars':'boxes',layerId:layer.id,...this.panelMetadata(panel.id,source),indices,count:selected.size,truncated:selected.size>indices.length};
         this.figure.emit('selection',result);continue;
       }
       if(layer.kind!=='scatter'&&layer.kind!=='line')continue;
-      const xs=this.figure.registry.get(layer.data.x).values,ys=this.figure.registry.get(layer.data.y).values;
-      const colors=layer.data.color?this.figure.registry.get(layer.data.color).values:undefined,density=this.plans.get(layer.id)?.kind==='density';
-      let count=0;const indices:number[]=[];for(let i=0;i<xs.length;i++)if(xs[i]>=bounds.x[0]&&xs[i]<=bounds.x[1]&&ys[i]>=bounds.y[0]&&ys[i]<=bounds.y[1]&&(density||!colors||Number.isFinite(colors[i]))){count++;if(indices.length<10000)indices.push(i);}
-      const metadata=this.panelMetadata(panel.id);
-      const result:Selection=density?{kind:'density',layerId:layer.id,...metadata,bounds,count}:{kind:'points',layerId:layer.id,...metadata,indices,count,truncated:count>indices.length};this.figure.emit('selection',result);
+      const density=this.plans.get(layer.id)?.kind==='density',metadata=this.panelMetadata(panel.id,source),identity=this.streamIdentity(layer.id,undefined,source),stream=source.getStreamingState(layer.id);
+      void this.scheduler.querySelection(`${layer.id}:selection`,layer.data.x,layer.data.y,bounds,source.registry,density?undefined:layer.data.color).then(selected=>{
+        if(this.disposed||revision!==this.committedRevision||sequence!==this.selectionSequence)return;
+        const indices=Array.from(selected.indices),rowSequences=stream?indices.map(index=>stream.nextSequence-stream.retained+index):undefined;
+        const result:Selection=density?{kind:'density',layerId:layer.id,...metadata,...identity,bounds,count:selected.count}:{kind:'points',layerId:layer.id,...metadata,...identity,...(rowSequences?{sequences:rowSequences}:{}),indices,count:selected.count,truncated:selected.truncated};this.figure.emit('selection',result);
+      },error=>{if(!this.disposed&&revision===this.committedRevision&&error?.name!=='AbortError')this.figure.emit('error',{message:error instanceof Error?error.message:String(error)});});
     }
   }
-  async exportPNG():Promise<Blob>{
-    do{await this.ready();}while(this.completed!==this.generation);
-    if(this.failure)throw this.failure;
+  async exportPNG(options:ExportPNGOptions={}):Promise<Blob>{
+    const validated=validateExportPNGOptions(options),reservation=this.reserveExport();
+    try{
+      const captured=this.captureFigure(),snapshot=captured.snapshot(),buffers=new Map<string,NumericArray>();
+      for(const source of snapshot.sources)buffers.set(source.id,captured.registry.get(source.id).values);
+      return await this.queueSnapshotPNG(snapshot,buffers,validated,reservation.signal);
+    }finally{this.exportReservations.delete(reservation);}
+  }
+  async exportSnapshotPNG(input:Snapshot,inputBuffers:Map<string,ArrayBuffer>,options:ExportPNGOptions={}):Promise<Blob>{
+    const validated=validateExportPNGOptions(options),reservation=this.reserveExport();
+    try{return await this.queueSnapshotPNG(input,inputBuffers,validated,reservation.signal);}
+    finally{this.exportReservations.delete(reservation);}
+  }
+  private reserveExport():AbortController{
+    if(this.disposed)throw new Error('Figure view disposed during PNG export');
+    if(this.exportReservations.size>=8)throw Object.assign(new Error('At most 8 PNG exports may be pending per figure view'),{code:'EXPORT_BACKPRESSURE'});
+    const reservation=new AbortController();this.exportReservations.add(reservation);return reservation;
+  }
+  private async queueSnapshotPNG(input:Snapshot,inputBuffers:ReadonlyMap<string,ArrayBuffer|NumericArray>,validated:ExportPNGOptions,signal:AbortSignal):Promise<Blob>{
+    const target={width:validated.width??this.width,height:validated.height??this.height,scale:validated.scale??this.dpr};
+    const raster=validateExportRaster(target.width,target.height,target.scale);
+    this.renderer.validateRasterSize(raster.width,raster.height);
+    // Capture an owned snapshot before queueing, so refresh/resize/close cannot mix generations.
+    const snapshot=structuredClone(input),buffers=new Map<string,ArrayBuffer>();
+    for(const [id,buffer]of inputBuffers)buffers.set(id,ArrayBuffer.isView(buffer)?buffer.buffer.slice(buffer.byteOffset,buffer.byteOffset+buffer.byteLength) as ArrayBuffer:buffer.slice(0));
+    snapshot.figure.width=target.width;snapshot.figure.height=target.height;
+    const run=async()=>{
+      if(this.disposed||signal.aborted)throw new Error('Figure view disposed during PNG export');
+      const host=document.createElement('div');host.style.cssText=`position:absolute;left:-100000px;top:0;width:${target.width}px;height:${target.height}px;pointer-events:none;`;
+      host.setAttribute('aria-hidden','true');document.body.appendChild(host);
+      const copy=new Figure();let view:FigureView|undefined;
+      try{copy.applySnapshot(snapshot,buffers);view=new FigureView(copy,host,target,this.renderer.gl);view.schedule();await view.ready({signal});return await view.capturePNG();}
+      finally{view?.dispose();copy.close();host.remove();}
+    };
+    const result=this.exportQueue.then(run,run);this.exportQueue=result.catch(()=>{});
+    let cancel!:()=>void;
+    const cancelled=new Promise<never>((_,reject)=>{cancel=()=>{buffers.clear();reject(new Error('Figure view disposed during PNG export'));};signal.addEventListener('abort',cancel,{once:true});});
+    try{return await Promise.race([result,cancelled]);}finally{signal.removeEventListener('abort',cancel);}
+  }
+  private async capturePNG():Promise<Blob>{
     const canvas=document.createElement('canvas');canvas.width=this.renderer.canvas.width;canvas.height=this.renderer.canvas.height;
-    const exportOverlay=document.createElement('canvas');exportOverlay.width=canvas.width;exportOverlay.height=canvas.height;
-    const overlayContext=exportOverlay.getContext('2d')!;overlayContext.setTransform(this.dpr,0,0,this.dpr,0,0);this.drawOverlay(undefined,overlayContext,true);
-    const ctx=canvas.getContext('2d')!;ctx.drawImage(this.renderer.canvas,0,0);ctx.drawImage(exportOverlay,0,0);
+    const overlay=document.createElement('canvas');overlay.width=canvas.width;overlay.height=canvas.height;
+    const overlayContext=overlay.getContext('2d')!;overlayContext.setTransform(this.dpr,0,0,this.dpr,0,0);this.drawOverlay(undefined,overlayContext,true);
+    const ctx=canvas.getContext('2d')!;ctx.drawImage(this.renderer.rasterCanvas(),0,0);ctx.drawImage(overlay,0,0);
     return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG encoding failed')),'image/png'));
   }
   dispose():void{
-    if(this.disposed)return;this.disposed=true;if(this.raf)cancelAnimationFrame(this.raf);this.observer.disconnect();this.scheduler.dispose();this.renderer.dispose();
+    if(this.disposed)return;this.disposed=true;for(const reservation of this.exportReservations)reservation.abort();this.exportReservations.clear();if(this.raf)cancelAnimationFrame(this.raf);if(this.hoverRaf)cancelAnimationFrame(this.hoverRaf);this.selectionSequence++;this.observer.disconnect();this.scheduler.dispose();this.renderer.dispose();
     for(const cleanup of this.cleanup)cleanup();this.root.remove();this.plans.clear();this.geometries.clear();this.extents.clear();this.statistics.clear();this.barCache.clear();this.statisticsRequests.clear();this.sources.clear();this.panels=[];
     this.linkedResult=undefined;this.linkedSpec=undefined;this.selectedPlans.clear();
+    this.renderingFigure=undefined;this.committedFigure=undefined;this.hoverIndices.clear();
     for(const waiter of this.waiters.splice(0))waiter.reject(new Error('Figure view disposed'));
   }
 }

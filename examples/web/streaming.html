@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>Vesora live telemetry</title>
+<style>body{margin:0;background:#f5f7fa;color:#142438;font:15px system-ui}main{max-width:1100px;margin:32px auto;padding:0 20px}h1{margin-bottom:8px}p{color:#526476}nav{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0}button,a{font:inherit}button{padding:9px 14px;border:1px solid #bdc9d6;border-radius:7px;background:white;cursor:pointer}button:focus-visible{outline:3px solid #3569c8}#chart{min-height:480px;background:white;border:1px solid #dbe2e9;border-radius:10px;overflow:hidden}#status{min-height:24px;margin-top:16px}a{color:#3569c8}</style></head>
+<body><main><a href="./">← Scientific gallery</a><h1>Live training curves</h1><p>Three synthetic signals, retaining the latest 2,000 samples each. Drag, zoom or inspect to pause the stream. Resume returns to the live window.</p>
+<nav aria-label="Chart actions"><button id="pause" disabled>Pause</button><button id="reset" disabled>Reset view</button><button id="png" disabled>Save PNG</button><button id="html" disabled>Save HTML snapshot</button></nav>
+<p id="status" role="status" aria-live="polite">Loading live chart…</p><div id="chart"></div></main>
+<script type="module">
+import('./streaming.js').then(()=>{
+  for(const button of document.querySelectorAll('nav button'))button.disabled=false;
+}).catch(error=>{
+  const status=document.querySelector('#status');
+  status.setAttribute('role','alert');
+  status.textContent=`Could not load the chart: ${error.message}. Reload the page to retry.`;
+});
+</script></body></html>
