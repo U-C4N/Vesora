@@ -40,6 +40,7 @@ try{
     const fig=figure({width:1000,height:600,title:'PRISM exact-archive soak'}),layers=Array.from({length:3},(_,j)=>fig.plot(base,Float64Array.from(base,x=>curve(x,j))).enableStreaming({maxPoints}));
     document.querySelector('#chart').style.width='1000px';fig.mount(document.querySelector('#chart'));await fig.ready({timeoutMs:60000});
     const gl=document.querySelector('canvas').getContext('webgl2'),debug=gl.getExtension('WEBGL_debug_renderer_info'),renderer=debug?gl.getParameter(debug.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+    const scheduler=fig.view.scheduler;
     const pending=new Set(),presentations=[],acceptance=[],liveLatency=[],frozenLatency=[],errors=[],snapshots=[],resources=[];
     let batches=0,totalRows=0,accepted=0,covered=0,exports=0,freezes=0,epoch=0,controlBusy=false,control=Promise.resolve(),stopping=false,nextControl=cycleSeconds*1000;
     const start=performance.now(),cycleMs=cycleSeconds*1000,heldMs=heldSeconds*1000;
@@ -85,13 +86,16 @@ try{
     await deadline(control,'Inspection cleanup',150000);await deadline(Promise.allSettled([...pending]),'Accepted append drain');if(fig.getInspectionState().mode==='frozen')await deadline(fig.resumeLive(),'Final resume');await fig.ready({timeoutMs:60000});record();
     const finalLease=fig.captureExport('displayed');let finalRanges;try{finalRanges=verifySources(finalLease,maxPoints+totalRows);}finally{finalLease.release();}
     const states=layers.map(layer=>fig.getStreamingState(layer.id)),diagnostics=fig.diagnostics();fig.close();
-    return {producerDurationSeconds,durationSeconds:(performance.now()-start)/1000,batches,totalRows,accepted,covered,exports,freezes,pendingPresentations:presentations.length,states,diagnostics,afterClose:fig.diagnostics(),remainingCanvases:document.querySelectorAll('canvas').length,resources,snapshots,finalRanges,acceptanceMs:acceptance,liveFrameLatencyMs:liveLatency,frozenFrameLatencyMs:frozenLatency,errors,renderer};
+    return {producerDurationSeconds,durationSeconds:(performance.now()-start)/1000,batches,totalRows,accepted,covered,exports,freezes,pendingPresentations:presentations.length,states,diagnostics,afterClose:fig.diagnostics(),schedulerAfterClose:scheduler.stats,remainingCanvases:document.querySelectorAll('canvas').length,resources,snapshots,finalRanges,acceptanceMs:acceptance,liveFrameLatencyMs:liveLatency,frozenFrameLatencyMs:frozenLatency,errors,renderer};
   },{runtime,seconds,maxPoints,cycleSeconds,heldSeconds})]);
   report={...report,runtimeHashes:manifest.runtime,recordedAt:new Date().toISOString(),browser:browser.version(),cpu:cpus()[0]?.model,platform:platform(),physicalMemoryBytes:totalmem(),softwareGpuRequested:software,requestedSeconds:seconds,latencyReference:profile==='isolated',scope:'Exact core tarball; three bounded series, atomic batches, bursts, frozen snapshots and exports across resume. Latency crossing any freeze is separate. JS heap includes test serialization; no OS RSS or GPU-driver memory claim.',browserErrors:errors,result};
   assert.deepEqual(errors,[]);assert.deepEqual(result.errors,[]);assert.equal(result.accepted,result.batches);assert.equal(result.covered,result.accepted);assert.equal(result.pendingPresentations,0);assert.ok(result.exports>0);
   for(const state of result.states){assert.equal(state.retained,maxPoints);assert.equal(state.nextSequence,maxPoints+result.totalRows);}
   assert.equal(result.liveFrameLatencyMs.length+result.frozenFrameLatencyMs.length,result.covered);
   assert.equal(result.diagnostics.pendingAppends,0);assert.equal(result.diagnostics.pendingExports,0);assert.equal(result.diagnostics.snapshotBytes,0);assert.equal(result.diagnostics.sourceBytes,3*2*maxPoints*8);assert.equal(result.afterClose.sourceBytes,0);assert.equal(result.afterClose.pendingAppends,0);assert.equal(result.remainingCanvases,0);
+  for(const sample of result.resources)for(const cache of Object.values(sample.diagnostics.lineIndex))assert.ok(cache.indexBytes+cache.retainedBytes<=8*1024*1024,'Line index exceeded its accounted resource budget');
+  for(const cache of Object.values(result.schedulerAfterClose.lineIndex)){assert.equal(cache.indexBytes,0);assert.equal(cache.retainedBytes,0);}
+  assert.equal(result.schedulerAfterClose.worker,false);assert.equal(result.schedulerAfterClose.workerSourceBytes,0);assert.equal(result.schedulerAfterClose.pending,0);
   assert.equal(result.diagnostics.contextLost,false);report.status='passed';report.qualifiesTwoHourGate=seconds>=7200&&result.producerDurationSeconds>=7200;
   console.log(`Browser soak passed (${result.durationSeconds.toFixed(1)}s; two-hour gate: ${report.qualifiesTwoHourGate}).`);
 }catch(error){report.error=String(error);throw error;}

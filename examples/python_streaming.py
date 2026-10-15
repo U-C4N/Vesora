@@ -1,4 +1,4 @@
-"""Bounded synthetic telemetry. Run after installing/building Vesora v0.8."""
+"""Bounded synthetic telemetry. Run after installing or building Vesora."""
 import math
 import time
 import vesora as vs

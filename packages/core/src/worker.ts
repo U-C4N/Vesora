@@ -3,6 +3,7 @@ import {selectionSteps} from './interaction';
 import type {SelectionResult} from './interaction';
 import type {Bounds} from './types';
 import {ascending} from './source-metadata';
+import {LineIndexCache} from './line-index';
 import {lineSteps, runSteps, scatterSteps} from './planning';
 import {bandSteps} from './band';
 import {statisticsSteps} from './statistics';
@@ -25,12 +26,14 @@ export type WorkerRequest =
   | {type: 'dispose'};
 export type WorkerResponse =
   | {type:'ready'}
+  | {type:'line-index-stats';stats:ReturnType<LineIndexCache['diagnostics']>}
   | {type:'progress';requestId:number}
   | {type:'sync-error';message:string}
-  | {type: 'result'; requestId: number; result: PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult}
-  | {type: 'error'; requestId: number; name: string; message: string};
+  | {type: 'result'; requestId: number; result: PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult;lineIndex?:ReturnType<LineIndexCache['diagnostics']>}
+  | {type: 'error'; requestId: number; name: string; message: string;lineIndex?:ReturnType<LineIndexCache['diagnostics']>};
 
 const registry = new DataRegistry();
+const lineIndex = new LineIndexCache();
 const requests = new Map<number, {cancelled: boolean; ids: string[]}>();
 let disposed = false;
 const scope = globalThis as unknown as {onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null; postMessage(message: WorkerResponse, transfer?: Transferable[]): void; close(): void};
@@ -45,7 +48,9 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
       const chunks=message.parts.map(part=>{
         if('values' in part)return part.values;
         const chunk=old?.chunks?.[part.reuse];if(!chunk||part.offset<0||part.length<0||part.offset+part.length>chunk.length)throw new Error('Invalid worker chunk reference');
-        return chunk.subarray(part.offset,part.offset+part.length) as NumericArray;
+        // Metadata summaries are cached by immutable chunk identity. Preserve a
+        // full reuse; only a trimmed head needs a new view and a fresh summary.
+        return part.offset===0&&part.length===chunk.length?chunk:chunk.subarray(part.offset,part.offset+part.length) as NumericArray;
       });
       if(chunks.reduce((sum,value)=>sum+value.byteLength,0)!==message.descriptor.byteLength)throw new Error('Worker chunk length mismatch');
       registry.store.set(message.descriptor.id,chunkEntry(message.descriptor,chunks));
@@ -63,13 +68,14 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
   if (message.type === 'release') {
     registry.release(message.id);
     for (const task of requests.values()) if (task.ids.includes(message.id)) task.cancelled = true;
+    lineIndex.clear();scope.postMessage({type:'line-index-stats',stats:lineIndex.diagnostics()});
     return;
   }
   if (message.type === 'cancel') {const task = requests.get(message.requestId); if (task) task.cancelled = true; return;}
   if (message.type === 'dispose') {
     disposed = true;
     for (const task of requests.values()) task.cancelled = true;
-    registry.clear(); scope.close(); return;
+    registry.clear();lineIndex.clear(); scope.close(); return;
   }
   const {requestId} = message;
   const task = {cancelled: false, ids: message.type === 'statistics' ? Object.values(message.layer.data)
@@ -85,17 +91,17 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
         : message.type === 'linked' ? linkedSteps(message.link, message.layers, captured, message.baseline)
           : message.type === 'band' ? bandSteps(captured.get(message.xId)!.values, captured.get(message.lowerId)!.values, captured.get(message.upperId)!.values, message.query)
           : message.type === 'selected-scatter' ? maskedScatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.mask, message.query)
-            : message.kind === 'line' ? lineSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query,ascending(captured.get(message.xId)!))
+            : message.kind === 'line' ? lineSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query,ascending(captured.get(message.xId)!),lineIndex)
               : scatterSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query);
       function* progress():Generator<void,PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>{let last=Date.now();while(true){const step=steps.next();if(step.done)return step.value;if(Date.now()-last>=250){scope.postMessage({type:'progress',requestId});last=Date.now();}yield;}}
       const result = await runSteps<PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>(progress(), () => task.cancelled || disposed);
       if (task.cancelled || disposed) return;
       const transfer: Transferable[] = result.kind==='selection'?[result.indices.buffer]:result.kind === 'linked' ? [result.mask.buffer, result.preview.buffer]
         : 'marks' in result ? [] : result.kind === 'points' ? [result.indices.buffer] : result.kind === 'density' ? [result.counts.buffer] : result.segments.map(segment => segment.buffer);
-      scope.postMessage({type: 'result', requestId, result}, transfer);
+      scope.postMessage({type: 'result', requestId, result,lineIndex:lineIndex.diagnostics()}, transfer);
     } catch (error) {
-      if (!task.cancelled && !disposed) scope.postMessage({type: 'error', requestId, name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error)});
-    } finally {requests.delete(requestId);}
+      if (!task.cancelled && !disposed) scope.postMessage({type: 'error', requestId, name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error),lineIndex:lineIndex.diagnostics()});
+    } finally {requests.delete(requestId);if(task.cancelled&&!disposed)scope.postMessage({type:'line-index-stats',stats:lineIndex.diagnostics()});}
   })();
 };
 scope.postMessage({type:'ready'});

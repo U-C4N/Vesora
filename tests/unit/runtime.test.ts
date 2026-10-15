@@ -41,6 +41,38 @@ describe('runtime recovery and immutable source transport',()=>{
     }finally{scheduler.dispose();}
   });
 
+  it('keeps worker chunk identities for full reuse while trimmed views preserve previous queries',async()=>{
+    const sent:WorkerResponse[]=[],get=vi.spyOn(DataRegistry.prototype,'get');
+    vi.stubGlobal('postMessage',(message:WorkerResponse)=>sent.push(message));vi.stubGlobal('close',vi.fn());vi.stubGlobal('onmessage',null);
+    try{
+      await import('../../packages/core/src/worker');
+      const receive=(data:WorkerRequest)=>(globalThis as unknown as {onmessage(event:{data:WorkerRequest}):void}).onmessage({data});
+      const register=(id:string,version:number,length:number,parts:Extract<WorkerRequest,{type:'register-chunks'}>['parts'],baseVersion?:number)=>receive({type:'register-chunks',descriptor:describeData(id,new Float64Array(length),undefined,version),parts,baseVersion});
+      const run=async(requestId:number)=>{
+        const start=get.mock.results.length;receive({type:'query',requestId,key:'line',kind:'line',xId:'x',yId:'y',query});
+        const x=get.mock.results[start].value,y=get.mock.results[start+1].value;
+        await vi.waitFor(()=>expect(sent.some(message=>message.type==='result'&&message.requestId===requestId)).toBe(true));
+        return {x,y};
+      };
+      register('x',1,6,[{values:Float64Array.of(0,1,2,3)},{values:Float64Array.of(4,5)}]);
+      register('y',1,6,[{values:Float64Array.of(1,2,3,4)},{values:Float64Array.of(5,6)}]);
+      const initial=await run(1);
+      for(const id of ['x','y'])register(id,2,5,[{reuse:0,offset:1,length:3},{reuse:1,offset:0,length:2}],1);
+      const trimmed=await run(2);
+      for(const axis of ['x','y'] as const){
+        expect(trimmed[axis].chunks[1]).toBe(initial[axis].chunks[1]);
+        expect(trimmed[axis].chunks[0]).not.toBe(initial[axis].chunks[0]);expect(trimmed[axis].chunks[0].buffer).toBe(initial[axis].chunks[0].buffer);
+        expect(trimmed[axis].chunks[0].byteOffset).toBe(initial[axis].chunks[0].byteOffset+Float64Array.BYTES_PER_ELEMENT);
+      }
+      expect([...initial.x.values]).toEqual([0,1,2,3,4,5]);expect([...trimmed.x.values]).toEqual([1,2,3,4,5]);
+      expect([...initial.y.values]).toEqual([1,2,3,4,5,6]);expect([...trimmed.y.values]).toEqual([2,3,4,5,6]);
+      for(const id of ['x','y'])register(id,3,5,[{reuse:0,offset:0,length:3},{reuse:1,offset:0,length:2}],2);
+      const reused=await run(3);
+      for(const axis of ['x','y'] as const)for(let index=0;index<2;index++)expect(reused[axis].chunks[index]).toBe(trimmed[axis].chunks[index]);
+      expect(sent.filter(message=>message.type==='error'||message.type==='sync-error')).toEqual([]);receive({type:'dispose'});
+    }finally{get.mockRestore();vi.unstubAllGlobals();}
+  });
+
   it('falls back after a message decoding failure and settles the pending query',async()=>{
     const fake={onmessage:null,onerror:null,onmessageerror:null as (()=>void)|null,postMessage(){},terminate:vi.fn()};
     const scheduler=new QueryScheduler({workerFactory:()=>fake as unknown as Worker});

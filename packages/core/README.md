@@ -2,14 +2,14 @@
 
 A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; mixed 2D/3D grids; scientific text and reference lines; and 3D surfaces, lines and scatter with source-aware inspection. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
 
-**v0.9.0-rc.1 PRISM candidate, MIT licensed:** this checkout is not a completed public release. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative charts or an application-owned scientific viewer.
+**v0.9.0-rc.2 PRISM candidate, MIT licensed:** this checkout is not a completed public release. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative charts or an application-owned scientific viewer.
 
 ## Installation
 
-From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v0.9.0-rc.1/vesora-core-0.9.0-rc.1.tgz` into your frontend project:
+From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v0.9.0-rc.2/vesora-core-0.9.0-rc.2.tgz` into your frontend project:
 
 ```bash
-npm install ./vesora-core-0.9.0-rc.1.tgz
+npm install ./vesora-core-0.9.0-rc.2.tgz
 ```
 
 Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [PRISM release gates](../../docs/releases/v0.9.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication. A publishable build requires a clean source commit and matching release tag.

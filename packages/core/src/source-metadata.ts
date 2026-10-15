@@ -2,6 +2,7 @@ import type {DataEntry,Domain,NumericArray,ScaleKind} from './types';
 
 interface Summary {linear?:Domain;log?:Domain;time?:Domain;ascending:boolean;first?:number;last?:number}
 const chunks=new WeakMap<NumericArray,Summary>(),entries=new WeakMap<DataEntry,Summary>();
+const scales=['linear','log','time'] as const;
 function summarize(values:NumericArray):Summary {
   let min=Infinity,max=-Infinity,positive=Infinity,positiveMax=-Infinity,timeMin=Infinity,timeMax=-Infinity,ascending=true;
   for(let i=0;i<values.length;i++){
@@ -19,7 +20,12 @@ function metadata(entry:DataEntry):Summary {
   const result:Summary={ascending:true};let previous:number|undefined;
   for(const chunk of entry.chunks){
     let summary=chunks.get(chunk);if(!summary){summary=summarize(chunk);chunks.set(chunk,summary);}
-    for(const scale of ['linear','log','time']as const){const bounds=summary[scale];if(bounds){const old=result[scale];result[scale]=old?[Math.min(old[0],bounds[0]),Math.max(old[1],bounds[1])]:[...bounds];}}
+    for(const scale of scales){
+      const bounds=summary[scale];if(!bounds)continue;
+      const old=result[scale];
+      if(old){old[0]=Math.min(old[0],bounds[0]);old[1]=Math.max(old[1],bounds[1]);}
+      else result[scale]=[...bounds];
+    }
     if(!summary.ascending||previous!==undefined&&summary.first!==undefined&&summary.first<=previous)result.ascending=false;
     if(chunk.length){result.first??=summary.first;result.last=summary.last;previous=summary.last;}
   }

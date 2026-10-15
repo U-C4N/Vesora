@@ -11,6 +11,7 @@ import {selectionSteps} from './interaction';
 import type {SelectionResult} from './interaction';
 import type {Bounds} from './types';
 import {ascending} from './source-metadata';
+import {LineIndexCache} from './line-index';
 
 type Plan = PointPlan | LineResult;
 type QueryResult = Plan | BandResult | PreparedStatistics | LinkedResult | SelectionResult;
@@ -50,6 +51,8 @@ export class QueryScheduler {
   private maxCacheBytes: number;
   private objectIds = new WeakMap<object, number>();
   private objectSequence = 0;
+  private lineIndex = new LineIndexCache();
+  private workerLineIndex = this.lineIndex.diagnostics();
 
   constructor(options: SchedulerOptions = {}) {
     this.maxCacheBytes = options.maxCacheBytes ?? 32 * 1024 * 1024;
@@ -60,9 +63,12 @@ export class QueryScheduler {
     } catch { /* Browser CSP or unavailable worker: cooperative fallback remains usable. */ }
     if (this.worker) {
       this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        if(this.disposed||!this.worker)return;
         const message = event.data;this.workerReady=true;
         if(message.type==='ready')return;
+        if(message.type==='line-index-stats'){this.workerLineIndex=message.stats;return;}
         if(message.type==='sync-error'){this.useFallback();return;}
+        if('lineIndex' in message&&message.lineIndex)this.workerLineIndex=message.lineIndex;
         const task = this.pending.get(message.requestId);
         if (!task || task.cancelled) return;
         task.updated=Date.now();
@@ -80,14 +86,14 @@ export class QueryScheduler {
     }
   }
 
-  get stats(): {cacheBytes: number; cacheEntries: number; pending: number; worker: boolean; transferredBytes:number;workerSourceBytes:number} {
-    return {cacheBytes: this.cacheBytes, cacheEntries: this.cache.size, pending: this.pending.size, worker: !!this.worker,transferredBytes:this.transferredBytes,workerSourceBytes:[...this.registeredEntries.values()].reduce((sum,entry)=>sum+entry.descriptor.byteLength,0)};
+  get stats() {
+    return {cacheBytes: this.cacheBytes, cacheEntries: this.cache.size, pending: this.pending.size, worker: !!this.worker,transferredBytes:this.transferredBytes,workerSourceBytes:[...this.registeredEntries.values()].reduce((sum,entry)=>sum+entry.descriptor.byteLength,0),lineIndex:{fallback:this.lineIndex.diagnostics(),worker:{...this.workerLineIndex}}};
   }
 
   query(key: string, kind: 'scatter' | 'line', xId: string, yId: string, query: Query, registry: DataRegistry | DataStore): Promise<Plan> {
     return this.submit<Plan>(key, [xId, yId], [kind, query], registry, store => {
       const x = store.get(xId)!, y = store.get(yId)!;
-      return kind === 'line' ? lineSteps(x, y, query,ascending(store.get(xId)!)) : scatterSteps(x, y, query);
+      return kind === 'line' ? lineSteps(x, y, query,ascending(store.get(xId)!),this.lineIndex) : scatterSteps(x, y, query);
     }, requestId => ({type: 'query', requestId, key, kind, xId, yId, query}));
   }
 
@@ -189,6 +195,7 @@ export class QueryScheduler {
 
   release(id: string): void {
     for (const task of [...this.pending.values()]) if (task.ids.includes(id)) this.cancel(task.key);
+    this.lineIndex.clear();
     this.registered.delete(id);this.registeredEntries.delete(id); this.invalidate(id); this.post({type: 'release', id});
   }
 
@@ -197,6 +204,7 @@ export class QueryScheduler {
     for (const key of [...this.keys.keys()]) this.cancel(key);
     this.disposed = true; this.post({type: 'dispose'}); this.worker?.terminate(); this.worker = undefined;
     clearInterval(this.watchdog);this.registered.clear();this.registeredEntries.clear(); this.cache.clear(); this.cacheBytes = 0;
+    this.lineIndex.clear();this.workerLineIndex=new LineIndexCache().diagnostics();
   }
 
   /** Reuse immutable chunks already held by the worker; never serialize the lazy values getter. */
@@ -217,6 +225,7 @@ export class QueryScheduler {
   private useFallback(): void {
     if (!this.worker) return;
     this.worker.terminate(); this.worker = undefined;clearInterval(this.watchdog); this.registered.clear();this.registeredEntries.clear();
+    this.workerLineIndex=new LineIndexCache().diagnostics();
     for (const task of [...this.pending.values()]) task.fallback();
   }
   private reject(task: Pending, error: Error): void {

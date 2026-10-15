@@ -1,8 +1,8 @@
 import {numericReader} from './data';
-import type {NumericReader} from './data';
 import type {DataEntry} from './types';
 import type {DensityResult, LineResult, NumericArray, PointPlan, Query} from './types';
-import {normalize, validateDomain} from './scales';
+import {createNormalizer, validateDomain} from './scales';
+import type {LineIndexCache} from './line-index';
 
 const CHUNK_SIZE = 65_536;
 
@@ -14,7 +14,30 @@ export function validateQuery(query: Query): void {
   if (!['auto', 'points', 'density'].includes(query.mode)) throw new RangeError('Unknown representation mode.');
 }
 
-function validateInputs(x: NumericReader, y: NumericReader, query: Query): void {
+interface Coordinates {length:number;chunks:readonly NumericArray[]}
+function coordinates(input:NumericArray|DataEntry):Coordinates {
+  if(ArrayBuffer.isView(input)){const values=input as NumericArray;return {length:values.length,chunks:[values]};}
+  const entry=input as DataEntry;
+  if(entry.chunks)return {length:entry.descriptor.shape[0],chunks:entry.chunks};
+  const values=entry.values;return {length:values.length,chunks:[values]};
+}
+
+/** Storage boundaries never become cooperative yields or line-segment boundaries. */
+class AlignedCoordinates {
+  private xIndex=0;private yIndex=0;private xStart=0;private yStart=0;
+  constructor(private x:Coordinates,private y:Coordinates){}
+  span(start:number,end:number):{x:NumericArray;y:NumericArray;xOffset:number;yOffset:number;length:number}{
+    while(this.xIndex<this.x.chunks.length&&this.xStart+this.x.chunks[this.xIndex].length<=start)this.xStart+=this.x.chunks[this.xIndex++].length;
+    while(this.yIndex<this.y.chunks.length&&this.yStart+this.y.chunks[this.yIndex].length<=start)this.yStart+=this.y.chunks[this.yIndex++].length;
+    const x=this.x.chunks[this.xIndex],y=this.y.chunks[this.yIndex];
+    const xOffset=start-this.xStart,yOffset=start-this.yStart;
+    const length=Math.min(end-start,(x?.length??0)-xOffset,(y?.length??0)-yOffset);
+    if(length<=0)throw new RangeError('Coordinate chunks do not cover their declared shape.');
+    return {x,y,xOffset,yOffset,length};
+  }
+}
+
+function validateInputs(x: Coordinates, y: Coordinates, query: Query): void {
   if (x.length !== y.length) throw new RangeError('Coordinate arrays must have equal lengths.');
   if (x.length > 0xffff_ffff) throw new RangeError('A chunk may contain at most 2^32 - 1 coordinates.');
   validateQuery(query);
@@ -24,21 +47,27 @@ function visible(px: number, py: number): boolean {return px >= 0 && px <= 1 && 
 
 /** Cooperative steps are used by workers and the asynchronous fallback. */
 export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query): Generator<void, PointPlan> {
-  const x=numericReader(xInput),y=numericReader(yInput);
+  const x=coordinates(xInput),y=coordinates(yInput);
   validateInputs(x, y, query);
+  const normalizeX=createNormalizer(query.bounds.x,query.xScale),normalizeY=createNormalizer(query.bounds.y,query.yScale);
   const columns = Math.max(1, Math.min(1024, Math.ceil(query.width / 4)));
   const rows = Math.max(1, Math.min(1024, Math.ceil(query.height / 4)));
   const counts = new Uint32Array(columns * rows);
   let count = 0, max = 0;
+  const aggregation=new AlignedCoordinates(x,y);
   for (let start = 0; start < x.length; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, x.length);
-    for (let i = start; i < end; i++) {
-      const px = normalize(x.get(i), query.bounds.x, query.xScale), py = normalize(y.get(i), query.bounds.y, query.yScale);
-      if (!visible(px, py)) continue;
-      count++;
-      const column = Math.min(columns - 1, Math.floor(px * columns)), row = Math.min(rows - 1, Math.floor(py * rows));
-      const cellCount = ++counts[row * columns + column];
-      if (cellCount > max) max = cellCount;
+    for(let offset=start;offset<end;){
+      const span=aggregation.span(offset,end),xs=span.x,ys=span.y,xOffset=span.xOffset,yOffset=span.yOffset;
+      for(let j=0;j<span.length;j++){
+        const px = normalizeX(xs[xOffset+j]), py = normalizeY(ys[yOffset+j]);
+        if (!visible(px, py)) continue;
+        count++;
+        const column = Math.min(columns - 1, Math.floor(px * columns)), row = Math.min(rows - 1, Math.floor(py * rows));
+        const cellCount = ++counts[row * columns + column];
+        if (cellCount > max) max = cellCount;
+      }
+      offset+=span.length;
     }
     yield;
   }
@@ -56,10 +85,15 @@ export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArr
   if (count > query.pointBudget) throw new RangeError(`Exact point rendering requires ${count} points, exceeding the point budget of ${query.pointBudget}. Use auto/density or raise the budget.`);
   const indices = new Uint32Array(count);
   let cursor = 0;
+  const extraction=new AlignedCoordinates(x,y);
   for (let start = 0; start < x.length; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, x.length);
-    for (let i = start; i < end; i++) {
-      if (visible(normalize(x.get(i), query.bounds.x, query.xScale), normalize(y.get(i), query.bounds.y, query.yScale))) indices[cursor++] = i;
+    for(let offset=start;offset<end;){
+      const span=extraction.span(offset,end),xs=span.x,ys=span.y,xOffset=span.xOffset,yOffset=span.yOffset;
+      for(let j=0;j<span.length;j++){
+        if (visible(normalizeX(xs[xOffset+j]), normalizeY(ys[yOffset+j]))) indices[cursor++] = offset+j;
+      }
+      offset+=span.length;
     }
     yield;
   }
@@ -83,9 +117,14 @@ function intersects(ax: number, ay: number, bx: number, by: number): boolean {
 }
 
 /** Reduce consecutive pixel-column runs, retaining extrema in source order. */
-export function* lineSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query, sorted = false): Generator<void, LineResult> {
-  const x=numericReader(xInput),y=numericReader(yInput);
+export function* lineSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query, sorted = false, index?:LineIndexCache): Generator<void, LineResult> {
+  const x=coordinates(xInput),y=coordinates(yInput);
   validateInputs(x, y, query);
+  if(index&&!ArrayBuffer.isView(xInput)&&!ArrayBuffer.isView(yInput)){
+    const indexed=yield* index.plan(xInput as DataEntry,yInput as DataEntry,query,sorted);
+    if(indexed)return indexed;
+  }
+  const normalizeX=createNormalizer(query.bounds.x,query.xScale),normalizeY=createNormalizer(query.bounds.y,query.yScale);
   const segments: Uint32Array[] = [];
   let segment: number[] = [];
   let first = -1, last = -1, min = -1, max = -1, minY = Infinity, maxY = -Infinity, column = NaN;
@@ -118,23 +157,30 @@ export function* lineSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|
   let previous = -1, previousX = NaN, previousY = NaN;
   let begin=0,limit=x.length;
   if(sorted){
-    const bound=(value:number,upper:boolean)=>{let lo=0,hi=x.length;while(lo<hi){const mid=lo+Math.floor((hi-lo)/2);if(x.get(mid)<value||upper&&x.get(mid)===value)lo=mid+1;else hi=mid;}return lo;};
+    // Random access is limited to the logarithmic viewport-bound search.
+    const reader=numericReader(xInput);
+    const bound=(value:number,upper:boolean)=>{let lo=0,hi=x.length;while(lo<hi){const mid=lo+Math.floor((hi-lo)/2),coordinate=reader.get(mid);if(coordinate<value||upper&&coordinate===value)lo=mid+1;else hi=mid;}return lo;};
     begin=Math.max(0,bound(query.bounds.x[0],false)-1);limit=Math.min(x.length,bound(query.bounds.x[1],true)+1);
   }
+  const traversal=new AlignedCoordinates(x,y);
   for (let start = begin; start < limit; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, limit);
-    for (let i = start; i < end; i++) {
-      const px = normalize(x.get(i), query.bounds.x, query.xScale), py = normalize(y.get(i), query.bounds.y, query.yScale);
-      if (!Number.isFinite(px) || !Number.isFinite(py)) {finishSegment(); previous = -1; continue;}
-      const isVisible = visible(px, py);
-      if (isVisible) count++;
-      if (previous >= 0 && intersects(previousX, previousY, px, py)) {
-        add(previous, previousX, previousY); add(i, px, py);
-      } else {
-        finishSegment();
-        if (isVisible) add(i, px, py);
+    for(let offset=start;offset<end;){
+      const span=traversal.span(offset,end),xs=span.x,ys=span.y,xOffset=span.xOffset,yOffset=span.yOffset;
+      for(let j=0;j<span.length;j++){
+        const i=offset+j,px = normalizeX(xs[xOffset+j]), py = normalizeY(ys[yOffset+j]);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) {finishSegment(); previous = -1; continue;}
+        const isVisible = visible(px, py);
+        if (isVisible) count++;
+        if (previous >= 0 && intersects(previousX, previousY, px, py)) {
+          add(previous, previousX, previousY); add(i, px, py);
+        } else {
+          finishSegment();
+          if (isVisible) add(i, px, py);
+        }
+        previous = i; previousX = px; previousY = py;
       }
-      previous = i; previousX = px; previousY = py;
+      offset+=span.length;
     }
     yield;
   }

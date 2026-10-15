@@ -1,7 +1,7 @@
 import {numericReader} from './data';
 import type {DataRegistry} from './data';
 import {entryExtent} from './source-metadata';
-import {normalize, extent} from './scales';
+import {createNormalizer, extent} from './scales';
 import {parseColor, colorMap} from './color';
 import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, BandResult, ViewSpec, Domain} from './types';
 import type {Geometry} from './renderer';
@@ -34,7 +34,10 @@ export function gridEdges(values: NumericArray, scale:import('./types').ScaleKin
 
 /** Clip in CPU float64 coordinates before constructing GPU float32 geometry. */
 function clipLine(ax:number,ay:number,bx:number,by:number):[number,number,number,number,number,number]|undefined{
-  if(![ax,ay,bx,by].every(Number.isFinite))return undefined;
+  if(!Number.isFinite(ax)||!Number.isFinite(ay)||!Number.isFinite(bx)||!Number.isFinite(by))return undefined;
+  // Most retained line vertices are already inside the viewport. Preserve their
+  // exact float64 coordinates without allocating clipping edges/intermediates.
+  if(ax>=-1&&ax<=1&&ay>=-1&&ay<=1&&bx>=-1&&bx<=1&&by>=-1&&by<=1)return [ax,ay,bx,by,0,1];
   let low=0,high=1,lowSide=-1,highSide=-1;
   const scale=Math.max(1,Math.abs(ax),Math.abs(ay),Math.abs(bx),Math.abs(by));
   const sx=ax/scale,sy=ay/scale,dx=bx/scale-sx,dy=by/scale-sy,edge=1/scale;
@@ -67,9 +70,10 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
   const vertexBudget=2_000_000;
   let capacity=1024,count=0,positions=new Float32Array(capacity*3),colors=new Float32Array(capacity*4);
   const scalarDomain=layer.style.colorDomain??(scalarEntry?entryExtent(scalarEntry,'linear')??[0,1]:extent(z??new Float64Array([0,1])));
-  const nX=(v:number)=>normalize(v,bounds.x,view.xScale)*2-1;
-  const nY=(v:number)=>normalize(v,bounds.y,view.yScale)*2-1;
-  const nZ=(v:number)=>normalize(v,zDomain,view.zScale)*2-1;
+  const normalizeX=createNormalizer(bounds.x,view.xScale),normalizeY=createNormalizer(bounds.y,view.yScale),normalizeZ=createNormalizer(zDomain,view.zScale);
+  const nX=(v:number)=>normalizeX(v)*2-1;
+  const nY=(v:number)=>normalizeY(v)*2-1;
+  const nZ=(v:number)=>normalizeZ(v)*2-1;
   const color=(v?:number)=>v===undefined?base:colorMap(v,scalarDomain,layer.style.colormap).map((c,i)=>i===3?(layer.style.opacity??1):c);
   const push=(a:number,b:number,c:number,rgba:number[])=>{
     if(!Number.isFinite(a)||!Number.isFinite(b)||!Number.isFinite(c)||Math.max(Math.abs(a),Math.abs(b),Math.abs(c))>3.4028234663852886e38)throw new RangeError('Geometry exceeds float32 coordinates after projection. Narrow the data domain.');
@@ -116,8 +120,11 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
       const [x0,y0,x1,y1,t0,t1]=clipped;
       const dx=(x1-x0)*width/2,dy=(y1-y0)*height/2,len=Math.hypot(dx,dy);if(!len)continue;
       const ox=-dy/len*half*2/width,oy=dx/len*half*2/height;
-      const start=color(scalar?.get(a)),end=color(scalar?.get(b));
-      const first=start.map((value,i)=>value+(end[i]-value)*t0),last=start.map((value,i)=>value+(end[i]-value)*t1);
+      let first=base,last=base;
+      if(scalar){
+        const start=color(scalar.get(a)),end=color(scalar.get(b));
+        first=start.map((value,i)=>value+(end[i]-value)*t0);last=start.map((value,i)=>value+(end[i]-value)*t1);
+      }
       push(x0+ox,y0+oy,0,first);push(x0-ox,y0-oy,0,first);push(x1-ox,y1-oy,0,last);
       push(x0+ox,y0+oy,0,first);push(x1-ox,y1-oy,0,last);push(x1+ox,y1+oy,0,last);
     }

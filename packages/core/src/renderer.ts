@@ -25,6 +25,10 @@ export function scientificAspect(view:ViewSpec,bounds:Bounds,z:Domain):[number,n
   return logSpans.map(span=>Math.max(1e-30,Math.exp(span-largest))) as [number,number,number];
 }
 export interface PlotRect {left:number; top:number; width:number; height:number}
+interface ShaderProgram {
+  handle:WebGLProgram;scientific:boolean;
+  uniforms:Record<'matrix'|'size'|'round'|'normalScale'|'viewport'|'width'|'line'|'lit'|'wire',WebGLUniformLocation|null>;
+}
 export const identity = new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
 export function cameraPreset(preset:CameraPreset):ViewSpec['camera']{
   const poses:Record<CameraPreset,[number,number]>={isometric:[35,25],xy:[-90,90],xz:[-90,0],yz:[0,0]};
@@ -42,7 +46,8 @@ export class WebGLRenderer {
   readonly stats={uploadedBytes:0,uploadCalls:0,partialUploadCalls:0,bufferAllocations:0,bufferDeletes:0};
   readonly canvas: HTMLCanvasElement;
   readonly gl: WebGL2RenderingContext;
-  private program: WebGLProgram;
+  private program: ShaderProgram;
+  private scientificProgram?:ShaderProgram;
   private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array;extra:Map<string,{buffer:WebGLBuffer;data:Float32Array|Uint32Array}>}>();
   private lost: (event: Event)=>void;
   private restored: ()=>void;
@@ -66,27 +71,36 @@ export class WebGLRenderer {
       if(this.disposed)return;
       try{
         this.buffers.clear();this.framebuffer=undefined;this.colorTarget=undefined;this.depthTarget=undefined;this.multisampleColor=undefined;this.resolveFramebuffer=undefined;
-        this.program=this.createProgram();onRestored?.();
+        this.program=this.createProgram();this.scientificProgram=undefined;onRestored?.();
       }catch(error){onError(error instanceof Error?error.message:String(error));}
     };
     canvas.addEventListener('webglcontextlost',this.lost);
     canvas.addEventListener('webglcontextrestored',this.restored);
   }
-  private createProgram():WebGLProgram {
+  private createProgram(scientific=false):ShaderProgram {
     const gl=this.gl;
-    const vertex=`#version 300 es
-      in vec3 aPosition; in vec4 aColor; in vec3 aNormal; in vec3 aLineDirection; in float aLineSide;
+    // Plain charts and unlit surfaces keep the small shader. Compile scientific
+    // lighting/line expansion only when a layer actually needs those operations.
+    // Explicit locations let both programs use the same position/color VAOs.
+    const vertex=scientific?`#version 300 es
+      layout(location=0) in vec3 aPosition; layout(location=1) in vec4 aColor;
+      layout(location=2) in vec3 aNormal; layout(location=3) in vec3 aLineDirection; layout(location=4) in float aLineSide;
       uniform mat4 uMatrix; uniform vec3 uNormalScale; uniform float uSize; uniform vec2 uViewport; uniform float uWidth; uniform bool uLine;
       out vec4 vColor; out vec3 vNormal; void main(){
         gl_Position=uMatrix*vec4(aPosition,1.0);
         if(uLine){vec2 delta=(uMatrix*vec4(aLineDirection,0.0)).xy*uViewport;
           float len=length(delta);if(len>0.0)gl_Position.xy+=vec2(-delta.y,delta.x)/len*aLineSide*uWidth/uViewport;}
-        gl_PointSize=uSize;vColor=aColor;vNormal=aNormal*uNormalScale;}`;
-    const fragment=`#version 300 es
+        gl_PointSize=uSize;vColor=aColor;vNormal=aNormal*uNormalScale;}`:`#version 300 es
+      layout(location=0) in vec3 aPosition; layout(location=1) in vec4 aColor;
+      uniform mat4 uMatrix; uniform float uSize;
+      out vec4 vColor; void main(){gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=uSize;vColor=aColor;}`;
+    const fragment=scientific?`#version 300 es
       precision highp float; in vec4 vColor; in vec3 vNormal; uniform bool uRound; uniform bool uLit; uniform bool uWire; out vec4 outColor;
       void main(){if(uRound && length(gl_PointCoord-vec2(.5))>.5) discard;
         float light=uLit ? .3+.7*abs(dot(normalize(vNormal),normalize(vec3(.3,-.4,.85)))) : 1.0;
-        outColor=vec4(vColor.rgb*(uWire ? .35 : light),vColor.a);}`;
+        outColor=vec4(vColor.rgb*(uWire ? .35 : light),vColor.a);}`:`#version 300 es
+      precision highp float; in vec4 vColor; uniform bool uRound; out vec4 outColor;
+      void main(){if(uRound && length(gl_PointCoord-vec2(.5))>.5) discard;outColor=vColor;}`;
     const compile=(kind:number,source:string)=>{
       const shader=gl.createShader(kind)!;gl.shaderSource(shader,source);gl.compileShader(shader);
       if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS)){const error=gl.getShaderInfoLog(shader);gl.deleteShader(shader);throw new Error(error??'Shader compilation failed');}return shader;
@@ -95,7 +109,12 @@ export class WebGLRenderer {
     const program=gl.createProgram()!;gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
     gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS)){const message=gl.getProgramInfoLog(program)??'Shader link failed';gl.deleteProgram(program);throw new Error(message);}
-    return program;
+    // Location queries can synchronize with the GPU; never repeat them per frame.
+    const uniform=(name:string)=>gl.getUniformLocation(program,name);
+    return {handle:program,scientific,uniforms:{matrix:uniform('uMatrix'),size:uniform('uSize'),round:uniform('uRound'),
+      normalScale:scientific?uniform('uNormalScale'):null,viewport:scientific?uniform('uViewport'):null,
+      width:scientific?uniform('uWidth'):null,line:scientific?uniform('uLine'):null,
+      lit:scientific?uniform('uLit'):null,wire:scientific?uniform('uWire'):null}};
   }
   private createBuffer():WebGLBuffer{const buffer=this.gl.createBuffer();if(!buffer)throw new Error('GPU buffer allocation failed');this.stats.bufferAllocations++;return buffer;}
   private deleteBuffer(buffer:WebGLBuffer):void{this.gl.deleteBuffer(buffer);this.stats.bufferDeletes++;}
@@ -160,17 +179,22 @@ export class WebGLRenderer {
     if(threeD) gl.enable(gl.DEPTH_TEST);else gl.disable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LESS);gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
-    gl.useProgram(this.program);gl.uniformMatrix4fv(gl.getUniformLocation(this.program,'uMatrix'),false,matrix);
-    gl.uniform3fv(gl.getUniformLocation(this.program,'uNormalScale'),normalAspectScale(boxAspect));
-    gl.uniform2f(gl.getUniformLocation(this.program,'uViewport'),rect.width*dpr,rect.height*dpr);
+    let active:ShaderProgram|undefined;
     for(const item of items){
+      const program=item.normals||item.lineDirections||item.wireframeIndices?(this.scientificProgram??=this.createProgram(true)):this.program;
+      const uniforms=program.uniforms;
+      if(active!==program){
+        gl.useProgram(program.handle);gl.uniformMatrix4fv(uniforms.matrix,false,matrix);
+        if(program.scientific){gl.uniform3fv(uniforms.normalScale,normalAspectScale(boxAspect));gl.uniform2f(uniforms.viewport,rect.width*dpr,rect.height*dpr);}
+        active=program;
+      }
       this.frameItems.add(item.id);let buffer=this.buffers.get(item.id);
       if(!buffer){
         const vao=gl.createVertexArray()!,p=this.createBuffer(),c=this.createBuffer();
         buffer={vao,p,c,positions:new Float32Array(0),colors:new Float32Array(0),extra:new Map()};this.buffers.set(item.id,buffer);
         gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,p);
-        const position=gl.getAttribLocation(this.program,'aPosition');gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,3,gl.FLOAT,false,0,0);
-        gl.bindBuffer(gl.ARRAY_BUFFER,c);const color=gl.getAttribLocation(this.program,'aColor');gl.enableVertexAttribArray(color);gl.vertexAttribPointer(color,4,gl.FLOAT,false,0,0);
+        gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ARRAY_BUFFER,c);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,0,0);
       }
       gl.bindVertexArray(buffer.vao);
       if(buffer.positions!==item.positions){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.p);this.uploadBuffer(gl.ARRAY_BUFFER,item.positions,buffer.positions);buffer.positions=item.positions;}
@@ -179,20 +203,23 @@ export class WebGLRenderer {
         let entry=buffer!.extra.get(key);if(!entry){entry={buffer:this.createBuffer(),data};buffer!.extra.set(key,entry);gl.bindBuffer(target,entry.buffer);this.uploadBuffer(target,data);}
         else{gl.bindBuffer(target,entry.buffer);if(entry.data!==data){this.uploadBuffer(target,data,entry.data);entry.data=data;}}return entry;
       };
-      for(const [name,data,size]of [['aNormal',item.normals,3],['aLineDirection',item.lineDirections,3],['aLineSide',item.lineSides,1]] as const){
-        const location=gl.getAttribLocation(this.program,name);if(data){upload(name,data,gl.ARRAY_BUFFER);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,0,0);}else{gl.disableVertexAttribArray(location);if(size===1)gl.vertexAttrib1f(location,0);else gl.vertexAttrib3f(location,0,0,1);}
+      if(program.scientific)for(const [name,data,size,location]of [['aNormal',item.normals,3,2],['aLineDirection',item.lineDirections,3,3],['aLineSide',item.lineSides,1,4]] as const){
+        if(data){upload(name,data,gl.ARRAY_BUFFER);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,0,0);}else{gl.disableVertexAttribArray(location);if(size===1)gl.vertexAttrib1f(location,0);else gl.vertexAttrib3f(location,0,0,1);}
       }
+      else for(const [name,location]of [['aNormal',2],['aLineDirection',3],['aLineSide',4]] as const)if(buffer.extra.has(name))gl.disableVertexAttribArray(location);
       const liveExtras=new Set(['aNormal','aLineDirection','aLineSide'].filter(name=>name==='aNormal'?!!item.normals:name==='aLineDirection'?!!item.lineDirections:!!item.lineSides));if(item.indices)liveExtras.add('indices');if(item.wireframeIndices)liveExtras.add('wire');
       for(const [key,entry]of buffer.extra)if(!liveExtras.has(key)){this.deleteBuffer(entry.buffer);buffer.extra.delete(key);}
-      gl.uniform1f(gl.getUniformLocation(this.program,'uSize'),(item.size??5)*dpr);
-      gl.uniform1i(gl.getUniformLocation(this.program,'uRound'),item.primitive==='points'?1:0);
-      gl.uniform1i(gl.getUniformLocation(this.program,'uLine'),item.lineDirections?1:0);gl.uniform1f(gl.getUniformLocation(this.program,'uWidth'),(item.width??1.5)*dpr);
-      gl.uniform1i(gl.getUniformLocation(this.program,'uLit'),item.normals?1:0);gl.uniform1i(gl.getUniformLocation(this.program,'uWire'),0);
+      gl.uniform1f(uniforms.size,(item.size??5)*dpr);
+      gl.uniform1i(uniforms.round,item.primitive==='points'?1:0);
+      if(program.scientific){
+        gl.uniform1i(uniforms.line,item.lineDirections?1:0);gl.uniform1f(uniforms.width,(item.width??1.5)*dpr);
+        gl.uniform1i(uniforms.lit,item.normals?1:0);gl.uniform1i(uniforms.wire,0);
+      }
       const mode=item.primitive==='points'?gl.POINTS:item.primitive==='lines'?gl.LINES:gl.TRIANGLES;
       if(item.indices){upload('indices',item.indices,gl.ELEMENT_ARRAY_BUFFER);gl.drawElements(mode,item.indices.length,gl.UNSIGNED_INT,0);}else gl.drawArrays(mode,0,item.positions.length/3);
       // Unbiased filled depth preserves the same coplanar tie rule as CPU picking.
       // Only the matching surface edges may pass equal depth; later layers use LESS.
-      if(item.wireframeIndices){upload('wire',item.wireframeIndices,gl.ELEMENT_ARRAY_BUFFER);gl.uniform1i(gl.getUniformLocation(this.program,'uWire'),1);gl.uniform1i(gl.getUniformLocation(this.program,'uLit'),0);gl.depthFunc(gl.LEQUAL);gl.drawElements(gl.LINES,item.wireframeIndices.length,gl.UNSIGNED_INT,0);gl.depthFunc(gl.LESS);}
+      if(item.wireframeIndices){upload('wire',item.wireframeIndices,gl.ELEMENT_ARRAY_BUFFER);gl.uniform1i(uniforms.wire,1);gl.uniform1i(uniforms.lit,0);gl.depthFunc(gl.LEQUAL);gl.drawElements(gl.LINES,item.wireframeIndices.length,gl.UNSIGNED_INT,0);gl.depthFunc(gl.LESS);}
     }
   }
   endFrame():void {
@@ -224,7 +251,9 @@ export class WebGLRenderer {
   dispose():void {
     if(this.disposed)return;this.disposed=true;
     const gl=this.gl;for(const b of this.buffers.values()){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);}
-    this.buffers.clear();if(gl.getParameter(gl.CURRENT_PROGRAM)===this.program)gl.useProgram(null);gl.deleteProgram(this.program);this.canvas.removeEventListener('webglcontextlost',this.lost);this.canvas.removeEventListener('webglcontextrestored',this.restored);
+    this.buffers.clear();const current=gl.getParameter(gl.CURRENT_PROGRAM),programs=[this.program,this.scientificProgram].filter((program):program is ShaderProgram=>!!program);
+    if(programs.some(program=>program.handle===current))gl.useProgram(null);for(const program of programs)gl.deleteProgram(program.handle);
+    this.canvas.removeEventListener('webglcontextlost',this.lost);this.canvas.removeEventListener('webglcontextrestored',this.restored);
     if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.colorTarget)gl.deleteTexture(this.colorTarget);if(this.depthTarget)gl.deleteRenderbuffer(this.depthTarget);
     if(this.resolveFramebuffer)gl.deleteFramebuffer(this.resolveFramebuffer);if(this.multisampleColor)gl.deleteRenderbuffer(this.multisampleColor);
     // A detached canvas can retain its GPU context until GC. Release it now so

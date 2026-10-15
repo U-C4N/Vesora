@@ -102,6 +102,8 @@ def test_real_qt_two_hour_atomic_freeze_reconnect_soak(tmp_path):
                     stats = read("window.vesoraFigure.diagnostics()")
                     renderer_samples.append({"elapsed_seconds": elapsed, "stats": stats})
                     assert stats["snapshotBytes"] <= stats["maxSnapshotBytes"]
+                    for cache in stats["lineIndex"].values():
+                        assert cache["indexBytes"] + cache["retainedBytes"] <= 8 * 1024 * 1024
                     assert not stats["contextLost"]
                     assert not read("window.__vesoraSoak.atomicErrors")
                     next_renderer_sample = elapsed + 5

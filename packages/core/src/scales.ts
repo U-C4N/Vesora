@@ -43,6 +43,25 @@ export function normalize(value: number, domain: Domain, kind: ScaleKind = 'line
   return Number.isFinite(span) ? (value - domain[0]) / span : (value / 2 - domain[0] / 2) / (domain[1] / 2 - domain[0] / 2);
 }
 
+/** Prepare one query's immutable domain without changing normalize's arithmetic. */
+export function createNormalizer(domain:Domain,kind:ScaleKind='linear'):(value:number)=>number {
+  const minimum=domain[0],maximum=domain[1];
+  if(kind==='log'){
+    const span=Math.log(maximum/minimum);
+    if(Number.isFinite(span))return value=>!Number.isFinite(value)||value<=0?NaN:Math.log(value/minimum)/span;
+    const origin=Math.log(minimum),logSpan=Math.log(maximum)-origin;
+    return value=>!Number.isFinite(value)||value<=0?NaN:(Math.log(value)-origin)/logSpan;
+  }
+  const span=maximum-minimum;
+  if(Number.isFinite(span)){
+    if(kind==='time')return value=>!Number.isFinite(value)||Math.abs(value)>8.64e15?NaN:(value-minimum)/span;
+    return value=>Number.isFinite(value)?(value-minimum)/span:NaN;
+  }
+  const origin=minimum/2,halfSpan=maximum/2-origin;
+  if(kind==='time')return value=>!Number.isFinite(value)||Math.abs(value)>8.64e15?NaN:(value/2-origin)/halfSpan;
+  return value=>Number.isFinite(value)?(value/2-origin)/halfSpan:NaN;
+}
+
 export function project(value: number, domain: Domain, range: Domain, kind: ScaleKind = 'linear'): number {
   return range[0] + normalize(value, domain, kind) * (range[1] - range[0]);
 }

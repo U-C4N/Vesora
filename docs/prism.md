@@ -1,6 +1,6 @@
 # Explore a live signal without losing the inspected frame
 
-PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.1` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
+PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.2` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
 
 WebGL2 is required. Existing `figure`, `VesoraChart`, scene protocols 1–6 and accepted-state exports remain available. New 3D layouts, 3D lines, surface presentation and slice relationships use scene protocol 7. Enabling streaming or freezing a view does not by itself promote a scene to protocol 7.
 
@@ -149,6 +149,10 @@ Each layer must already have streaming enabled. A malformed final item rejects t
 Worker startup/progress failures can use cooperative planning. A WebGL2 initialization failure has no alternative rendering backend; the viewer displays the failure. GPU context restoration, stale transport recovery and snapshot-budget errors must remain distinguishable from valid empty data. A legacy Python transport cannot enable frozen inspection; transport v3 negotiates that capability.
 
 The viewer's diagnostics are component counters, not a measurement of total process or driver memory. No generic FPS, point-count or speedup claim follows from these features. See the release checklist for required hardware and soak evidence.
+
+Dense streaming lines can reuse immutable chunk min/max indexes when x is strictly increasing, both axes are linear/time, and every sample is within the viewport. The result preserves the existing first/min/max/last sample identities, including ties after normalization. Clipped views, missing values, unsupported scales and insufficient index budget use the ordinary planner.
+
+`diagnostics().lineIndex` reports the fallback and worker caches separately: index storage (including an estimated 192 bytes per cache entry), retained source backing bytes, builds and hits. Each cache has an 8 MiB accounted limit including those indexes and retained backing buffers; source removal and disposal release it. Retained backing bytes can overlap the live source or snapshot counters, so these figures must not be added together as unique process memory. Worker counters describe the most recently reported worker state.
 
 ## Keep Labs separate
 

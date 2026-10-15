@@ -14,6 +14,31 @@ function source(x:number[],y:number[],z?:number[],color?:number[]){
 const layer=(kind:LayerSpec['kind'],extra:Record<string,string>={}):LayerSpec=>({id:'layer',kind,data:{x:'x',y:'y',...extra},style:{},visible:true});
 
 describe('float64 projection to finite GPU geometry',()=>{
+  it('keeps exact visible boundary coordinates and constant color across adjacent segments',()=>{
+    const registry=source([-1,0,1],[0,0,0]);
+    const plan=planLine(registry.get('x').values,registry.get('y').values,query);
+    const spec=layer('line');spec.style={color:'#804020',opacity:.5,width:2};
+    const geometry=buildGeometry(spec,registry,query.bounds,[0,1],defaultView(),100,100,plan);
+    expect(geometry.positions).toEqual(Float32Array.from([
+      -1,.02,0,-1,-.02,0,0,-.02,0,-1,.02,0,0,-.02,0,0,.02,0,
+      0,.02,0,0,-.02,0,1,-.02,0,0,.02,0,1,-.02,0,1,.02,0,
+    ]));
+    expect(geometry.colors).toEqual(Float32Array.from(Array.from({length:12},()=>[128/255,64/255,32/255,.5]).flat()));
+  });
+  it('interpolates scalar colors at clipped endpoints',()=>{
+    const registry=source([-2,2],[0,0],undefined,[0,1]);
+    const spec=layer('line',{color:'color'});spec.style={colormap:'viridis',colorDomain:[0,1]};
+    const plan=planLine(registry.get('x').values,registry.get('y').values,query);
+    const clipped=buildGeometry(spec,registry,query.bounds,[0,1],defaultView(),100,100,plan);
+    const fullBounds={x:[-2,2] as [number,number],y:[-1,1] as [number,number]};
+    const full=buildGeometry(spec,registry,fullBounds,[0,1],defaultView(),100,100,plan);
+    for(let channel=0;channel<4;channel++){
+      const start=full.colors[channel],end=full.colors[8+channel];
+      expect(clipped.colors[channel]).toBeCloseTo(start+(end-start)*.25,6);
+      expect(clipped.colors[8+channel]).toBeCloseTo(start+(end-start)*.75,6);
+    }
+    expect(clipped.positions[0]).toBe(-1);expect(clipped.positions[6]).toBe(1);
+  });
   it('retains a horizontal crossing line with huge offscreen endpoints',()=>{
     const registry=source([-1e100,1e100],[0,0]);
     const plan=planLine(registry.get('x').values,registry.get('y').values,query);
