@@ -17,7 +17,7 @@ Süreyi ölçün, ancak bu pilot için yeni bir süre sınırı veya ek başarı
 1. Depo kökünde Node.js ve `tar` erişilebilirken, sınanacak doğrulanmış RC dizinini başlatıcıya verin. Örnekteki dizin adını kullanacağınız adayla değiştirin; komut yeni bir arşiv oluşturmaz ve yayın yapmaz.
 
    ```powershell
-   node scripts/run-pilot-v09.mjs dist/release-v0.9.0-rc.5
+   node scripts/run-pilot-v09.mjs dist/release-v0.9.0-rc.6
    ```
 
    Başlatıcı manifesti ve bütün arşiv/demoların SHA-256 değerlerini doğrular; core paketinin sürümünü ve `index`, `worker`, `viewer`, `labs` dosyalarını ayrıca karşılaştırır. Bu doğrulama teknik yayın kapılarının geçtiği anlamına gelmez: önceki adaylarda performans, Jupyter gecikmesi ve bilimsel etiket hataları bulundu; asıl pilot için düzeltmelerden sonra sabitlenen aday kullanılmalıdır. Terminaldeki `http://127.0.0.1:.../` adresini katılımcının tarayıcısında açın. Sunucu yalnız bu makineden erişilir; oturum sonunda `Ctrl+C` ile kapatın. Sabit port gerekirse `--port 4179`, sunucuyu açmadan kurulum kaydı üretmek için `--prepare-only` ekleyin.

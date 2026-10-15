@@ -4,13 +4,19 @@ interface Summary {linear?:Domain;log?:Domain;time?:Domain;ascending:boolean;fir
 const chunks=new WeakMap<NumericArray,Summary>(),entries=new WeakMap<DataEntry,Summary>();
 const scales=['linear','log','time'] as const;
 function summarize(values:NumericArray):Summary {
-  let min=Infinity,max=-Infinity,positive=Infinity,positiveMax=-Infinity,timeMin=Infinity,timeMax=-Infinity,ascending=true;
+  let min=Infinity,max=-Infinity,positive=Infinity,positiveMax=-Infinity,timeMin=Infinity,timeMax=-Infinity,ascending=true,previous=-Infinity;
   for(let i=0;i<values.length;i++){
     const value=values[i];if(!Number.isFinite(value)){ascending=false;continue;}
-    if(i&&value<=values[i-1])ascending=false;
-    min=Math.min(min,value);max=Math.max(max,value);
-    if(value>0){positive=Math.min(positive,value);positiveMax=Math.max(positiveMax,value);}
-    if(Math.abs(value)<=8.64e15){timeMin=Math.min(timeMin,value);timeMax=Math.max(timeMax,value);}
+    if(ascending){if(value<=previous)ascending=false;previous=value;}
+    // Most samples do not extend an extremum. Keep Math's signed-zero rules
+    // for zero values without calling both extrema functions on every sample.
+    if(value===0){min=Math.min(min,value);max=Math.max(max,value);}
+    else{if(value<min)min=value;if(value>max)max=value;}
+    if(value>0){if(value<positive)positive=value;if(value>positiveMax)positiveMax=value;}
+    if(Math.abs(value)<=8.64e15){
+      if(value===0){timeMin=Math.min(timeMin,value);timeMax=Math.max(timeMax,value);}
+      else{if(value<timeMin)timeMin=value;if(value>timeMax)timeMax=value;}
+    }
   }
   return {linear:min===Infinity?undefined:[min,max],log:positive===Infinity?undefined:[positive,positiveMax],time:timeMin===Infinity?undefined:[timeMin,timeMax],ascending,first:values[0],last:values[values.length-1]};
 }

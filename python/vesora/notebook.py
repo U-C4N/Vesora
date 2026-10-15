@@ -6,8 +6,48 @@ import base64
 import threading
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 from .transport import TransferQueue
+
+
+def _install_comm_route_compatibility(comm: Any) -> Callable[[], None]:
+    """Keep this widget's replies usable after a cached kernel subshell closes."""
+    original = getattr(comm, "_reply_subshell_for", None)
+    kernel = getattr(comm, "kernel", None)
+    # Do not trigger ShellChannelThread.manager's lazy initialization merely
+    # while feature-detecting an older or not-yet-started kernel.
+    manager = getattr(getattr(kernel, "shell_channel_thread", None), "_manager", None)
+    list_subshells = getattr(manager, "list_subshell", None)
+    if not callable(original) or not callable(list_subshells):
+        return lambda: None
+    had_override = "_reply_subshell_for" in getattr(comm, "__dict__", {})
+    protocol_messages = frozenset(("hello", "dispose-view", "ack", "resync", "frame",
+                                  "event", "export", "export-error"))
+
+    def route(data: Any, incoming: Any) -> Any:
+        chosen = original(data, incoming)
+        content = data.get("content") if isinstance(data, dict) and data.get("method") == "custom" else None
+        if (chosen is None or chosen == incoming or not isinstance(content, dict)
+                or not isinstance(content.get("type"), str) or content["type"] not in protocol_messages):
+            return chosen
+        # ipykernel can retain the sender's subshell after Jupyter deletes it.
+        # Preserve every live route; only use the frontend's already-valid route
+        # when that stale cache would otherwise discard a Vesora protocol message.
+        active = list_subshells()
+        if chosen not in active and (incoming is None or incoming in active):
+            return incoming
+        return chosen
+
+    comm._reply_subshell_for = route
+
+    def restore() -> None:
+        if getattr(comm, "_reply_subshell_for", None) is route:
+            if had_override:
+                comm._reply_subshell_for = original
+            else:
+                del comm._reply_subshell_for
+
+    return restore
 
 
 def make_widget(figure: Any) -> Any:
@@ -28,6 +68,7 @@ def make_widget(figure: Any) -> Any:
 
         def __init__(self) -> None:
             super().__init__()
+            self._restore_comm_route = _install_comm_route_compatibility(self.comm)
             self._vesora_closed = False
             self._export_requests: dict[str, asyncio.Future[bytes]] = {}
             self._views: dict[str, TransferQueue] = {}
@@ -219,6 +260,7 @@ def make_widget(figure: Any) -> Any:
                         self._transfer_timer.cancel()
                         self._transfer_timer = None
                     self._transfer_deadline = None
+                    self._restore_comm_route()
             super().close()
 
     return VesoraWidget()

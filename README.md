@@ -16,7 +16,7 @@
   <a href="docs/releases/v0.9.0.md">PRISM candidate</a>
 </p>
 
-> **v0.9.0-rc.5 PRISM candidate, MIT licensed.** Build and install the local archives below. This checkout is not a completed public release; the [release gates](docs/releases/v0.9.0.md) track remaining validation. WebGL2 is required; Python desktop windows use QtWebEngine.
+> **v0.9.0-rc.6 PRISM candidate, MIT licensed.** Build and install the local archives below. This checkout is not a completed public release; the [release gates](docs/releases/v0.9.0.md) track remaining validation. WebGL2 is required; Python desktop windows use QtWebEngine.
 
 ## PRISM: scientific inspection and live telemetry
 
@@ -109,7 +109,7 @@ Open the URL printed by Vite to run Signal Studio. See the [React API](packages/
 Build portable packages with `npm run package:release`, then install the matching archives into another React project:
 
 ```bash
-npm install ./vesora-core-0.9.0-rc.5.tgz ./vesora-react-0.9.0-rc.5.tgz
+npm install ./vesora-core-0.9.0-rc.6.tgz ./vesora-react-0.9.0-rc.6.tgz
 ```
 
 React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HTML export explicitly includes all chart source rows and excludes React callbacks; use the ref handle's `exportPNG`, `exportHTML` and `resetView` methods. The pilot thresholds are proposed validation criteria, not completed user research or measured competitive advantages.
@@ -247,14 +247,14 @@ npm run build
 npm run package:release -- --candidate
 ```
 
-The result is `dist/release-v0.9.0-rc.5`: a Python wheel, core and React npm tarballs, ten standalone demos, a provenance manifest and `SHA256SUMS.txt`. `--candidate` permits local review builds; publication requires a clean matching tag and passed gates. Packaging does not publish a release. The previously published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for its original feature set.
+The result is `dist/release-v0.9.0-rc.6`: a Python wheel, core and React npm tarballs, ten standalone demos, a provenance manifest and `SHA256SUMS.txt`. `--candidate` permits local review builds; publication requires a clean matching tag and passed gates. Packaging does not publish a release. The previously published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for its original feature set.
 
 ### Python: a plot in a few lines
 
 With Python 3.10+, install the wheel you built:
 
 ```bash
-python -m pip install ./dist/release-v0.9.0-rc.5/vesora-0.9.0rc5-py3-none-any.whl
+python -m pip install ./dist/release-v0.9.0-rc.6/vesora-0.9.0rc6-py3-none-any.whl
 ```
 
 ```python
@@ -282,7 +282,7 @@ fig.show()
 Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
 
 ```bash
-python -m pip install "./dist/release-v0.9.0-rc.5/vesora-0.9.0rc5-py3-none-any.whl[notebook]"
+python -m pip install "./dist/release-v0.9.0-rc.6/vesora-0.9.0rc6-py3-none-any.whl[notebook]"
 ```
 
 ### JavaScript / TypeScript: the same engine in your app
@@ -290,7 +290,7 @@ python -m pip install "./dist/release-v0.9.0-rc.5/vesora-0.9.0rc5-py3-none-any.w
 Copy the built tarball into your frontend project and install it:
 
 ```bash
-npm install ./vesora-core-0.9.0-rc.5.tgz
+npm install ./vesora-core-0.9.0-rc.6.tgz
 ```
 
 Add a mount element to your HTML:
