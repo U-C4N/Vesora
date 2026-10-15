@@ -1,6 +1,6 @@
 # Explore a live signal without losing the inspected frame
 
-PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.4` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
+PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.5` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
 
 WebGL2 is required. Existing `figure`, `VesoraChart`, scene protocols 1–6 and accepted-state exports remain available. New 3D layouts, 3D lines, surface presentation and slice relationships use scene protocol 7. Enabling streaming or freezing a view does not by itself promote a scene to protocol 7.
 
@@ -45,6 +45,8 @@ Grid panels stack in row-major order when the available plotting area becomes na
 The viewer supplies dark/light chrome, layer visibility, an inspector, diagnostics, freeze/resume, displayed-frame PNG/HTML exports, 3D camera presets and existing surface-slice controls. The inspector starts collapsed and opens when an observation is selected; expand it to use camera and slice controls, or pass `inspector: true` to open it initially. Technical frame and memory counters stay in Diagnostics. Scientific figures can freeze inspection even without a streaming layer. `preserveTheme: true` applies the selected theme to the chrome while keeping the scene's custom colors. `live: false` hides inspection freeze/resume controls for offline or legacy hosts. `exportHTML: false` omits the HTML action.
 
 Clicking an observation keeps its full values, source index or surface cell/triangle, interpolation status and frame/source versions in the inspector after pointer leave. A displayed offline capture restores the selected observation with its capture time and source frame, so the reader can verify the recorded measurement.
+
+An imported capture keeps that identity while its observations remain unchanged. Successful data, layer or statistical-option changes clear the imported capture metadata before exporting accepted state; rejected updates and presentation-only edits preserve it. An independently frozen displayed frame retains its original selection and bytes until live display resumes.
 
 For React, import `VesoraViewer` from `@vesora/react/viewer` and supply an application-owned `Figure`:
 
@@ -94,7 +96,7 @@ const shownHTML = toHTML(fig, {source: 'displayed'});
 const newestHTML = toHTML(fig, {source: 'accepted'});
 ```
 
-The figure APIs and React `VesoraChart` export handles default to accepted-state export for compatibility. Pass `{source: 'displayed'}` to either React export method to capture inspection. Shared viewer buttons explicitly export the displayed frame. HTML embeds a static scene, retained source data and matching runtime. It does not reconnect the producer or restore evicted history. Protocol-7 files use the shared viewer with live controls suppressed; older scene protocols retain the existing offline viewer.
+The figure APIs and React `VesoraChart` export handles default to accepted-state export for compatibility. Pass `{source: 'displayed'}` to either React export method to capture inspection. Shared viewer buttons explicitly export the displayed frame. HTML embeds a static scene, retained source data and matching runtime. It does not reconnect the producer or restore evicted history. Protocol-7 files use the shared viewer with live controls suppressed and a visible offline notice. The notice uses the saved export time for accepted data and the original inspection time for a displayed frozen frame; opening the file never invents a new capture time. Older files without capture metadata omit the time, and scene protocols 1–6 retain the existing offline viewer.
 
 Python `to_html` / `save_html` and `savefig` / `savefig_async` continue exporting canonical accepted state. Python producers accept data independently of browser drawing. Frozen inspection in a connected Python host is controlled by its viewer; use that viewer's export buttons to capture the displayed frozen frame. Do not assume Python has a matching `freeze_inspection()` facade method.
 

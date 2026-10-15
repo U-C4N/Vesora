@@ -13,7 +13,7 @@ import {validateInspectionX} from './inspection';
 import {surfaceSliceValues} from './slices';
 import {cameraPreset} from './renderer';
 import {appendEntry,lastValue,streamEntry,streamError,validateStreamingOptions,validateStreamState} from './streaming';
-import type {DataEntry,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions,SurfaceSliceSpec,CameraPreset} from './types';
+import type {DataEntry,DataDescriptor,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions,SurfaceSliceSpec,CameraPreset} from './types';
 import type {AxisFormat,ThemeInput,PresentationOptions,FigureEventMap,ViewChangeEvent,FillBetweenOptions,HoverMode,ExportPNGOptions} from './types';
 import type {SelectionLinkSpec,LinkedSelection,Bounds,Domain} from './types';
 import {axisCategories,categoryKey,encodeAxis,isStatistical,labels,statisticalOptions,validateSemantics,validateStatisticalData} from './semantics';
@@ -228,6 +228,7 @@ export class Figure {
   spec:FigureSpec;
   private view?:FigureView;
   private inspectionEnabled=true;
+  private importedInspectionBaseline?:{layers:string;sources:Map<string,DataDescriptor>};
   private exportStore:SnapshotStore;
   private listeners=new Map<FigureEvent,Set<(event:any)=>void>>();
   private closed=false;
@@ -823,7 +824,23 @@ export class Figure {
   emit<K extends FigureEvent>(event:K,payload:FigureEventMap[K]):void{
     for(const callback of [...(this.listeners.get(event)??[])])try{callback(payload);}catch(error){try{console.error(`Vesora ${event} callback failed`,error);}catch{/* Diagnostics cannot interrupt ready/error settlement. */}}
   }
-  changed(streaming=false):void{this.assertOpen();this.acceptedRevision++;this.view?.schedule(streaming);}
+  private inspectionDataIdentity(spec:FigureSpec):string{
+    // Only scene metadata, never numeric values. Camera, visibility and style
+    // do not change the observations described by an imported capture.
+    return JSON.stringify({layers:spec.layers.map(layer=>[layer.id,layer.kind,layer.panelId??'main',Object.entries(layer.data).sort(([a],[b])=>a.localeCompare(b)),layer.options,layer.categorical]),categories:spec.categories,barModes:spec.barModes});
+  }
+  private invalidateImportedInspection():void{
+    const baseline=this.importedInspectionBaseline;
+    if(!this.spec.inspection){this.importedInspectionBaseline=undefined;return;}
+    if(!baseline)return;
+    const changed=baseline.layers!==this.inspectionDataIdentity(this.spec)||baseline.sources.size!==this.registry.size||[...baseline.sources].some(([id,before])=>{
+      if(!this.registry.has(id))return true;
+      const after=this.registry.get(id).descriptor;
+      return before.version!==after.version||before.dtype!==after.dtype||before.byteLength!==after.byteLength||before.shape.length!==after.shape.length||before.shape.some((size,index)=>size!==after.shape[index]);
+    });
+    if(changed){delete this.spec.inspection;this.importedInspectionBaseline=undefined;}
+  }
+  changed(streaming=false):void{this.assertOpen();this.invalidateImportedInspection();this.acceptedRevision++;this.view?.schedule(streaming);}
   snapshot():Snapshot{this.assertOpen();return {figure:structuredClone(this.spec),sources:Array.from(this.registry.entries(),([,entry])=>structuredClone(entry.descriptor))};}
   applySnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>):void{
     // Clone before touching live storage; even a non-cloneable incoming field
@@ -889,9 +906,11 @@ export class Figure {
     validateSemantics(spec,layer=>Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,next.get(source).values])));
     validateSelectionLink(spec,next);
     this.isolateSelectionSources(spec,next);
-    this.checkSourceBudget(new Map(next.entries()),true);this.rejectStreamWaiters();this.streams.clear();
+    this.checkSourceBudget(new Map(next.entries()),true);
+    const importedInspectionBaseline=spec.inspection?{layers:this.inspectionDataIdentity(spec),sources:new Map([...next.entries()].map(([id,entry])=>[id,structuredClone(entry.descriptor)]))}:undefined;
+    this.rejectStreamWaiters();this.streams.clear();
     this.registry.clear();for(const [,entry]of next.entries())this.registry.set(entry.descriptor.id,entry.values,entry.descriptor.shape,entry.descriptor.version);
-    this.spec=spec;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
+    this.spec=spec;this.importedInspectionBaseline=importedInspectionBaseline;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
   }
   close():void{if(this.closed)return;this.rejectStreamWaiters();this.streams.clear();this.view?.dispose();this.view=undefined;this.registry.clear();this.exportStore.dispose();this.listeners.clear();this.closed=true;}
   private assertOpen():void{if(this.closed)throw new Error('Figure is closed');}

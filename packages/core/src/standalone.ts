@@ -15,9 +15,9 @@ function element<T extends HTMLElement>(id:string):T {
 }
 
 /** Decode only the declared binary sources; scene validation remains in the core. */
-function decodePayload(raw:unknown):{snapshot:Snapshot;buffers:Map<string,ArrayBuffer>} {
+function decodePayload(raw:unknown):{snapshot:Snapshot;buffers:Map<string,ArrayBuffer>;capturedAt?:string;captureSource?:'accepted'|'displayed'} {
   if(!raw||typeof raw!=='object')throw new Error('The file does not contain a valid figure.');
-  const payload=raw as {formatVersion?:unknown;snapshot?:Snapshot;buffers?:Array<{id:string;base64:string}>};
+  const payload=raw as {formatVersion?:unknown;snapshot?:Snapshot;buffers?:Array<{id:string;base64:string}>;capture?:{capturedAt?:unknown;source?:unknown}};
   if(payload.formatVersion!==1)throw new Error('This figure uses an unsupported file format.');
   if(!payload.snapshot?.figure||!Array.isArray(payload.snapshot.sources)||!Array.isArray(payload.buffers))throw new Error('The figure data is incomplete.');
   const descriptors=new Map();
@@ -38,7 +38,8 @@ function decodePayload(raw:unknown):{snapshot:Snapshot;buffers:Map<string,ArrayB
     for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
     buffers.set(entry.id,bytes.buffer);
   }
-  return {snapshot:payload.snapshot,buffers};
+  const capturedAt=payload.capture?.capturedAt;
+  return {snapshot:payload.snapshot,buffers,capturedAt:typeof capturedAt==='string'&&Number.isFinite(Date.parse(capturedAt))?capturedAt:undefined,captureSource:payload.capture?.source==='accepted'||payload.capture?.source==='displayed'?payload.capture.source:undefined};
 }
 
 async function start():Promise<void> {
@@ -132,21 +133,32 @@ async function start():Promise<void> {
   inspector.open=window.matchMedia('(min-width: 900px)').matches;
   layerSelect.addEventListener('change',showMetrics);
   try{
-    const {snapshot,buffers}=decodePayload(JSON.parse(element('vesora-payload').textContent||''));
+    const {snapshot,buffers,capturedAt,captureSource}=decodePayload(JSON.parse(element('vesora-payload').textContent||''));
     fig=figure();fig.applySnapshot(snapshot,buffers);
     if(snapshot.figure.protocolVersion>=7){
       // New scientific scenes use the same optional chrome as React and the
       // Python hosts. Legacy exported documents retain their established UI.
       workerURL=URL.createObjectURL(new Blob([__VESORA_WORKER_SOURCE__],{type:'text/javascript'}));setWorkerURL(workerURL);
+      // The legacy document has global button hover/active colors. They must
+      // not override the shared viewer's scoped theme in scientific exports.
+      document.getElementById('vesora-legacy-style')?.remove();
       root.replaceChildren();root.className='';root.style.cssText='max-width:1440px;margin:24px auto;';
-      const background=fig.spec.theme?.background??'#101215';document.body.style.background=background;
+      const background=fig.spec.theme?.background??'#101215';
       const color=background.replace('#','');const light=/^[a-f0-9]{6}$/i.test(color)&&(parseInt(color.slice(0,2),16)+parseInt(color.slice(2,4),16)+parseInt(color.slice(4,6),16)>384);
+      for(const page of [document.documentElement,document.body]){
+        page.style.background=background;page.style.color=fig.spec.theme?.foreground??(light?'#18202a':'#edf0f4');page.style.colorScheme=light?'light':'dark';
+      }
+      document.body.style.margin='0';
+      document.querySelector('meta[name="color-scheme"]')?.setAttribute('content',light?'light':'dark');
       sharedViewer=mountViewer(fig,root,{theme:light?'light':'dark',preserveTheme:true,live:false,exportHTML:false,onError:()=>{root.dataset.ready='error';}});
       const pngButton=[...sharedViewer.element.querySelectorAll('button')].find(button=>button.textContent==='Export PNG');if(pngButton){pngButton.id='vesora-png';pngButton.textContent='Download PNG';}
       const visibleError=sharedViewer.element.querySelector<HTMLElement>('[role=alert]');if(visibleError)visibleError.id='vesora-error';
-      const note=document.createElement('p');note.textContent='Offline snapshot · The retained source data is included. No live producer is connected.';note.style.cssText='margin:12px;font:12px system-ui;color:inherit';root.append(note);
+      // Accepted re-exports may contain data updated since an imported capture.
+      // Displayed exports retain the original frozen-frame time when available.
+      const captured=captureSource==='accepted'?capturedAt:fig.spec.inspection?.capturedAt??capturedAt;
+      const note=document.createElement('p');note.id='vesora-offline-note';note.className='vv-help';note.textContent=`Offline snapshot${captured?` · Captured ${captured}`:''} · The retained source data is included. No live producer is connected.`;sharedViewer.element.append(note);
       document.title=fig.spec.title?`${fig.spec.title} — Vesora`:'Vesora — Interactive figure';
-      await fig.ready();root.dataset.ready='ready';return;
+      await fig.ready();if(root.dataset.ready!=='error')root.dataset.ready='ready';return;
     }
     if(fig.spec.theme){
       const theme=fig.spec.theme,root=document.documentElement;

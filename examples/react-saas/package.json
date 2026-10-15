@@ -1,7 +1,7 @@
 {
   "name": "vesora-react-saas-example",
   "private": true,
-  "version": "0.9.0-rc.4",
+  "version": "0.9.0-rc.5",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -10,8 +10,8 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@vesora/core": "0.9.0-rc.4",
-    "@vesora/react": "0.9.0-rc.4",
+    "@vesora/core": "0.9.0-rc.5",
+    "@vesora/react": "0.9.0-rc.5",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

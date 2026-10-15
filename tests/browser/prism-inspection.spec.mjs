@@ -106,3 +106,35 @@ test('private frozen slices export only committed rows and invalidate changed sa
   expect(result.committed).toMatchObject({slice:1,y:[10,11,12]});expect(result.committed.frameId).toBeGreaterThan(result.pending.frameId);expect(result.committed.selectedY).toBeUndefined();expect(result.selection).toBeUndefined();
   expect(result.live).toEqual({slice:0,y:[20,21,22]});expect(result.resumed).toMatchObject({slice:0,y:[20,21,22]});
 });
+
+for(const mutation of ['options','data'])test(`imported selected observation stays frozen until a ${mutation} update commits on resume`,async({page})=>{
+  const point=await page.evaluate(async()=>{
+    window.fig=vs.figure({height:420});window.layer=fig.hist([0,1,1,2,3,4],{bins:[0,1,2,4]});
+    fig.setView({xDomain:[0,4],yDomain:[0,4]});fig.mount(document.querySelector('#chart'));await fig.ready();
+    const panel=fig.view.panels[0],rect=fig.view.overlay.getBoundingClientRect();
+    return {x:rect.left+panel.rect.left+1.5/4*panel.rect.width,y:rect.top+panel.rect.top+3/4*panel.rect.height};
+  });
+  await page.mouse.click(point.x,point.y);
+  const result=await page.evaluate(async mutation=>{
+    const selected=fig.getInspectionSelection(),original=fig.captureExport('displayed');
+    const snapshot=structuredClone(original.snapshot),buffers=new Map([...original.registry.entries()].map(([id,entry])=>[id,entry.values.slice().buffer]));original.release();fig.close();
+    const copy=vs.figure();copy.applySnapshot(snapshot,buffers);const imported=new vs.Layer(copy,snapshot.figure.layers[0].id);
+    copy.mount(document.querySelector('#chart'));await copy.ready();const restored=copy.getInspectionSelection();
+    imported.setStyle({color:'#ef4444'});copy.setView({xDomain:[-.5,4.5]});await copy.ready();const afterPresentation=copy.getInspectionSelection();
+    const frozen=copy.freezeInspection(),lease=copy.captureExport('displayed'),sourceVersions=copy.snapshot().sources;
+    if(mutation==='options')imported.setOptions({bins:[0,2,4]});else imported.setData({samples:[3,3,3,3]});
+    const accepted=copy.snapshot(),held=copy.getInspectionState(),heldSelection=copy.getInspectionSelection();
+    const during=copy.captureExport('displayed'),displayedSnapshot=structuredClone(during.snapshot),displayedValues=[...during.registry.get(imported.spec.data.samples).values];during.release();
+    const frames=[];copy.on('frame',()=>frames.push(copy.getInspectionSelection()));await copy.resumeLive();
+    const resumed=copy.getInspectionState(),resumedSelection=copy.getInspectionSelection(),retainedSnapshot=structuredClone(lease.snapshot),retainedValues=[...lease.registry.get(imported.spec.data.samples).values];
+    lease.release();const bytesAfterRelease=copy.diagnostics().snapshotBytes;copy.close();
+    return {selected,restored,afterPresentation,frozen,held,heldSelection,accepted,sourceVersions,displayedSnapshot,displayedValues,resumed,resumedSelection,frames,retainedSnapshot,retainedValues,bytesAfterRelease};
+  },mutation);
+  expect(result.selected).toMatchObject({kind:'bin',binIndex:1,count:2});expect(result.restored).toEqual(result.selected);expect(result.afterPresentation).toEqual(result.selected);
+  expect(result.accepted.figure.inspection).toBeUndefined();if(mutation==='options')expect(result.accepted.sources).toEqual(result.sourceVersions);
+  expect(result.held).toMatchObject({mode:'frozen',frameId:result.frozen.frameId,displayedRevision:result.frozen.displayedRevision,snapshotId:result.frozen.snapshotId});
+  expect(result.held.acceptedRevision).toBeGreaterThan(result.frozen.acceptedRevision);expect(result.heldSelection).toEqual(result.selected);
+  expect(result.displayedSnapshot.figure.inspection.selection).toEqual(result.selected);expect(result.displayedSnapshot.figure.layers[0].options.bins).toEqual([0,1,2,4]);expect(result.displayedValues).toEqual([0,1,1,2,3,4]);
+  expect(result.resumed.mode).toBe('live');expect(result.resumed.displayedRevision).toBe(result.held.acceptedRevision);expect(result.resumedSelection).toBeUndefined();expect(result.frames.length).toBeGreaterThan(0);expect(result.frames.every(selection=>selection===undefined)).toBe(true);
+  expect(result.retainedSnapshot).toEqual(result.displayedSnapshot);expect(result.retainedValues).toEqual(result.displayedValues);expect(result.bytesAfterRelease).toBe(0);
+});

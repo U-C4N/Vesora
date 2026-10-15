@@ -559,6 +559,9 @@ export class FigureView {
       // The completed frame must carry the predicate that produced its pixels.
       if(link)this.committedFigure!.commitLinkedSelection(link);
       this.committedAt=new Date().toISOString();
+      // Imported capture metadata expires only when a new displayed scene
+      // commits; accepted updates must not clear the held frozen selection.
+      if(previousFigure?.spec.inspection&&!this.committedFigure?.spec.inspection)this.selectedHit=undefined;
       if(this.selectedHit){
         const layer=this.committedFigure!.spec.layers.find(layer=>layer.id===this.selectedHit!.layerId),previous=previousFigure?.spec.layers.find(layer=>layer.id===this.selectedHit!.layerId);
         if(!layer||!previous||Object.entries(layer.data).some(([key,id])=>previous.data[key]!==id||!previousFigure!.registry.has(id)||previousFigure!.registry.get(id)!==this.committedFigure!.registry.get(id)))this.selectedHit=undefined;
