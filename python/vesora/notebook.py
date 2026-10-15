@@ -4,6 +4,7 @@ from pathlib import Path
 import asyncio
 import base64
 import threading
+import time
 import uuid
 from typing import Any
 from .transport import TransferQueue
@@ -31,14 +32,29 @@ def make_widget(figure: Any) -> Any:
             self._export_requests: dict[str, asyncio.Future[bytes]] = {}
             self._views: dict[str, TransferQueue] = {}
             self._transfer_timer: threading.Timer | None = None
+            self._transfer_deadline: float | None = None
+            self._binary_revision_update = False
             self.on_msg(self._receive)
             figure._listeners.append(self._update)
             self._update()
 
+        def _should_send_property(self, key: str, value: Any) -> bool:
+            # Binary packets already carry the accepted revision. Keep the trait
+            # and its local observers current without an unused automatic comm.
+            # Explicit send_state/get_state calls bypass this automatic-sync hook.
+            if key == "revision" and getattr(self, "_binary_revision_update", False):
+                return False
+            return super()._should_send_property(key, value)
+
         def _update(self) -> None:
             with figure._lock:
                 if self._views:
-                    self.revision += 1
+                    previous = self._binary_revision_update
+                    self._binary_revision_update = True
+                    try:
+                        self.revision += 1
+                    finally:
+                        self._binary_revision_update = previous
                     for queue in self._views.values():
                         queue.update(self.revision, figure._last_change)
                     self._send_transfers()
@@ -59,14 +75,34 @@ def make_widget(figure: Any) -> Any:
                     if transfer is not None:
                         header, buffers = transfer
                         self.send({**header, "viewId": view_id}, buffers=buffers)
+                deadlines = [deadline for queue in self._views.values()
+                             if (deadline := queue.retry_deadline()) is not None]
+                deadline = min(deadlines) if deadlines else None
+                # An earlier scheduled wakeup is also safe: it will recheck the
+                # queues. Do not restart a thread for every append or fast-view ACK.
+                if (deadline is not None and self._transfer_timer is not None
+                        and self._transfer_deadline is not None
+                        and self._transfer_deadline <= deadline):
+                    return
                 if self._transfer_timer is not None:
                     self._transfer_timer.cancel()
-                    self._transfer_timer = None
-                delays = [delay for queue in self._views.values() if (delay := queue.retry_after()) is not None]
-                if delays:
-                    self._transfer_timer = threading.Timer(min(delays), self._send_transfers)
-                    self._transfer_timer.daemon = True
-                    self._transfer_timer.start()
+                self._transfer_timer = None
+                self._transfer_deadline = None
+                if deadline is not None:
+                    def retry() -> None:
+                        with figure._lock:
+                            # cancel() cannot stop a callback already waiting on
+                            # this lock. Such a callback must not clear a new timer.
+                            if self._transfer_timer is not timer:
+                                return
+                            self._transfer_timer = None
+                            self._transfer_deadline = None
+                            self._send_transfers()
+                    timer = threading.Timer(max(.001, deadline - time.monotonic()), retry)
+                    timer.daemon = True
+                    self._transfer_timer = timer
+                    self._transfer_deadline = deadline
+                    timer.start()
 
         @staticmethod
         def _finish_export(future: asyncio.Future[bytes], payload: bytes | None = None,
@@ -182,6 +218,7 @@ def make_widget(figure: Any) -> Any:
                     if self._transfer_timer is not None:
                         self._transfer_timer.cancel()
                         self._transfer_timer = None
+                    self._transfer_deadline = None
             super().close()
 
     return VesoraWidget()

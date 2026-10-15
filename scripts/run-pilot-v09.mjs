@@ -57,15 +57,20 @@ const page=Buffer.from(`<!doctype html>
 <div id="demo"></div><p id="error" role="alert" hidden></p></main><script type="module" src="/pilot.js"></script></body></html>`);
 const style=Buffer.from(`:root{color-scheme:dark;font-family:system-ui,sans-serif;color:#edf0f4;background:#101215}*{box-sizing:border-box}body{margin:0}main{max-width:1260px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;color:#a2abb8;font-size:13px}.brand{font-size:22px;font-weight:700;color:#edf0f4}.demo-copy,.demo-controls{display:none}.demo-status{font-size:12px;color:#a2abb8;min-height:1.5em}#error{color:#ffb3a8}@media(max-width:640px){main{padding:12px}header{align-items:flex-start}}`);
 const bootstrap=Buffer.from(`import {mountSurfaceLab} from '/examples/web/v09-surface-lab.js';
-let current;
+import {producerLoop} from '/examples/web/v09-common.js';
+let current,stopProducer;
 try{
   current=await mountSurfaceLab(document.querySelector('#demo'));
   document.querySelector('.demo-copy')?.remove();
   document.querySelector('.demo-controls')?.remove();
   const status=document.querySelector('.demo-status');
-  if(status)status.textContent='Sentetik veri · 65 × 49 kaynak düğümü · statik kaynak';
+  if(status)status.textContent='Sentetik canlı veri · 65 × 49 kaynak düğümü · saniyede bir kaynak güncellemesi';
+  let tick=0;
+  stopProducer=producerLoop(()=>current.advance(++tick*.12),1000,error=>{
+    const message=document.querySelector('#error');message.hidden=false;message.textContent='Veri üreticisi durdu: '+error.message;
+  });
 }catch(error){const message=document.querySelector('#error');message.hidden=false;message.textContent=error.message;}
-window.addEventListener('pagehide',()=>current?.dispose(),{once:true});
+window.addEventListener('pagehide',()=>{stopProducer?.();current?.dispose();},{once:true});
 `);
 await remember('/',page,'text/html; charset=utf-8',join(fixture,'index.html'),'pilot wrapper');
 await remember('/pilot.css',style,'text/css; charset=utf-8',join(fixture,'pilot.css'),'pilot wrapper');
@@ -78,7 +83,7 @@ for(const [field,value]of [
   ['RC sürümü / kaynak commit',`${manifest.version} / ${manifest.commit}`],
   ['Release manifest SHA-256',manifestSha256],
   ['Kurulan arşiv adı / SHA-256',`${archiveName} / ${archiveSha256}`],
-  ['Bilimsel örnek dosyası, kaynak türü ve hash\'i',`${scene.origin.replace('checkout:','')} / sentetik, statik / ${scene.sha256}`],
+  ['Bilimsel örnek dosyası, kaynak türü ve hash\'i',`${scene.origin.replace('checkout:','')} / sentetik, canlı (1 Hz) / ${scene.sha256}`],
 ]){
   const row=`| ${field} | — |`;assert.equal(results.split(row).length,2,`Results template field changed: ${field}`);
   results=results.replace(row,`| ${field} | ${value} |`);
@@ -93,8 +98,8 @@ const provenance={
   preparedAt:new Date().toISOString(),version:manifest.version,commit:manifest.commit,tag:manifest.tag,
   candidate:manifest.candidate,workingTreeDirty:manifest.workingTreeDirty,releaseDirectory:directory,
   manifestSha256,archive:{name:archiveName,sha256:archiveSha256},runtimeHashes:manifest.runtime,
-  fixture:{kind:'synthetic-static-surface',producer:false,source:'examples/web/v09-surface-lab.js',
-    description:'Existing mixed surface/scalar field/exact slices demo; the wrapper removes instructional demo copy and duplicate source-only slice controls, retaining the archive viewer controls. Runtime modules are exact archive bytes; example sources are separately recorded checkout bytes.'},
+  fixture:{kind:'synthetic-live-surface',producer:true,producerIntervalMs:1000,phasePerUpdate:.12,source:'examples/web/v09-surface-lab.js',
+    description:'Mixed surface/scalar field/exact slices demo with one atomic height/profile update per second, continuing while inspection is frozen. Scalar color remains fixed. The wrapper removes instructional demo copy and duplicate source-only slice controls, retaining archive viewer controls. Runtime modules are exact archive bytes; fixture sources are separately hashed. Disposal stops the producer.'},
   sources,documents,server:{host:'127.0.0.1',url:null},pilotResult:'pending',
 };
 const saveProvenance=()=>writeFile(join(output,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');

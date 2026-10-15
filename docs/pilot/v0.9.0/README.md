@@ -17,11 +17,11 @@ Süreyi ölçün, ancak bu pilot için yeni bir süre sınırı veya ek başarı
 1. Depo kökünde Node.js ve `tar` erişilebilirken, sınanacak doğrulanmış RC dizinini başlatıcıya verin. Örnekteki dizin adını kullanacağınız adayla değiştirin; komut yeni bir arşiv oluşturmaz ve yayın yapmaz.
 
    ```powershell
-   node scripts/run-pilot-v09.mjs dist/release-v0.9.0-rc.2
+   node scripts/run-pilot-v09.mjs dist/release-v0.9.0-rc.3
    ```
 
    Başlatıcı manifesti ve bütün arşiv/demoların SHA-256 değerlerini doğrular; core paketinin sürümünü ve `index`, `worker`, `viewer`, `labs` dosyalarını ayrıca karşılaştırır. Bu doğrulama teknik yayın kapılarının geçtiği anlamına gelmez: RC1 performans kapısında başarısız oldu; asıl pilot için düzeltmelerden sonra sabitlenen aday kullanılmalıdır. Terminaldeki `http://127.0.0.1:.../` adresini katılımcının tarayıcısında açın. Sunucu yalnız bu makineden erişilir; oturum sonunda `Ctrl+C` ile kapatın. Sabit port gerekirse `--port 4179`, sunucuyu açmadan kurulum kaydı üretmek için `--prepare-only` ekleyin.
-2. Bu kurulum mevcut sentetik yüzey, bağımsız skaler alan ve iki bağlı kesit örneğini açar. Kaynak statiktir; çalışan bir veri üreticisi yoktur. Dondurma ve dışa aktarma ürünün mevcut viewer arayüzünü kullanır. Katılımcı sayfası görev sırasını veya düğmelerin yerini anlatmaz. Kendi verisini kullanacak katılımcı için kullanma/paylaşma izni olan protokol 7 yüzey ve kesitlerini ayrıca hazırlayabilirsiniz; veri kaynağını ve kurulum farkını kaydedin.
+2. Bu kurulum sentetik yüzey, bağımsız skaler alan ve iki bağlı kesit örneğini açar. Üretici saniyede bir yüzey yüksekliğini ve iki kesiti atomik günceller; bağımsız skaler alan sabittir. Görüntü dondurulurken kaynak güncellemeleri devam eder. Sayfa kapatıldığında üretici durur. Dondurma ve dışa aktarma ürünün mevcut viewer arayüzünü kullanır. Katılımcı sayfası görev sırasını veya düğmelerin yerini anlatmaz. Kendi verisini kullanacak katılımcı için kullanma/paylaşma izni olan protokol 7 yüzey ve kesitlerini ayrıca hazırlayabilirsiniz; canlı üreticiyi, veri kaynağını ve kurulum farkını kaydedin.
 3. Terminalde verilen `artifacts/v09/pilot/.../results.md` dosyasını gözlemci kaydı olarak kullanın. Sürüm, commit, manifest/arşiv SHA-256 ve sentetik örnek kimliği otomatik doldurulur; katılımcı sonuçları ve karar `pending` kalır. Aynı dizindeki `participant-tasks.tr.md`, görev metninin değiştirilmemiş kopyasıdır; katılımcıya yalnız bunu verin. `provenance.json` belge/kaynak hash'lerini içerir; `fixture/` örnek kaynaklarını da saklayın. Motor/viewer arşivden gelir, bilimsel örnek ayrı kaydedilmiş depo kaynağıdır. Çalışma dizinini sınanmış arşiv diye kaydetmeyin. Sürümün belgelerini hazır bırakın; kurulum sorunlarını görev başlamadan giderin. Gözlem, başlangıç verisi teslim edildiğinde başlar.
 4. HTML dosyasını ağ kapalıyken açacak ikinci profil veya makine hazırlayın. Kullanıcı açıkça istemedikçe başkasına dosya göndermeyin; yerel ikinci profil yeterlidir.
 5. Kayıt için izin alın. Ekran kaydı zorunlu değildir; süre, eylemler, hata ve katılımcının açıklaması yeterlidir. Katılımcı istediği an bırakabilir.
@@ -36,7 +36,7 @@ Yardım istediğinde önce normalde nasıl ilerleyeceğini sorun; ardından veri
 | --- | --- |
 | Yüzey | Bir gözlem seçildi; x/y/z ve varsa ayrı skalerin anlamı doğru açıklandı |
 | Kesit | Bağlı satır/sütun değiştirildi; değerler kaynak grid ile eşleşti |
-| Dondurma | İncelenen görüntü sabitlendi; katılımcı görüntü ve kaynak veri arasındaki ayrımı doğru açıkladı |
+| Dondurma | En az iki kaynak güncellemesi boyunca incelenen görüntü/değer sabit kaldı, kabul edilen revision ilerledi; katılımcı görüntü ve kaynak veri arasındaki ayrımı doğru açıkladı |
 | Dışa aktarma | PNG ve tekrar açılabilen HTML oluştu; HTML ikinci ortamda çevrimdışı açıldı; seçili gözlem ve görünüm eşleşti |
 
 Kaynak örneğin kimliği ve değerleri eşleşmelidir. Yüzey hücresi/üçgeni üzerinde interpolasyon seçildiyse bunu açıkça kaydedin ve sayısal toleransı testten önce belirleyin. Sonuçları gördükten sonra toleransı değiştirmeyin. Ortam, görev süresi, yardım, hatalar, dosyalar ve hash'ler birlikte saklanır.

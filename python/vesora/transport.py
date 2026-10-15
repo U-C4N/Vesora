@@ -108,9 +108,14 @@ class TransferQueue:
             return self.acknowledged
         return self.frame["revision"] if self.frame is not None and self.frame["mode"] == "live" else None
 
+    def retry_deadline(self) -> float | None:
+        """Absolute monotonic deadline; unchanged while the same ACK is pending."""
+        return None if self.inflight is None else self.inflight[2] + ACK_TIMEOUT
+
     def retry_after(self) -> float | None:
         """Delay until a lost ACK must recover, even without another append."""
-        return None if self.inflight is None else max(.001, self.inflight[2] + ACK_TIMEOUT - time.monotonic())
+        deadline = self.retry_deadline()
+        return None if deadline is None else max(.001, deadline - time.monotonic())
 
     def next(self) -> tuple[dict[str, Any], list[bytes]] | None:
         if self.inflight is not None:

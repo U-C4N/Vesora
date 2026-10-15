@@ -1,6 +1,6 @@
 # Explore a live signal without losing the inspected frame
 
-PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.2` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
+PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.3` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
 
 WebGL2 is required. Existing `figure`, `VesoraChart`, scene protocols 1–6 and accepted-state exports remain available. New 3D layouts, 3D lines, surface presentation and slice relationships use scene protocol 7. Enabling streaming or freezing a view does not by itself promote a scene to protocol 7.
 

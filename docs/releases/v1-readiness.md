@@ -4,7 +4,7 @@ PRISM is still a release candidate. This list separates unfinished v0.9 acceptan
 
 | Item | Current state | Completion or decision required |
 | --- | --- | --- |
-| Finish v0.9 acceptance | RC2 needs evidence bound to its fixed archives; human pilot and screen-reader results are pending | Complete the [release gates](v0.9.0.md), retain failures, publish only verified archives, then verify downloaded exact versions |
+| Finish v0.9 acceptance | RC2 passed six gates including performance but failed Jupyter latency; RC3 needs fresh archive-bound evidence. Two-hour soaks, human pilot and screen-reader results remain pending | Complete the [release gates](v0.9.0.md), retain failures, publish only verified archives, then verify downloaded exact versions |
 | Confirm the public inspection contract | Snapshot ownership, accepted/rendered revisions, protocol 7 and transport 3 are implemented | Review pilot/integration findings and resolve documented API ambiguities before promising v1 stability; retain protocol 1–6 and transport v2 compatibility |
 | Reduce cold 3D picking latency | The projected index is reused until source or camera changes; rebuilding a large index can pause interaction | Measure an object-space or cooperative index design against the same depth, clipping, source-identity and stale-frame tests; retain exact results |
 | Evaluate the streaming optimization targets | Short reference measurements are available; they do not prove the 30-minute targets | Report p95 ≤50 ms, p99 ≤100 ms and worker transfer reduction ≥80% against the fixed baseline, or explicitly record which targets were missed |

@@ -42,6 +42,8 @@ Gözlem/kayıt izni ve kayıt yöntemi: —
 | Dışa aktarma / çevrimdışı açma | — | — | — | — |
 
 Görüntü/kaynak veri ayrımının katılımcının kendi açıklaması: —  
+Dondurma başında ve en az iki kaynak güncellemesi sonrasında kabul edilen revision / sabit kalan frame ve değer: —
+
 Kesitin kaynak grid ile doğrulanması: —  
 Kaynak örnek mi, yüzey interpolasyonu mu: —
 

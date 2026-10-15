@@ -8,7 +8,7 @@ Yalnız kullanmaya ve paylaşmaya yetkili olduğunuz verileri açın. Kişisel v
 
 1. Hazırlanan yüzeyde ilgilendiğiniz bir gözlem seçin. Konumunun ve değerinin ne anlattığını açıklayın. Gerekirse görüş açısını ve eksenlerin orantısını değerlendirebileceğiniz biçimde düzenleyin.
 2. Bağlı kesitte başka bir satır veya sütunu inceleyin. Hangi kaynak değerlerini gördüğünüzü ve seçiminiz değişince ne olduğunu açıklayın.
-3. İncelemekte olduğunuz görüntüyü sabitleyin. Ekrandaki görünümün ve kaynak verinin o anda ne durumda olduğunu kendi sözlerinizle açıklayın.
+3. Veri gelmeye devam ederken incelemekte olduğunuz görüntüyü sabitleyin. Ekrandaki görünümün ve kaynak verinin o anda ne durumda olduğunu kendi sözlerinizle açıklayın.
 4. Bu durumun bir görüntüsünü ve tekrar açılabilen dosyasını oluşturun. Tekrar açılabilen dosyayı hazırlanmış ikinci ortamda ağ bağlantısı olmadan açın. Önceki gözlemi bulup aynı ölçümü gördüğünüzü nasıl anladığınızı anlatın.
 
 ## Oturum sonunda

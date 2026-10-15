@@ -17,5 +17,13 @@ export async function mountSurfaceLab(container){
     const update=()=>{slice.setIndex(Number(input.value));value.textContent=`${axis}[${input.value}] = ${coordinates[Number(input.value)].toFixed(3)}`;};label.append(`${axis} slice `,input,value);ui.controls.append(label);input.addEventListener('input',update);update();
   }
   const viewer=mountViewer(figure,ui.chart,{theme:'dark',height:680,onError:error=>ui.status.textContent=error.message});await figure.ready();ui.status.textContent='65 × 49 source vertices · exact slices · hover the surface for cell and interpolated coordinates';
-  return {figure,dispose(){viewer.dispose();figure.close();ui.section.remove();}};
+  return {figure,advance(phase){
+    const next=new Float64Array(z.length);
+    for(let row=0;row<y.length;row++)for(let col=0;col<x.length;col++){
+      const r=Math.hypot(x[col],y[row]);next[row*x.length+col]=Math.cos(2*r-phase)*Math.exp(-r*.3);
+    }
+    // The source and both exact profiles change in one surface transaction.
+    // Independent scalar color and its heatmap remain the same measured field.
+    source.setData({z:next});
+  },dispose(){viewer.dispose();figure.close();ui.section.remove();}};
 }

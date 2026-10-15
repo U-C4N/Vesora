@@ -17,6 +17,9 @@ export function render({model,el}:{model:WidgetModel;el:HTMLElement}):()=>void{
   let viewer:ViewerHandle|undefined;
   const viewId=globalThis.crypto?.randomUUID?.()??`view-${Date.now()}-${Math.random()}`;
   let binaryMode=false,transportVersion=2;
+  let acknowledgedSentRevision:number|undefined;
+  let reportedFrame:{revision:number;frameId:number;mode:string;snapshotId?:string}|undefined;
+  const resetFrameReports=()=>{acknowledgedSentRevision=undefined;reportedFrame=undefined;};
   fig.setInspectionEnabled(false);
   const revisions=new Map<number,number>();
   let displayedHostRevision:number|undefined,pendingCoreRevision:number|undefined;
@@ -35,7 +38,16 @@ export function render({model,el}:{model:WidgetModel;el:HTMLElement}):()=>void{
     if(covered!==undefined)displayedHostRevision=covered;
     return {...state,revision:displayedHostRevision};
   };
-  const reportFrame=()=>{if(transportVersion!==3)return;const state=frameMetadata();if(state.revision===undefined)return;model.send({type:'frame',viewId,revision:state.revision,frameId:state.frameId,mode:state.mode,snapshotId:state.snapshotId});};
+  const reportFrame=()=>{
+    if(disposed||transportVersion!==3)return;
+    const state=frameMetadata();if(state.revision===undefined)return;
+    // Python cannot register a frame until its data ACK has been sent. Preserve
+    // event-time reports, but never let an early report suppress the post-ACK one.
+    const acknowledged=acknowledgedSentRevision!==undefined&&state.revision<=acknowledgedSentRevision;
+    if(acknowledged&&reportedFrame?.revision===state.revision&&reportedFrame.frameId===state.frameId&&reportedFrame.mode===state.mode&&reportedFrame.snapshotId===state.snapshotId)return;
+    model.send({type:'frame',viewId,revision:state.revision,frameId:state.frameId,mode:state.mode,snapshotId:state.snapshotId});
+    if(acknowledged)reportedFrame={revision:state.revision,frameId:state.frameId,mode:state.mode,snapshotId:state.snapshotId};
+  };
   fig.on('frame',reportFrame);fig.on('inspectionchange',reportFrame);
   fig.on('framepending',state=>{pendingCoreRevision=state.displayedRevision;trimRevisions();});
   let appliedRevision:number|undefined,applyingView=true;
@@ -62,7 +74,9 @@ export function render({model,el}:{model:WidgetModel;el:HTMLElement}):()=>void{
   const update=()=>{if(binaryMode)return;applyingView=true;el.style.pointerEvents='none';if(!scheduled){scheduled=true;queueMicrotask(()=>{scheduled=false;if(!disposed&&!binaryMode)applying=apply();});}};
   const bytes=(value:ArrayBuffer|DataView|Uint8Array)=>value instanceof ArrayBuffer?value:value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength) as ArrayBuffer;
   const applyTransfer=async(message:any,rawParts:Array<ArrayBuffer|DataView|Uint8Array>)=>{
-    binaryMode=true;transportVersion=message.transportVersion===3?3:2;viewerOptions.live=transportVersion===3;fig.setInspectionEnabled(transportVersion===3);const current=++generation;renderFailure=undefined;
+    const nextTransportVersion=message.transportVersion===3?3:2;
+    if(message.type==='stream-snapshot'||nextTransportVersion!==transportVersion)resetFrameReports();
+    binaryMode=true;transportVersion=nextTransportVersion;viewerOptions.live=transportVersion===3;fig.setInspectionEnabled(transportVersion===3);const current=++generation;renderFailure=undefined;
     try{
       const parts=rawParts.map(bytes);
       if(parts.length!==message.bufferLengths.length||parts.some((part,i)=>part.byteLength!==message.bufferLengths[i]))throw new Error('Invalid transfer buffers');
@@ -121,12 +135,13 @@ export function render({model,el}:{model:WidgetModel;el:HTMLElement}):()=>void{
       if(disposed||current!==generation)return;
       appliedRevision=message.revision;applyingView=false;el.style.pointerEvents=originalPointerEvents;
       model.send({type:'ack',viewId,transferId:message.transferId,revision:message.revision});
+      acknowledgedSentRevision=message.revision;
       reportFrame();
     }catch(error){
       if(disposed||current!==generation)return;
       if(message.type==='stream-snapshot'){
         renderFailure=error;model.send({type:'event',viewId,event:'error',revision:message.revision,payload:{message:String(error)}});
-      }else model.send({type:'resync',viewId,message:String(error)});
+      }else{resetFrameReports();model.send({type:'resync',viewId,message:String(error)});}
     }
   };
   const custom=async(message:any,rawParts:Array<ArrayBuffer|DataView|Uint8Array>=[])=>{
@@ -154,6 +169,6 @@ export function render({model,el}:{model:WidgetModel;el:HTMLElement}):()=>void{
   });
   model.on('change:snapshot',update);model.on('change:buffers',update);model.on('change:revision',update);model.on('msg:custom',custom);update();
   model.send({type:'hello',transportVersion:2,supportedTransportVersions:[2,3],viewId});
-  return ()=>{disposed=true;generation++;model.send({type:'dispose-view',viewId});model.off('change:snapshot',update);model.off('change:buffers',update);model.off('change:revision',update);model.off('msg:custom',custom);viewer?.dispose();fig.close();el.style.pointerEvents=originalPointerEvents;URL.revokeObjectURL(workerURL);setWorkerURL(undefined);};
+  return ()=>{disposed=true;generation++;resetFrameReports();model.send({type:'dispose-view',viewId});model.off('change:snapshot',update);model.off('change:buffers',update);model.off('change:revision',update);model.off('msg:custom',custom);viewer?.dispose();fig.close();el.style.pointerEvents=originalPointerEvents;URL.revokeObjectURL(workerURL);setWorkerURL(undefined);};
 }
 export default {render};
