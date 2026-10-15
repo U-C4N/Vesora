@@ -207,7 +207,7 @@ Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. T
 
 Supported Python inputs include lists, tuples, `array.array`, and supported numeric buffers. When installed, NumPy `ndarray` inputs are accepted through the buffer protocol. This uses the same data adapter and visualization engine.
 
-For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.9.0-rc.3/vesora-0.9.0rc3-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
+For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.9.0-rc.4/vesora-0.9.0rc4-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
 
 This example supplies Float32 buffers using the Python standard library:
 
@@ -259,7 +259,7 @@ unsubscribe();
 
 JavaScript's `fig.inspect()` returns `kind`, `total`, `visible`, `rendered`, `exact`, `method`, and `layerId` for each layer, with `panelId` for grid results. For density, `exact: true` means the counts are exact; it does not mean every point is drawn separately. After a view update, use `await fig.ready()` before reading the completed result. Python does not expose `fig.inspect()`; subscribe to the `representation` event or use the exported viewer's inspector.
 
-JavaScript event names include `hover`, `xhover`, `click`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward low-frequency selection/view/representation/error events; the per-pointer `hover` and `xhover` events remain JavaScript-only. An unlinked point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. An unlinked density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. Without an explicit selection link, selection does not highlight or filter another panel. Surface/heatmap colors represent z values; a density colorbar represents the number of points per cell.
+JavaScript event names include `hover`, `xhover`, `click`, `selection`, `viewchange`, `representation`, and `error`. Python hosts forward low-frequency selection/view/representation/error events; the per-pointer `hover` and `xhover` events remain JavaScript-only. An unlinked point selection includes source `indices`, `count`, and `truncated`; at most 10,000 indices are returned. An unlinked density selection includes `bounds` and `count`. Grid hover/selection events identify the source panel. Without an explicit selection link, selection does not highlight or filter another panel. Heatmap colors represent z values; surface colors represent the independent `values` channel when supplied, otherwise z. A density colorbar represents the number of points per cell.
 
 ## Follow observations across views
 

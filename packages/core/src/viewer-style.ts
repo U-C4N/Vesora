@@ -36,6 +36,7 @@ export const VIEWER_STYLE = `
 [data-vesora-viewer] .vv-error p{margin:0 0 8px}
 [data-vesora-viewer] .vv-help{margin:0;padding:9px 12px;color:var(--vv-muted);font-size:12px;border-top:1px solid var(--vv-line)}
 [data-vesora-viewer] .vv-notice{margin:8px 0;color:var(--vv-muted);font-size:12px}
+@media(min-width:761px){[data-vesora-viewer] .vv-sidebar{contain:size;min-height:0;overflow-y:auto}}
 @media(max-width:760px){[data-vesora-viewer] .vv-body{grid-template-columns:minmax(0,1fr)}[data-vesora-viewer] .vv-sidebar{border-left:0;border-top:1px solid var(--vv-line)}[data-vesora-viewer] .vv-toolbar-actions{width:100%}[data-vesora-viewer] button{min-height:42px}[data-vesora-viewer] .vv-layers{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 @media(prefers-reduced-motion:reduce){[data-vesora-viewer] *,[data-vesora-viewer] *:before,[data-vesora-viewer] *:after{scroll-behavior:auto!important;transition:none!important}}
 `;

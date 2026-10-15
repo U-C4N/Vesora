@@ -32,6 +32,8 @@ import type {Bounds,Domain,LayerSpec,PointPlan,LineResult,Query,RepresentationIn
 type PanelInfo=RepresentationInfo&{layerId:string;panelId?:string};
 type AxisTick={value:number;label:string;position:number};
 type RenderTarget={width:number;height:number;scale:number};
+// A color channel is a separate measured quantity; z labels describe geometry.
+const colorbarLabel=(layer:LayerSpec,density:boolean,view:ViewSpec):string=>layer.style.colorbarLabel??(density?'count / bin':layer.data.color?'value':view.zLabel);
 interface PanelFrame {
   id:string;title:string;view:ViewSpec;layers:LayerSpec[];
   cell:PlotRect;rect:PlotRect;bounds:Bounds;zDomain:Domain;legendRows:number;statusHeight:number;
@@ -376,7 +378,7 @@ export class FigureView {
         let domain=possibleColor.style.colorDomain;
         if(!domain&&!possibleDensity)domain=extent(this.source.registry.get(possibleColor.data.color??possibleColor.data.z).values);
         const labels=domain?ticks(domain,'linear',5).map(v=>formatTick(v,domain[1]-domain[0])):[String(this.source.registry.get(possibleColor.data.x).descriptor.shape[0])];
-        right=42+Math.max(...labels.map(t=>measure.measureText(t).width))+(possibleColor.style.colorbarLabel||possibleDensity||view.zLabel?f.label+10:0);
+        right=42+Math.max(...labels.map(t=>measure.measureText(t).width))+(colorbarLabel(possibleColor,possibleDensity,view)?f.label+10:0);
       }
       for(let pass=0;pass<3;pass++){
         const plotWidth=Math.max(40,cell.width-left-right);
@@ -650,8 +652,13 @@ export class FigureView {
     }else{
       const m=cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,r.width/r.height,view.pan3d??[0,0],scientificAspect(view,panel.bounds,panel.zDomain));
       const pos=(x:number,y:number,z:number)=>[r.left+((m[0]*x+m[4]*y+m[8]*z+m[12])+1)/2*r.width,r.top+(1-(m[1]*x+m[5]*y+m[9]*z+m[13]))/2*r.height];
+      const origin=pos(-1,-1,-1);
       for(const [axis,end,domain]of [['x',[1,-1,-1],bounds.x],['y',[-1,1,-1],bounds.y],['z',[-1,-1,1],zDomain]] as const){
-        const p=pos(end[0],end[1],end[2]);ctx.textAlign='center';ctx.fillText(view[`${axis}Label`]||axis,p[0],p[1]-12);
+        const p=pos(end[0],end[1],end[2]);
+        // An axis along the viewing direction has no readable screen extent.
+        // Keep its geometry/data intact and omit only its coincident annotation.
+        if(Math.hypot(p[0]-origin[0],p[1]-origin[1])<=1)continue;
+        ctx.textAlign='center';ctx.fillText(view[`${axis}Label`]||axis,p[0],p[1]-12);
         for(const value of ticks(domain,view[`${axis}Scale`],3)){const t=normalize(value,domain,view[`${axis}Scale`]);if(t<.12)continue;const vector=[-1,-1,-1];vector[{x:0,y:1,z:2}[axis]]=t*2-1;const q=pos(vector[0],vector[1],vector[2]);ctx.fillText(formatTick(value,domain[1]-domain[0]),q[0]+12,q[1]+12);}
       }
     }
@@ -675,7 +682,7 @@ export class FigureView {
         if(baseline<end+f.tick+6)continue;end=baseline;
         const label=formatTick(value,domain[1]-domain[0]);ctx.fillText(label,x+18,baseline);maxWidth=Math.max(maxWidth,ctx.measureText(label).width);
       }
-      const label=colorLayer.style.colorbarLabel??(density?'count / bin':view.zLabel);
+      const label=colorbarLabel(colorLayer,!!density,view);
       if(label){ctx.save();ctx.font=`${f.label}px ${this.theme.fontFamily}`;ctx.translate(x+25+maxWidth+f.label,r.top+h/2);ctx.rotate(-Math.PI/2);ctx.textAlign='center';ctx.fillText(this.fitText(ctx,label,h),0,0);ctx.restore();}
     }
     const density=this.infos.find(i=>i.kind==='density'&&layers.some(layer=>layer.id===i.layerId));

@@ -8,8 +8,8 @@ export async function mountSurfaceLab(container){
   const x=Float64Array.from({length:65},(_,i)=>-3+i*6/64),y=Float64Array.from({length:49},(_,i)=>-2+i*4/48),z=new Float64Array(x.length*y.length),values=new Float64Array(z.length);
   for(let row=0;row<y.length;row++)for(let col=0;col<x.length;col++){const i=row*x.length+col,r=Math.hypot(x[col],y[row]);z[i]=Math.cos(2*r)*Math.exp(-r*.3);values[i]=Math.sin(x[col])*Math.cos(y[row]);}
   const figure=subplots({rows:2,cols:2,kinds:[['3d','2d'],['2d','2d']],width:1100,height:680,title:'Field and exact cross-sections'});
-  const source=figure.panel(0,0).surface(x,y,z,{values,shading:'smooth',label:'Wave height; scalar color'});figure.panel(0,0).setTitle('Height + independent scalar').setView({xLabel:'x',yLabel:'y',zLabel:'height'});
-  figure.panel(0,1).heatmap(x,y,values);figure.panel(0,1).setTitle('Independent scalar field').setView({xLabel:'x',yLabel:'y'});
+  const source=figure.panel(0,0).surface(x,y,z,{values,shading:'unlit',colorbarLabel:'Scalar value (dimensionless)',label:'Wave height; scalar color'});figure.panel(0,0).setTitle('Height + independent scalar').setView({xLabel:'x',yLabel:'y',zLabel:'height'});
+  figure.panel(0,1).heatmap(x,y,values,{colorbarLabel:'Scalar value (dimensionless)'});figure.panel(0,1).setTitle('Independent scalar field').setView({xLabel:'x',yLabel:'y'});
   const column=figure.panel(1,0).slice(source,{axis:'x',index:32,color:'#79b7ff',width:2,label:'Exact column'}),row=figure.panel(1,1).slice(source,{axis:'y',index:24,color:'#c5f36b',width:2,label:'Exact row'});
   figure.panel(1,0).setTitle('x-column → z(y)').setView({xLabel:'y',yLabel:'height'});figure.panel(1,1).setTitle('y-row → z(x)').setView({xLabel:'x',yLabel:'height'});
   for(const [axis,coordinates,slice,index]of [['x',x,column,32],['y',y,row,24]]){

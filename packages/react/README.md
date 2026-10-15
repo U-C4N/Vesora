@@ -2,10 +2,10 @@
 
 Declarative React + TypeScript charts for SaaS dashboards. `VesoraChart` supports line, bar and scatter charts, independent responsive cards, light/dark themes, date/currency/percent formatting, custom React tooltips, an accessible interactive legend, and loading/empty/error states.
 
-**v0.9.0-rc.3 candidate:** build from the Vesora checkout. Creating packages does not publish them to npm. With the generated release tarballs available locally:
+**v0.9.0-rc.4 candidate:** build from the Vesora checkout. Creating packages does not publish them to npm. With the generated release tarballs available locally:
 
 ```bash
-npm install react react-dom ./vesora-core-0.9.0-rc.3.tgz ./vesora-react-0.9.0-rc.3.tgz
+npm install react react-dom ./vesora-core-0.9.0-rc.4.tgz ./vesora-react-0.9.0-rc.4.tgz
 ```
 
 After registry publication, the ordinary installation is `npm install @vesora/react react react-dom`. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).

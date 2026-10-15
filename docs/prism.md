@@ -1,6 +1,6 @@
 # Explore a live signal without losing the inspected frame
 
-PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.3` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
+PRISM is the v0.9 scientific and telemetry workflow: a bounded live window, an independently frozen inspection snapshot, mixed 2D/3D panels and an optional Obsidian viewer. This checkout identifies itself as `0.9.0-rc.4` and remains under development. The [release checklist](releases/v0.9.0.md) distinguishes implemented behavior from publication gates that still require evidence.
 
 WebGL2 is required. Existing `figure`, `VesoraChart`, scene protocols 1–6 and accepted-state exports remain available. New 3D layouts, 3D lines, surface presentation and slice relationships use scene protocol 7. Enabling streaming or freezing a view does not by itself promote a scene to protocol 7.
 
@@ -129,7 +129,7 @@ const measured = fig.panel(0, 0).surface(
 measured.setData({color: [[281, 286], [291, 296]]}); // height stays unchanged
 ```
 
-Creation uses `values`; JavaScript data updates use the `color` channel. Python accepts `surface(..., values=...)` and `layer.set_data(values=...)`. Both channels must have the same grid shape. Omitting `values` retains z-based coloring. `unlit` is the default for reading scalar colors; smooth lighting and wireframe are opt-in presentation choices. Nonfinite z or scalar values omit affected triangles instead of drawing an invented measurement.
+Creation uses `values`; JavaScript data updates use the `color` channel. Python accepts `surface(..., values=...)` and `layer.set_data(values=...)`. Both channels must have the same grid shape. Omitting `values` retains z-based coloring. An independent color channel defaults to the neutral colorbar label `value`; use `colorbarLabel` to specify its quantity and unit. An explicit empty label hides it. Height-colored surfaces retain the z-axis label, and density retains `count / bin`. `unlit` is the default for reading scalar colors; smooth lighting and wireframe are opt-in presentation choices. Nonfinite z or scalar values omit affected triangles instead of drawing an invented measurement.
 
 `axis: 'x'` fixes a column and produces a y–z profile; `axis: 'y'` fixes a row and produces an x–z profile. Remove all dependent slices before removing the source or changing its topology. Replacing z values with the same shape refreshes the derived profiles in one transaction.
 
