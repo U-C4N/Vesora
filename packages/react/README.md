@@ -8,7 +8,7 @@ Declarative React + TypeScript charts for SaaS dashboards. `VesoraChart` support
 npm install react react-dom ./vesora-core-0.9.0-rc.6.tgz ./vesora-react-0.9.0-rc.6.tgz
 ```
 
-After registry publication, the ordinary installation is `npm install @vesora/react react react-dom`. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).
+After this candidate is published, select it explicitly with `npm install @vesora/core@0.9.0-rc.6 @vesora/react@0.9.0-rc.6 react react-dom`; the candidate channel is `next`, not `latest`. Until publication, use the local archives above. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).
 
 For scientific panels, import `VesoraViewer` from `@vesora/react/viewer` and pass an application-owned `Figure`. It borrows the figure, supplies Obsidian controls and unmounts without closing application data. See the [PRISM ownership and inspection guide](../../docs/prism.md). `VesoraChart` remains the simple chart entry point. Its `exportPNG` and `exportHTML` default to accepted data; `{source:'displayed'}` captures the inspected frame.
 

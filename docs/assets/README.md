@@ -2,6 +2,14 @@
 
 The scientific PNGs in this directory are exported by Vesora itself through the Python API and its bundled TypeScript/WebGL2 engine. Signal Studio PNGs are browser screenshots of the production React starter. The SVG banner is a decorative wordmark, not a data plot.
 
+## PRISM workspace
+
+`prism-workspace.png` is a real 1440 × 1100 screenshot of the `0.9.0-rc.6` Obsidian viewer. It shows the synthetic 65 × 49 surface, independent scalar field and two exact row/column profiles. The camera was set to isometric and the displayed frame frozen through the viewer controls. The four panels and their source data were not altered for the screenshot.
+
+The capture loaded verified core, worker, viewer and Labs modules from the fixed RC6 tarball in a separate headless browser. Page errors were empty. The screenshot is not a performance measurement, human pilot result or proof of two-hour endurance.
+
+Image SHA-256: `3c8d6799f45b3bba48bef73d4cb6435ec77daa998bab481f5b949f5ed14ff394`. The capture script and provenance are retained at `artifacts/v09/capture-prism-readme-20261015.mjs` and `artifacts/v09/prism-readme-capture-20261015.json`; the latter has SHA-256 `1ae086a2222844f052df28a38bef2d9af89f52a2d2538201cf3a512b4cbabd3e`.
+
 ## Signal Studio screenshots
 
 From the repository root:
