@@ -86,7 +86,7 @@ export class QueryScheduler {
 
   query(key: string, kind: 'scatter' | 'line', xId: string, yId: string, query: Query, registry: DataRegistry | DataStore): Promise<Plan> {
     return this.submit<Plan>(key, [xId, yId], [kind, query], registry, store => {
-      const x = store.get(xId)!.values, y = store.get(yId)!.values;
+      const x = store.get(xId)!, y = store.get(yId)!;
       return kind === 'line' ? lineSteps(x, y, query,ascending(store.get(xId)!)) : scatterSteps(x, y, query);
     }, requestId => ({type: 'query', requestId, key, kind, xId, yId, query}));
   }

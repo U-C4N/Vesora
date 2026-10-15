@@ -123,6 +123,7 @@ export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Rec
     const bars = layers.filter(layer=>layer.kind==='bar'), mode = spec.barModes?.[panel.id] ?? 'group';
     for (const layer of layers) {
       const values=read(layer);
+      if(layer.kind!=='surface'&&(layer.style.shading!==undefined||layer.style.wireframe!==undefined))throw new Error('Shading and wireframe require a surface');
       if(layer.kind==='band'&&(panel.view.kind!=='2d'||panel.view.yScale==='time'||panel.view.yFormat?.kind==='date'))throw new Error('Bands require 2D numeric y axes; x may use time');
       if(spec.hoverMode==='x'&&layer.kind==='line'&&layer.visible){
         if(panel.view.kind!=='2d'||layer.categorical?.x||layer.categorical?.y)throw new Error('X inspection requires numeric 2D line coordinates');

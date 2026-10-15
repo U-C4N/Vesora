@@ -44,7 +44,9 @@ def _ensure_window(figure: Any, *, visible: bool) -> Any:
         window = Window()
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.setWindowTitle(figure._spec["title"] or "Vesora")
-        window.resize(figure._spec["width"], figure._spec["height"])
+        # Scientific figure dimensions describe the canvas and exported image.
+        # Reserve the shared viewer's sidebar, toolbar, help and status chrome.
+        window.resize(figure._spec["width"] + 232, figure._spec["height"] + 140)
         view = QWebEngineView(window)
         window.setCentralWidget(view)
         window._vesora_view = view
@@ -90,7 +92,9 @@ def save_figure(figure: Any, path: Path, *, timeout: float, width: int | None = 
         raise ValueError("timeout must be positive")
     from .export import png_options
     options = png_options(width=width, height=height, scale=scale)
-    frozen = figure._frozen_transfer() if figure._streams else None
+    # Python exports accepted data at invocation, including static scenes whose
+    # viewer may be inspecting an older frozen frame.
+    frozen = figure._frozen_transfer()
     _ensure_window(figure, visible=False)
     host = figure._host
     deadline = time.monotonic() + timeout

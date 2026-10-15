@@ -25,7 +25,7 @@ jobs:
       - run: python -m pip install -e ".[numpy]"
       - run: python -m pytest tests/python/test_numpy.py
       - run: python -m pip install "setuptools>=77" wheel
-      - run: npm run package:release
+      - run: npm run package:release -- --candidate
       - id: release-path
         run: node --input-type=module -e "import fs from 'node:fs'; const version=JSON.parse(fs.readFileSync('package.json','utf8')).version; fs.appendFileSync(process.env.GITHUB_OUTPUT,'directory=dist/release-v'+version+'\n');"
       - run: node scripts/verify-packages.mjs
@@ -85,7 +85,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: python -m pip install -e ".[test,notebook]"
-      - run: python -m pytest tests/python/test_desktop.py tests/python/test_linked_desktop.py tests/python/test_presentation.py tests/python/test_quality_desktop.py tests/python/test_streaming_desktop.py --junitxml=artifacts/desktop.xml
+      - run: python -m pytest tests/python/test_desktop.py tests/python/test_linked_desktop.py tests/python/test_presentation.py tests/python/test_quality_desktop.py tests/python/test_streaming_desktop.py tests/python/test_v09_desktop.py --junitxml=artifacts/desktop.xml
         env:
           VESORA_TEST_QT: '1'
           QTWEBENGINE_CHROMIUM_FLAGS: '--use-angle=swiftshader --enable-unsafe-swiftshader'
@@ -114,7 +114,7 @@ jobs:
       - run: npm run build
       - run: python -m pip install -e ".[test,notebook]"
       - run: python -c "import importlib.util; assert importlib.util.find_spec('numpy') is None"
-      - run: python -m pytest tests/python --ignore=tests/python/test_desktop.py --ignore=tests/python/test_linked_desktop.py --ignore=tests/python/test_quality_desktop.py --ignore=tests/python/test_streaming_desktop.py --ignore=tests/python/test_numpy.py --junitxml=artifacts/python-contracts.xml
+      - run: python -m pytest tests/python --ignore=tests/python/test_desktop.py --ignore=tests/python/test_linked_desktop.py --ignore=tests/python/test_quality_desktop.py --ignore=tests/python/test_streaming_desktop.py --ignore=tests/python/test_v09_desktop.py --ignore=tests/python/test_numpy.py --junitxml=artifacts/python-contracts.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -198,7 +198,7 @@ jobs:
           "PYTHON=$hostPython" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Real Qt export and streaming from the installed wheel
         shell: pwsh
-        run: '& $env:VESORA_PYTHON -m pytest -o pythonpath= tests/python/test_quality_desktop.py tests/python/test_streaming_desktop.py --junitxml=artifacts/installed-qt.xml'
+        run: '& $env:VESORA_PYTHON -m pytest -o pythonpath= tests/python/test_quality_desktop.py tests/python/test_streaming_desktop.py tests/python/test_v09_desktop.py --junitxml=artifacts/installed-qt.xml'
         env:
           VESORA_TEST_QT: '1'
           QTWEBENGINE_CHROMIUM_FLAGS: '--use-angle=swiftshader --enable-unsafe-swiftshader'

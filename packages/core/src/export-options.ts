@@ -5,7 +5,8 @@ export const MAX_EXPORT_PIXELS = 32_000_000;
 /** Keep export requests JSON-safe. Host-specific GPU limits are checked by the renderer. */
 export function validateExportPNGOptions(input: ExportPNGOptions = {}): ExportPNGOptions {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('PNG options must be an object');
-  for (const key of Object.keys(input)) if (!['width', 'height', 'scale'].includes(key)) throw new TypeError(`Unknown PNG option ${key}`);
+  for (const key of Object.keys(input)) if (!['width', 'height', 'scale', 'source'].includes(key)) throw new TypeError(`Unknown PNG option ${key}`);
+  if(input.source!==undefined&&!['accepted','displayed'].includes(input.source))throw new TypeError('PNG source must be accepted or displayed');
   if ((input.width === undefined) !== (input.height === undefined)) throw new RangeError('PNG width and height must be supplied together');
   for (const key of ['width', 'height'] as const) {
     const value = input[key];

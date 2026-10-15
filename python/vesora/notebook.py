@@ -89,8 +89,14 @@ def make_widget(figure: Any) -> Any:
             if not isinstance(content, dict):
                 return
             kind, view_id = content.get("type"), content.get("viewId")
-            if kind == "hello" and content.get("transportVersion") == 2 and isinstance(view_id, str):
-                self._views[view_id] = TransferQueue(figure._frozen_transfer, self.revision)
+            if kind == "hello" and content.get("transportVersion") in (2, 3) and isinstance(view_id, str):
+                supported = content.get("supportedTransportVersions", [])
+                version = 3 if isinstance(supported, list) and 3 in supported else content["transportVersion"]
+                previous = self._views.get(view_id)
+                queue = TransferQueue(figure._frozen_transfer, self.revision, version)
+                if "heldFrame" in content:
+                    queue.restore_frozen_frame(content["heldFrame"], previous.frame if previous else None)
+                self._views[view_id] = queue
                 self._send_transfers()
             elif kind == "dispose-view":
                 self._views.pop(view_id, None)
@@ -102,11 +108,19 @@ def make_widget(figure: Any) -> Any:
                 else:
                     queue.acknowledge(content.get("transferId"), content.get("revision"))
                 self._send_transfers()
+            elif kind == "frame" and view_id in self._views:
+                self._views[view_id].record_frame(content.get("revision"), content.get("frameId"), content.get("mode"), content.get("snapshotId"))
             elif kind == "event":
                 queue = self._views.get(view_id)
-                current_frame = queue is not None and queue.accepts_events(content.get("revision"))
-                if content.get("event") in ("viewchange", "selection", "click", "error") and content.get("revision") != self.revision and not current_frame:
-                    return
+                if queue and queue.transport_version == 3 and content.get("event") in ("viewchange", "selection", "click", "slicechange"):
+                    if not queue.accepts_events(content.get("revision"), content.get("frameId"), content.get("snapshotId")):
+                        return
+                    if queue.frame and queue.frame["mode"] == "frozen" and content.get("event") in ("viewchange", "selection", "slicechange"):
+                        return
+                else:
+                    current_frame = queue is not None and queue.accepts_events(content.get("revision"))
+                    if content.get("event") in ("viewchange", "selection", "click", "slicechange", "error") and content.get("revision") != self.revision and not current_frame:
+                        return
                 figure._emit(str(content.get("event", "")), content.get("payload"))
             elif isinstance(content, dict) and content.get("type") in ("export", "export-error"):
                 future = self._export_requests.pop(str(content.get("requestId", "")), None)

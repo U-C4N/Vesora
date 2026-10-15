@@ -19,12 +19,13 @@ const shell=await readFile('packages/core/src/standalone-template.html','utf8');
 const runtimeMarker='__VESORA_RUNTIME_SOURCE__',payloadMarker='__VESORA_PAYLOAD_JSON__';
 if(shell.split(runtimeMarker).length!==2||shell.split(payloadMarker).length!==2)throw new Error('The standalone shell must contain exactly one runtime and payload placeholder.');
 // Keep inline script parsing safe even when a bundled string contains a closing tag.
-const runtime=standalone.outputFiles[0].text.replace(/<\/script/gi,'<\\/script');
+const runtime=standalone.outputFiles[0].text.replace(/<\/script/gi,'<\\/script').replaceAll(payloadMarker,'\\u005f_VESORA_PAYLOAD_JSON__');
 const htmlTemplate=shell.replace(runtimeMarker,()=>runtime);
 await writeFile(`${assets}/standalone.html`,htmlTemplate,'utf8');
 await build({entryPoints:['packages/core/src/index.ts'],outdir:out,bundle:true,format:'esm',target:'es2022',sourcemap:true,define:{__VESORA_HTML_TEMPLATE__:JSON.stringify(htmlTemplate)}});
-await build({entryPoints:['packages/core/src/notebook.ts'],outfile:`${assets}/notebook.js`,bundle:true,format:'esm',target:'es2022',define:{__VESORA_WORKER_SOURCE__:JSON.stringify(workerSource)}});
-for(const file of ['index.js','index.js.map','worker.js','worker.js.map'])await copyFile(`${out}/${file}`,`${assets}/${file}`);
+await build({entryPoints:['packages/core/src/viewer.ts','packages/core/src/labs.ts'],outdir:out,bundle:true,format:'esm',target:'es2022',sourcemap:true,define:{__VESORA_HTML_TEMPLATE__:JSON.stringify(htmlTemplate)},plugins:[{name:'shared-core-identity',setup(build){build.onResolve({filter:/^\.\/figure$/},()=>({path:'./index.js',external:true}));}}]});
+await build({entryPoints:['packages/core/src/notebook.ts'],outfile:`${assets}/notebook.js`,bundle:true,format:'esm',target:'es2022',define:{__VESORA_WORKER_SOURCE__:JSON.stringify(workerSource),__VESORA_HTML_TEMPLATE__:JSON.stringify(htmlTemplate)}});
+for(const file of ['index.js','index.js.map','worker.js','worker.js.map','viewer.js','viewer.js.map'])await copyFile(`${out}/${file}`,`${assets}/${file}`);
 console.log('Built @vesora/core and matching Python engine assets.');
 await copyFile('LICENSE', `${out}/../LICENSE`);
 await import('../packages/react/build.mjs');

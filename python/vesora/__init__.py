@@ -1,10 +1,10 @@
 """Vesora: Python data APIs backed by one shared TypeScript visualization engine."""
 from __future__ import annotations
 from typing import Any
-from .figure import Figure, Layer, Panel, Annotation, SelectionLink, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION
+from .figure import Figure, Layer, Panel, Annotation, SelectionLink, SurfaceSlice, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION, SCENE3D_PROTOCOL_VERSION
 
-__version__ = "0.8.0"
-__all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "figure", "subplots", "plot", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
+__version__ = "0.9.0rc1"
+__all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "SurfaceSlice", "figure", "subplots", "plot", "plot3d", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
 _last_figure: Figure | None = None
 
 
@@ -14,11 +14,11 @@ def figure(**options: Any) -> Figure:
     return _last_figure
 
 
-def subplots(rows: int, cols: int, *, sharex: bool = False, sharey: bool = False, **options: Any) -> Figure:
-    """Create a 2D panel grid. Use fig.panel(row, col) with zero-based indices."""
+def subplots(rows: int, cols: int, *, sharex: bool = False, sharey: bool = False, kinds: Any = None, **options: Any) -> Figure:
+    """Create a panel grid, optionally declaring a 2D/3D kind for each cell."""
     global _last_figure
     result = Figure(**options)
-    result._set_layout(rows, cols, sharex=sharex, sharey=sharey)
+    result._set_layout(rows, cols, sharex=sharex, sharey=sharey, kinds=kinds)
     _last_figure = result
     return result
 
@@ -32,6 +32,10 @@ def _convenience(method: str, *args: Any, **options: Any) -> Layer:
 
 def plot(*args: Any, **options: Any) -> Layer:
     return _convenience("plot", *args, **options)
+
+
+def plot3d(*args: Any, **options: Any) -> Layer:
+    return _convenience("plot3d", *args, **options)
 
 
 def fill_between(x: Any, lower: Any, upper: Any, **options: Any) -> Layer:

@@ -11,7 +11,7 @@ _TEMPLATE = Path(__file__).parent / "_assets" / "standalone.html"
 _PLACEHOLDER = "__VESORA_PAYLOAD_JSON__"
 
 
-def make_html(snapshot: dict[str, Any], buffers: list[tuple[str, bytes]]) -> str:
+def make_html(snapshot: dict[str, Any], buffers: list[tuple[str, bytes]], *, captured_at: str) -> str:
     """Embed the scene without interpreting any title, label, or note as HTML."""
     try:
         template = _TEMPLATE.read_text(encoding="utf-8")
@@ -21,6 +21,7 @@ def make_html(snapshot: dict[str, Any], buffers: list[tuple[str, bytes]]) -> str
         raise RuntimeError("The bundled standalone.html asset has an invalid payload placeholder")
     envelope = {
         "formatVersion": 1,
+        "capture": {"source": "accepted", "capturedAt": captured_at},
         "snapshot": snapshot,
         "buffers": [{"id": data_id, "base64": base64.b64encode(data).decode("ascii")} for data_id, data in buffers],
     }

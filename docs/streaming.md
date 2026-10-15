@@ -1,6 +1,8 @@
 # Plot bounded live data
 
-Vesora v0.8 appends numeric 2D line and scatter data while retaining a fixed number of recent rows. Use it for telemetry, measurements and training curves. Each layer requires an explicit capacity. The renderer may combine several producer updates into one completed frame, while keeping every accepted row within the retained window.
+Vesora appends numeric 2D line and scatter data while retaining a fixed number of recent rows. Use it for telemetry, measurements and training curves. Each layer requires an explicit capacity. The renderer may combine several producer updates into one completed frame, while keeping every accepted row within the retained window.
+
+In v0.9, [PRISM inspection](prism.md) adds explicit accepted/rendered waits, an independently frozen displayed frame and Python atomic `append_data_batch`. The default JavaScript/React wait stays `rendered`; use `{waitFor:'accepted'}` when acquisition must continue through frozen inspection. Experimental bounded 3D acquisition is isolated in `@vesora/core/labs`; it does not extend the stable 2D streaming API below.
 
 ## JavaScript
 

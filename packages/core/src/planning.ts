@@ -1,3 +1,6 @@
+import {numericReader} from './data';
+import type {NumericReader} from './data';
+import type {DataEntry} from './types';
 import type {DensityResult, LineResult, NumericArray, PointPlan, Query} from './types';
 import {normalize, validateDomain} from './scales';
 
@@ -11,7 +14,7 @@ export function validateQuery(query: Query): void {
   if (!['auto', 'points', 'density'].includes(query.mode)) throw new RangeError('Unknown representation mode.');
 }
 
-function validateInputs(x: NumericArray, y: NumericArray, query: Query): void {
+function validateInputs(x: NumericReader, y: NumericReader, query: Query): void {
   if (x.length !== y.length) throw new RangeError('Coordinate arrays must have equal lengths.');
   if (x.length > 0xffff_ffff) throw new RangeError('A chunk may contain at most 2^32 - 1 coordinates.');
   validateQuery(query);
@@ -20,7 +23,8 @@ function validateInputs(x: NumericArray, y: NumericArray, query: Query): void {
 function visible(px: number, py: number): boolean {return px >= 0 && px <= 1 && py >= 0 && py <= 1;}
 
 /** Cooperative steps are used by workers and the asynchronous fallback. */
-export function* scatterSteps(x: NumericArray, y: NumericArray, query: Query): Generator<void, PointPlan> {
+export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query): Generator<void, PointPlan> {
+  const x=numericReader(xInput),y=numericReader(yInput);
   validateInputs(x, y, query);
   const columns = Math.max(1, Math.min(1024, Math.ceil(query.width / 4)));
   const rows = Math.max(1, Math.min(1024, Math.ceil(query.height / 4)));
@@ -29,7 +33,7 @@ export function* scatterSteps(x: NumericArray, y: NumericArray, query: Query): G
   for (let start = 0; start < x.length; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, x.length);
     for (let i = start; i < end; i++) {
-      const px = normalize(x[i], query.bounds.x, query.xScale), py = normalize(y[i], query.bounds.y, query.yScale);
+      const px = normalize(x.get(i), query.bounds.x, query.xScale), py = normalize(y.get(i), query.bounds.y, query.yScale);
       if (!visible(px, py)) continue;
       count++;
       const column = Math.min(columns - 1, Math.floor(px * columns)), row = Math.min(rows - 1, Math.floor(py * rows));
@@ -55,7 +59,7 @@ export function* scatterSteps(x: NumericArray, y: NumericArray, query: Query): G
   for (let start = 0; start < x.length; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, x.length);
     for (let i = start; i < end; i++) {
-      if (visible(normalize(x[i], query.bounds.x, query.xScale), normalize(y[i], query.bounds.y, query.yScale))) indices[cursor++] = i;
+      if (visible(normalize(x.get(i), query.bounds.x, query.xScale), normalize(y.get(i), query.bounds.y, query.yScale))) indices[cursor++] = i;
     }
     yield;
   }
@@ -79,7 +83,8 @@ function intersects(ax: number, ay: number, bx: number, by: number): boolean {
 }
 
 /** Reduce consecutive pixel-column runs, retaining extrema in source order. */
-export function* lineSteps(x: NumericArray, y: NumericArray, query: Query, sorted = false): Generator<void, LineResult> {
+export function* lineSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query, sorted = false): Generator<void, LineResult> {
+  const x=numericReader(xInput),y=numericReader(yInput);
   validateInputs(x, y, query);
   const segments: Uint32Array[] = [];
   let segment: number[] = [];
@@ -113,13 +118,13 @@ export function* lineSteps(x: NumericArray, y: NumericArray, query: Query, sorte
   let previous = -1, previousX = NaN, previousY = NaN;
   let begin=0,limit=x.length;
   if(sorted){
-    const bound=(value:number,upper:boolean)=>{let lo=0,hi=x.length;while(lo<hi){const mid=lo+Math.floor((hi-lo)/2);if(x[mid]<value||upper&&x[mid]===value)lo=mid+1;else hi=mid;}return lo;};
+    const bound=(value:number,upper:boolean)=>{let lo=0,hi=x.length;while(lo<hi){const mid=lo+Math.floor((hi-lo)/2);if(x.get(mid)<value||upper&&x.get(mid)===value)lo=mid+1;else hi=mid;}return lo;};
     begin=Math.max(0,bound(query.bounds.x[0],false)-1);limit=Math.min(x.length,bound(query.bounds.x[1],true)+1);
   }
   for (let start = begin; start < limit; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, limit);
     for (let i = start; i < end; i++) {
-      const px = normalize(x[i], query.bounds.x, query.xScale), py = normalize(y[i], query.bounds.y, query.yScale);
+      const px = normalize(x.get(i), query.bounds.x, query.xScale), py = normalize(y.get(i), query.bounds.y, query.yScale);
       if (!Number.isFinite(px) || !Number.isFinite(py)) {finishSegment(); previous = -1; continue;}
       const isVisible = visible(px, py);
       if (isVisible) count++;

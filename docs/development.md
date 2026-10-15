@@ -112,13 +112,13 @@ After completing the test suite, build release assets and test them outside the 
 
 ```bash
 npm run build
-npm run package:release
+npm run package:release -- --candidate
 npm run test:packages
 ```
 
-`package:release` derives the output directory from the package version: currently `dist/release-v0.8.0`. It writes the wheel, core and React npm tarballs, seven standalone demos (discovery, comparison, statistics, linked, SaaS, quality and the retained streaming snapshot), `release-manifest.json`, and `SHA256SUMS.txt`. All 11 distributable entries have checksums. The manifest records runtime hashes, versions, commit and whether the source tree is dirty; it does not imply an official tagged release. Its selected Python environment needs `setuptools>=77` and `wheel`, because packaging disables build isolation. The script verifies that Python and JavaScript package versions agree. `npm run test:release` checks the exact file set and checksums, opens all seven actual demos offline, and exports each to PNG.
+`package:release` derives the output directory from the package version: currently `dist/release-v0.9.0-rc.1`. It writes the wheel, core and React npm tarballs, ten standalone demos (discovery, comparison, statistics, linked, SaaS, quality, streaming, PRISM surface, PRISM telemetry and PRISM Labs), `release-manifest.json`, and `SHA256SUMS.txt`. All 14 entries listed in the checksum file are hashed. The manifest records runtime/worker/viewer/Labs hashes, ecosystem versions, commit and source-tree status. `--candidate` permits local review archives and marks them unpublishable; omitting it requires a clean commit and matching tag. The Python build environment needs `setuptools>=77` and `wheel`, because packaging disables build isolation. Canonical npm `0.9.0-rc.1` maps to Python `0.9.0rc1`. `npm run test:release` checks the exact file set and hashes, opens all ten demos offline, and exports each to PNG.
 
-`test:packages` installs the wheel without dependencies in a clean temporary virtual environment and installs the tarball in a separate temporary npm project. It verifies installed-package imports, TypeScript declarations, and offline HTML rendering. Temporary environments are retained and their paths are printed for inspection. Neither packaging nor these checks publishes to GitHub, PyPI or npm; distribution remains a separate GitHub Release step.
+`test:packages` installs the wheel without dependencies in a clean temporary virtual environment and installs the tarball in a separate temporary npm project. It verifies installed-package imports, TypeScript declarations, and offline HTML rendering. Temporary environments are retained and their paths are printed for inspection. Neither packaging nor these checks publishes to GitHub, PyPI or npm; publication consumes the verified archives as a separate step.
 
 The HTML browser tests open files directly through `file://` with networking disabled. They cover the five original plot types plus histogram, bar and boxplot, categorical axes, grids, annotations, whole-layout bookmarks and reset, precision and missing-value behavior, hostile text, fallback rendering, and mobile layout. A local HTTP server used by the other browser tests is not a dependency of the exported files.
 
@@ -128,18 +128,18 @@ Release packaging uses a checkout-local npm cache at `artifacts/npm-cache`; pack
 
 ## Current limits
 
-This version provides in-memory 2D visualization with fixed panel grids, explicit interval bands, bounded numeric line/scatter streaming and basic single-panel 3D visualization. Cross-dataset joins, linked line selection, error bars, automatic confidence intervals, nested layouts, 3D panels, indexed file queries, tiles, statistical/3D streaming, `vector_field`, adaptive function sampling, advanced mesh/volume operations, and SVG/PDF export are future work. There is no alternative renderer for environments without WebGL2. 3D selection and advanced picking do not have the same support as 2D interactions.
+This version provides in-memory 2D visualization, mixed 2D/3D grids, explicit interval bands, bounded numeric line/scatter streaming, source-aware 3D picking and exact surface row/column slices. Cross-dataset joins, linked line selection, error bars, automatic confidence intervals, nested layouts, indexed file queries, tiles, statistical streaming, `vector_field`, automatic adaptive detail, advanced mesh/volume operations, and SVG/PDF export remain outside the stable release. Bounded 3D trajectories/rolling surfaces and A/B pins are separate Labs experiments. There is no alternative renderer for environments without WebGL2. See [PRISM](prism.md) for stable/Labs scope and inspection ownership.
 
 
 ## Validate statistics and categories
 
-`npm run check` includes statistical algorithm, facade, categorical transaction, worker/fallback and legacy tests. `npm run test:parity` exercises protocols 1–6; `npm run test:examples` executes all 26 snippets per language with NumPy blocked. The statistics browser suite covers real pixels, grouped/stacked/horizontal layout, category identity, typed selections, stale work, cache reuse, offline Python/JS HTML, PNG and the six-card gallery.
+`npm run check` includes statistical algorithm, facade, categorical transaction, worker/fallback and legacy tests. `npm run test:parity` exercises protocols 1–7; `npm run test:examples` executes all 26 gallery snippets per language with NumPy blocked. The statistics browser suite covers real pixels, grouped/stacked/horizontal layout, category identity, typed selections, stale work, cache reuse, offline Python/JS HTML, PNG and the six-card gallery.
 
 Real desktop and Jupyter checks include the new statistical charts; enable them using the existing opt-in environment variables above. A skipped host check is not a passing host check.
 
 Run `npm run benchmark:statistics` after a build. The seeded 100,000/1,000,000-sample histogram and boxplot cases measure preparation, first-ready, updates, pan/cache reuse and available JS heap metrics. Set `VESORA_SOFTWARE_GPU=1` for a reproducible software-renderer run. Results record hardware/browser details and leave unmeasured Python/GPU memory null; they are not a universal FPS guarantee. See [the v0.4 measurement report](benchmarks/v0.4.0.md).
 
-Packaging creates seven self-contained demo files. Verify clean installed wheel/core/React consumers before publication. After an authorized npm login with rights to the `@vesora` scope, `npm run publish:packages` publishes core first and then the matching React adapter with public access under the `beta` tag. Local packaging and validation do not publish anything. The five-person [SaaS pilot](pilot-v0.6.md) is a separate user-research protocol, not evidence of adoption.
+Packaging creates ten self-contained demo files. Verify clean installed wheel/core/React consumers and the [release gates](releases/v0.9.0.md) before publication. The publisher consumes hash-verified archives and passed gate evidence; npm candidates use `next`, while a final release uses `latest`. Local packaging and validation do not publish anything. The current [scientific/telemetry pilot](pilot/v0.9.0/README.md) requires at least four of five users completing the approved workflow without assistance. The earlier [SaaS pilot](pilot-v0.6.md) remains historical research documentation.
 
 ## Validate v0.8 streaming and compatibility
 

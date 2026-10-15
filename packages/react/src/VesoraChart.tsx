@@ -1,10 +1,20 @@
 import {forwardRef, useEffect, useId, useImperativeHandle, useRef, useState} from 'react';
 import type {ForwardedRef, ReactElement, RefAttributes} from 'react';
 import {figure, resolveTheme, toHTML} from '@vesora/core';
-import type {ExportPNGOptions, Figure, HoverEvent, Layer, XHoverEvent} from '@vesora/core';
+import type {AppendOptions, ExportHTMLOptions, ExportPNGOptions, Figure, HoverEvent, Layer, StreamState, XHoverEvent} from '@vesora/core';
 import {formatValue, prepareData} from './data';
 import {updateChart} from './chart';
+import {RetainedRows} from './retained-rows';
 import type {ChartInteraction, ChartXInteraction, ChartSeries, VesoraChartHandle, VesoraChartProps} from './types';
+
+interface Presentation<Row extends object> {
+  configuration: VesoraChartProps<Row>;
+  rows: readonly Row[];
+  layers: Map<string, string>;
+  visibility: Record<string, boolean>;
+  empty: boolean;
+  rowCount: number;
+}
 
 interface Owner<Row extends object> {
   figure: Figure;
@@ -17,13 +27,14 @@ interface Owner<Row extends object> {
   reportedError?: string;
   configuration?: VesoraChartProps<Row>;
   rows: readonly Row[];
-  firstSequence: number;
-  streamId?: string;
-  streamIds: Map<string, string>;
   appendEpoch: number;
   pendingAppends: number;
   appendTail: Promise<void>;
-  inflight?: {rows: readonly Row[]; firstSequence: number; streamId: string};
+  retainedRows: RetainedRows<Row>;
+  empty: boolean;
+  rowCount: number;
+  pendingPresentation?: Presentation<Row>;
+  displayedPresentation?: Presentation<Row>;
 }
 
 function errorMessage(error: unknown): string {
@@ -46,31 +57,44 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
   const [rendering, setRendering] = useState(true);
   const [empty, setEmpty] = useState(!data.length || !series.length);
   const [rowCount, setRowCount] = useState(data.length);
+  const [heldPresentation, setHeldPresentation] = useState<Presentation<Row>>();
   const [hover, setHover] = useState<ChartInteraction<Row> | null>(null);
   const [xHover, setXHover] = useState<ChartXInteraction<Row> | null>(null);
   const [visibility, setVisibility] = useState<Record<string, boolean>>({});
   const summaryId = useId();
   const tooltipId = useId();
+  const displayedSeries = heldPresentation?.configuration.series ?? series;
+  const displayedHoverMode = heldPresentation ? heldPresentation.configuration.hoverMode ?? 'nearest' : hoverMode;
   let palette;
-  try {palette = resolveTheme(theme);} catch {palette = resolveTheme('light');}
-  const isVisible = (item: ChartSeries<Row>) => item.visible ?? visibility[item.key] ?? true;
+  try {palette = resolveTheme(heldPresentation ? heldPresentation.configuration.theme ?? 'light' : theme);} catch {palette = resolveTheme('light');}
+  const isVisible = (item: ChartSeries<Row>) => item.visible ?? (heldPresentation?.visibility ?? visibility)[item.key] ?? true;
 
-  function eventRow(current: Owner<Row>, index: number | undefined, event: {layerId: string; streamId?: string; sequence?: number}): Row | undefined {
-    if (index === undefined) return undefined;
-    const stream = current.configuration?.streaming ? current.figure.getStreamingState(event.layerId) : undefined;
-    if (!stream) return current.rows[index];
-    if (event.streamId !== undefined && event.streamId !== stream.streamId) return undefined;
-    const sequence = event.sequence ?? stream.nextSequence - stream.retained + index;
-    if (sequence < stream.nextSequence - stream.retained || sequence >= stream.nextSequence) return undefined;
-    const pending = current.inflight;
-    if (current.streamIds.get(event.layerId) !== stream.streamId) return undefined;
-    if (pending && sequence >= pending.firstSequence) return pending.rows[sequence - pending.firstSequence];
-    return current.rows[sequence - current.firstSequence];
+  function capturePresentation(current: Owner<Row>): Presentation<Row> | undefined {
+    if (!current.configuration) return undefined;
+    // Keep metadata and static row identities with the captured frame. Streaming
+    // rows are owned by the bounded ledger, not by an unbounded props array.
+    return {configuration: {...current.configuration, data: [], series: current.configuration.series.map(item => ({...item}))},
+      rows: current.configuration.streaming ? [] : current.rows,
+      layers: new Map([...current.layers].map(([key, layer]) => [key, layer.id])), visibility: {...current.visibility},
+      empty: current.empty, rowCount: current.rowCount};
   }
 
+  function eventRow(current: Owner<Row>, index: number | undefined, event: {layerId: string; streamId?: string; sequence?: number}): Row | undefined {
+    if(event.streamId!==undefined&&event.sequence!==undefined)return current.retainedRows.row(event.streamId,event.sequence);
+    if (index === undefined) return undefined;
+    const presentation = current.displayedPresentation;
+    const stream = current.figure.getDisplayedStreamingState?.(event.layerId) ?? (!presentation && current.configuration?.streaming ? current.figure.getStreamingState(event.layerId) : undefined);
+    if (!stream) return (presentation?.rows ?? current.rows)[index];
+    const sequence = event.sequence ?? stream.nextSequence - stream.retained + index;
+    return current.retainedRows.row(event.streamId??stream.streamId,sequence);
+  }
+
+  function streams(current:Owner<Row>):Record<string,StreamState>{return Object.fromEntries([...current.layers.values()].flatMap(layer=>{const state=current.figure.getStreamingState(layer.id);return state?[[layer.id,state]]:[];}));}
+
   function interaction(event: HoverEvent, current: Owner<Row>): ChartInteraction<Row> {
-    const configuration = current.configuration ?? latest.current;
-    const key = [...current.layers].find(([, layer]) => layer.id === event.layerId)?.[0];
+    const presentation = current.displayedPresentation;
+    const configuration = presentation?.configuration ?? current.configuration ?? latest.current;
+    const key = presentation ? [...presentation.layers].find(([, id]) => id === event.layerId)?.[0] : [...current.layers].find(([, layer]) => layer.id === event.layerId)?.[0];
     const item = configuration.series.find(value => value.key === key);
     const index = event.index ?? event.sourceIndex;
     const row = eventRow(current, index, event);
@@ -85,12 +109,13 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
   }
 
   function xInteraction(event: XHoverEvent, current: Owner<Row>): ChartXInteraction<Row> {
-    const configuration = current.configuration ?? latest.current;
+    const presentation = current.displayedPresentation;
+    const configuration = presentation?.configuration ?? current.configuration ?? latest.current;
     const hits = new Map(event.items.map(item => [item.layerId, item]));
     return {
       event, formattedCursorX: formatValue(event.cursorX, configuration.xAxis),
-      items: configuration.series.filter(item => item.visible ?? current.visibility[item.key] ?? true).map(item => {
-        const layer = current.layers.get(item.key), hit = layer ? hits.get(layer.id) : undefined;
+      items: configuration.series.filter(item => item.visible ?? (presentation?.visibility ?? current.visibility)[item.key] ?? true).map(item => {
+        const layerId = presentation ? presentation.layers.get(item.key) : current.layers.get(item.key)?.id, hit = layerId ? hits.get(layerId) : undefined;
         return {
           series: item, missing: !hit,
           row: hit ? eventRow(current, hit.index, hit) : undefined,
@@ -106,11 +131,15 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
   // fresh figure; it never attempts to reopen the one its cleanup closed.
   useEffect(() => {
     const current: Owner<Row> = {figure: figure({height: 300}), layers: new Map(), bands: new Map(), visibility: {}, disposed: false, mounted: false, revision: 0,
-      rows: [], firstSequence: 0, streamIds: new Map(), appendEpoch: 0, pendingAppends: 0, appendTail: Promise.resolve()};
+      rows: [], appendEpoch: 0, pendingAppends: 0, appendTail: Promise.resolve(),retainedRows:new RetainedRows<Row>(), empty: true, rowCount: 0};
     owner.current = current;
     setRendering(true);
     setRenderError(null);
+    setHeldPresentation(undefined);
     const unsubscribe = [
+      current.figure.on('framepending',state=>{if(!current.disposed){current.retainedRows.pin('pending',state.displayedStreams);current.pendingPresentation=state.mode==='frozen'?current.displayedPresentation:capturePresentation(current);}}),
+      current.figure.on('frame',state=>{if(!current.disposed){current.retainedRows.pin('displayed',state.displayedStreams);current.displayedPresentation=current.pendingPresentation??capturePresentation(current);current.pendingPresentation=undefined;setHeldPresentation(state.mode==='frozen'?current.displayedPresentation:undefined);setRendering(false);}}),
+      current.figure.on('inspectionchange',state=>{if(!current.disposed){current.retainedRows.pin('displayed',state.displayedStreams);if(state.mode==='frozen'){current.pendingPresentation=undefined;current.displayedPresentation??=capturePresentation(current);setHeldPresentation(current.displayedPresentation);}}}),
       current.figure.on('hover', event => {
         if (current.disposed || owner.current !== current) return;
         try {
@@ -155,7 +184,9 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
     return () => {
       current.disposed = true;
       current.appendEpoch++;
-      current.rows = []; current.inflight = undefined;
+      current.rows = [];
+      current.pendingPresentation = current.displayedPresentation = undefined;
+      current.retainedRows.clear();
       for (const remove of unsubscribe) remove();
       current.figure.close();
       current.layers.clear();
@@ -171,27 +202,20 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
     current.reportedError = undefined;
     setHover(null); setXHover(null);
     try {
-      const prepared = updateChart(current.figure, current.layers, props, visibility, current.bands, current.rows);
+      const retained=current.configuration?.streaming?current.retainedRows.liveRows():current.rows;
+      const prepared = updateChart(current.figure, current.layers, props, visibility, current.bands, retained);
       if (prepared.dataChanged || prepared.streamingChanged) {
-        const rows = current.configuration?.data === data ? current.rows : data;
+        const rows = current.configuration?.data === data ? retained : data;
         current.appendEpoch++;
-        current.inflight = undefined;
-        current.rows = props.streaming ? rows.slice(-props.streaming.maxPoints) : rows;
-        const first = current.layers.values().next().value;
-        const stream = first && props.streaming ? current.figure.getStreamingState(first.id) : undefined;
-        current.streamId = stream?.streamId;
-        current.streamIds = new Map([...current.layers.values()].flatMap(layer => {
-          const state = props.streaming && current.figure.getStreamingState(layer.id);
-          return state ? [[layer.id, state.streamId] as [string, string]] : [];
-        }));
-        current.firstSequence = stream ? stream.nextSequence - stream.retained : 0;
-        setRowCount(current.rows.length);
-        setEmpty(prepared.empty);
+        current.rows = props.streaming ? rows.slice(-props.streaming.maxPoints) : rows.slice();
+        current.retainedRows.replace(current.rows,streams(current));
+        setRowCount(current.rowCount=current.rows.length);
+        setEmpty(current.empty=prepared.empty);
       }
       current.configuration = props;
       current.visibility = visibility;
       setRendering(true);
-      void current.figure.ready().then(() => {
+      void current.figure.ready({target:'displayed'}).then(() => {
         if (current.disposed || owner.current !== current || current.revision !== revision) return;
         setRendering(false); setRenderError(null);
       }).catch(caught => {
@@ -208,17 +232,18 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
 
   const externalError = error ? errorMessage(error) : null;
   const message = externalError ?? renderError;
-  const state = message ? 'error' : loading ? 'loading' : empty ? 'empty' : 'ready';
+  const state = message ? 'error' : loading ? 'loading' : (heldPresentation?.empty ?? empty) ? 'empty' : 'ready';
   const blocked = state !== 'ready';
   const retry = () => setRetryKey(value => value + 1);
 
   useImperativeHandle(ref, () => ({
-    appendRows(rows: readonly Row[]) {
+    appendRows(rows: readonly Row[], options:AppendOptions={}) {
       const current = owner.current;
       if (!current || current.disposed) return Promise.reject(new Error('The chart is not mounted.'));
       if (!current.configuration?.streaming) return Promise.reject(new Error('Enable streaming before appending rows.'));
       if (latest.current.loading || latest.current.error || renderError) return Promise.reject(new Error('Wait for a valid chart before appending rows.'));
       if (current.pendingAppends >= 64) return Promise.reject(new Error('The chart has 64 pending append requests; await an append before submitting more.'));
+      if(options.waitFor!==undefined&&options.waitFor!=='accepted'&&options.waitFor!=='rendered')return Promise.reject(new TypeError('Append waitFor must be accepted or rendered.'));
       const epoch = current.appendEpoch;
       let prepared: ReturnType<typeof prepareData>;
       try {
@@ -235,22 +260,21 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
         const first = current.layers.values().next().value;
         const before = first ? current.figure.getStreamingState(first.id) : undefined;
         if (!first || !before) throw new Error('The chart has no streaming series.');
-        current.inflight = {rows: batchRows, firstSequence: before.nextSequence, streamId: before.streamId};
         setRendering(true); setHover(null); setXHover(null);
         try {
-          await current.figure.appendDataBatch([...current.layers].map(([key, layer]) => ({layer, data: {x: prepared.x, y: prepared.values.get(key)!}})));
+          const completion=current.figure.appendDataBatch([...current.layers].map(([key, layer]) => ({layer, data: {x: prepared.x, y: prepared.values.get(key)!}})),options);
+          // Core acceptance is atomic and synchronous. Pin row identities now:
+          // frame planning and interaction may happen before rendered readiness.
+          const accepted=current.figure.getStreamingState(first.id);
+          if(accepted?.streamId===before.streamId&&accepted.nextSequence!==before.nextSequence){current.retainedRows.append(batchRows,before,streams(current));setRowCount(current.rowCount=accepted.retained);setEmpty(current.empty=!current.retainedRows.someLive(row=>current.configuration!.series.some(item=>Number.isFinite(row[item.key]))));}
+          await completion;
           if (current.disposed || owner.current !== current || current.appendEpoch !== epoch) throw new Error('The chart data was replaced before this append completed.');
         } finally {
           if (!current.disposed && owner.current === current && current.appendEpoch === epoch) {
             const after = current.figure.getStreamingState(first.id);
             if (after?.streamId === before.streamId && after.nextSequence !== before.nextSequence) {
-              current.rows = [...current.rows, ...batchRows].slice(-after.retained);
-              current.firstSequence = after.nextSequence - after.retained;
-              current.streamId = after.streamId;
-              setRowCount(current.rows.length);
-              setEmpty(!current.rows.some(row => current.configuration!.series.some(item => Number.isFinite(row[item.key]))));
+              setRowCount(after.retained);
             }
-            current.inflight = undefined;
             setRendering(false);
           }
         }
@@ -258,29 +282,31 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
       current.appendTail = operation.catch(() => {});
       return operation;
     },
+    freezeInspection(){const current=owner.current;if(!current||current.disposed)throw new Error('The chart is not mounted.');return current.figure.freezeInspection();},
+    resumeLive(){const current=owner.current;if(!current||current.disposed)return Promise.reject(new Error('The chart is not mounted.'));return current.figure.resumeLive();},
+    getInspectionState(){const current=owner.current;if(!current||current.disposed)throw new Error('The chart is not mounted.');return current.figure.getInspectionState();},
     async exportPNG(options?: ExportPNGOptions) {
       if (latest.current.loading || latest.current.error || renderError) throw new Error('Wait for a valid chart before exporting.');
       const current = owner.current;
       if (!current || current.disposed) throw new Error('The chart is not mounted.');
       return current.figure.savefig(options);
     },
-    async exportHTML() {
+    async exportHTML(options?:ExportHTMLOptions) {
       if (latest.current.loading || latest.current.error || renderError) throw new Error('Wait for a valid chart before exporting.');
       const current = owner.current;
       if (!current || current.disposed) throw new Error('The chart is not mounted.');
-      await current.figure.ready();
-      if (current.disposed || owner.current !== current) throw new Error('The chart was removed before export completed.');
-      return toHTML(current.figure);
+      return toHTML(current.figure,options);
     },
     resetView() {
       const current = owner.current;
       if (!current || current.disposed) return;
+      if(current.figure.getInspectionState?.().mode==='frozen'){current.figure.resetInspectionView('main');return;}
       current.figure.restoreView({...current.figure.spec.view, xDomain: latest.current.xAxis?.domain, yDomain: latest.current.yAxis?.domain});
     },
   }), [renderError]);
 
   const rect = root.current?.getBoundingClientRect();
-  const activeHover = hoverMode === 'x' ? xHover : hover;
+  const activeHover = displayedHoverMode === 'x' ? xHover : hover;
   const tooltipPosition = activeHover && rect ? {
     left: Math.max(8, Math.min((activeHover.event.pointerPosition?.clientX ?? rect.left) - rect.left + 12, Math.max(8, rect.width - 220))),
     top: Math.max(8, (activeHover.event.pointerPosition?.clientY ?? rect.top) - rect.top - 52),
@@ -296,8 +322,8 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
       {state === 'empty' && <div role="status" style={overlayStyle}>{props.renderEmpty?.() ?? 'No data available.'}</div>}
       {state === 'error' && <div role="alert" style={overlayStyle}>{props.renderError?.(message!, retry) ?? <div><p>{message}</p><button type="button" onClick={retry}>Retry chart</button></div>}</div>}
     </div>
-    {legend && series.length > 0 && <div aria-label="Chart series" style={{display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 12px'}}>
-      {series.map((item, index) => <button key={item.key} type="button" aria-pressed={isVisible(item)} disabled={blocked}
+    {legend && displayedSeries.length > 0 && <div aria-label="Chart series" style={{display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 12px'}}>
+      {displayedSeries.map((item, index) => <button key={item.key} type="button" aria-pressed={isVisible(item)} disabled={blocked || !!heldPresentation}
         onClick={() => {
           const visible = !isVisible(item);
           if (item.visible === undefined) setVisibility(previous => ({...previous, [item.key]: visible}));
@@ -309,12 +335,12 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
       </button>)}
     </div>}
     {tooltip && activeHover && !blocked && <div id={tooltipId} role="tooltip" style={{position: 'absolute', ...tooltipPosition, pointerEvents: 'none', zIndex: 2, maxWidth: 220, padding: '8px 11px', borderRadius: 6, boxShadow: '0 4px 16px #0003', background: palette.tooltipBackground, color: palette.tooltipForeground}}>
-      {hoverMode === 'x' && xHover ? props.renderXTooltip?.(xHover) ?? <>
+      {displayedHoverMode === 'x' && xHover ? props.renderXTooltip?.(xHover) ?? <>
         {xHover.items.map(item => <div key={item.series.key}><strong>{item.series.label ?? item.series.key}</strong><div>{item.missing ? '—' : `${item.formattedX}: ${item.formattedY}`}</div></div>)}
       </> : hover && (props.renderTooltip?.(hover) ?? <><strong>{hover.series?.label ?? hover.series?.key ?? 'Value'}</strong><div>{type === 'bar' && orientation === 'horizontal' ? `${hover.formattedY}: ${hover.formattedX}` : `${hover.formattedX}: ${hover.formattedY}`}</div></>)}
     </div>}
     <span id={summaryId} style={{position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)'}}>
-      {type} chart with {rowCount} rows and {series.length} series. {series.map(item => item.label ?? item.key).join(', ')}.
+      {type} chart with {heldPresentation?.rowCount ?? rowCount} rows and {displayedSeries.length} series. {displayedSeries.map(item => item.label ?? item.key).join(', ')}.
     </span>
   </div>;
 }

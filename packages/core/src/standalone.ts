@@ -2,6 +2,8 @@ import {figure} from './figure';
 import {setWorkerURL} from './scheduler';
 import {validateDescriptor} from './data';
 import type {RepresentationInfo, Snapshot, ViewBookmark} from './types';
+import {mountViewer} from './viewer';
+import type {ViewerHandle} from './viewer';
 
 declare const __VESORA_WORKER_SOURCE__:string;
 type LayerInfo=RepresentationInfo&{layerId:string;panelId?:string};
@@ -48,6 +50,7 @@ async function start():Promise<void> {
   const inspectorEmpty=element('vesora-inspector-empty'),inspectorContent=element('vesora-inspector-content');
   const metrics=element('vesora-metrics'),number=new Intl.NumberFormat('en-US');
   let fig:ReturnType<typeof figure>|undefined,workerURL:string|undefined,disposed=false;
+  let sharedViewer:ViewerHandle|undefined;
   let infos:LayerInfo[]=[],activeBookmark:string|undefined,programmatic=false,exploring=false;
   let lastView='',exporting=false,readiness=0;
   const downloads=new Set<string>();
@@ -110,7 +113,7 @@ async function start():Promise<void> {
     infos=next;const selected=layerSelect.value;layerSelect.replaceChildren();
     for(const info of infos){
       const index=fig!.spec.layers.findIndex(layer=>layer.id===info.layerId),layer=fig!.spec.layers[index];
-      const names={line:'Line',band:'Uncertainty band',scatter:'Scatter',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
+      const names={line:'Line',band:'Uncertainty band',scatter:'Scatter',line3d:'3D line',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
       const panel=fig!.spec.panels?.find(panel=>panel.id===(info.panelId??'main'));
       const label=layer.style.label||`${names[layer.kind]} ${index+1}`;
       const option=document.createElement('option');option.value=info.layerId;option.textContent=panel?`${panel.title||`Panel ${panel.row+1}, ${panel.col+1}`} · ${label}`:label;
@@ -120,7 +123,7 @@ async function start():Promise<void> {
     element('vesora-layer-field').hidden=infos.length<=1;showMetrics();
   };
   const cleanup=()=>{
-    if(disposed)return;disposed=true;fig?.close();
+    if(disposed)return;disposed=true;sharedViewer?.dispose();fig?.close();
     if(workerURL)URL.revokeObjectURL(workerURL);
     for(const url of downloads)URL.revokeObjectURL(url);
     downloads.clear();
@@ -131,6 +134,20 @@ async function start():Promise<void> {
   try{
     const {snapshot,buffers}=decodePayload(JSON.parse(element('vesora-payload').textContent||''));
     fig=figure();fig.applySnapshot(snapshot,buffers);
+    if(snapshot.figure.protocolVersion>=7){
+      // New scientific scenes use the same optional chrome as React and the
+      // Python hosts. Legacy exported documents retain their established UI.
+      workerURL=URL.createObjectURL(new Blob([__VESORA_WORKER_SOURCE__],{type:'text/javascript'}));setWorkerURL(workerURL);
+      root.replaceChildren();root.className='';root.style.cssText='max-width:1440px;margin:24px auto;';
+      const background=fig.spec.theme?.background??'#101215';document.body.style.background=background;
+      const color=background.replace('#','');const light=/^[a-f0-9]{6}$/i.test(color)&&(parseInt(color.slice(0,2),16)+parseInt(color.slice(2,4),16)+parseInt(color.slice(4,6),16)>384);
+      sharedViewer=mountViewer(fig,root,{theme:light?'light':'dark',preserveTheme:true,live:false,exportHTML:false,onError:()=>{root.dataset.ready='error';}});
+      const pngButton=[...sharedViewer.element.querySelectorAll('button')].find(button=>button.textContent==='Export PNG');if(pngButton){pngButton.id='vesora-png';pngButton.textContent='Download PNG';}
+      const visibleError=sharedViewer.element.querySelector<HTMLElement>('[role=alert]');if(visibleError)visibleError.id='vesora-error';
+      const note=document.createElement('p');note.textContent='Offline snapshot · The retained source data is included. No live producer is connected.';note.style.cssText='margin:12px;font:12px system-ui;color:inherit';root.append(note);
+      document.title=fig.spec.title?`${fig.spec.title} — Vesora`:'Vesora — Interactive figure';
+      await fig.ready();root.dataset.ready='ready';return;
+    }
     if(fig.spec.theme){
       const theme=fig.spec.theme,root=document.documentElement;
       for(const key of ['background','foreground','muted','grid','axis','selection','error'] as const)root.style.setProperty(`--vesora-${key}`,theme[key]);

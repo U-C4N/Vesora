@@ -2,26 +2,33 @@ import {DataRegistry,toNumericArray,validateDescriptor,describeData} from './dat
 import {validateDomain} from './scales';
 import {parseColor} from './color';
 import {FigureView} from './view';
+import {SnapshotStore} from './snapshot-store';
+import type {SnapshotLease} from './snapshot-store';
+import type {AppendOptions,InspectionState} from './types';
 import {validateSelectionLink} from './linked';
 import {hasTypography,resolveTheme,validateTheme,validateAxisFormat} from './presentation';
 import {validateBandData,validateBandStyle} from './band';
 import {validateExportPNGOptions} from './export-options';
 import {validateInspectionX} from './inspection';
+import {surfaceSliceValues} from './slices';
+import {cameraPreset} from './renderer';
 import {appendEntry,lastValue,streamEntry,streamError,validateStreamingOptions,validateStreamState} from './streaming';
-import type {DataEntry,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions} from './types';
+import type {DataEntry,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions,SurfaceSliceSpec,CameraPreset} from './types';
 import type {AxisFormat,ThemeInput,PresentationOptions,FigureEventMap,ViewChangeEvent,FillBetweenOptions,HoverMode,ExportPNGOptions} from './types';
-import type {SelectionLinkSpec,LinkedSelection,Bounds} from './types';
+import type {SelectionLinkSpec,LinkedSelection,Bounds,Domain} from './types';
 import {axisCategories,categoryKey,encodeAxis,isStatistical,labels,statisticalOptions,validateSemantics,validateStatisticalData} from './semantics';
 import type {AxisSeries} from './semantics';
 import type {BarMode,BarSpecOptions,BoxplotSpecOptions,HistogramSpecOptions,StatisticalOptions} from './types';
 import type {FigureSpec,FigureOptions,LayerSpec,LayerKind,LayerStyle,NumericArray,ViewSpec,ViewBookmark,ViewState,Snapshot,RepresentationInfo,PanelEntry,AnnotationSpec,AnnotationStyle,AnnotationOptions,SubplotsOptions} from './types';
-import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION} from './types';
+import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION} from './types';
 
 let serial=0;
 const id=(prefix:string)=>`${prefix}-${++serial}`;
 export type Series=ArrayLike<number>;
 export type Grid=Series|number[][];
-export type LayerOptions=LayerStyle & {values?: Series};
+export type LayerOptions=LayerStyle & {values?: Grid};
+export type SurfaceSliceOptions=Pick<SurfaceSliceSpec,'axis'|'index'> & Pick<LayerStyle,'color'|'width'|'opacity'|'label'>;
+const is3D=(kind:LayerKind)=>kind==='surface'||kind==='scatter3d'||kind==='line3d';
 export type {AxisSeries} from './semantics';
 export type HistogramOptions=LayerStyle & Partial<HistogramSpecOptions>;
 export type BarOptions=LayerStyle & {barWidth?:number;bottom?:number|Series;left?:number|Series};
@@ -30,6 +37,7 @@ export type Groups=Series|readonly Series[];
 export type FigureEvent=keyof FigureEventMap;
 export function defaultView(kind:'2d'|'3d'='2d'):ViewSpec{return {kind,xScale:'linear',yScale:'linear',zScale:'linear',xLabel:'',yLabel:'',zLabel:'',camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]};}
 function validateView(view:ViewSpec):void{
+  if(view.equalAspect!==undefined&&(view.kind!=='3d'||typeof view.equalAspect!=='boolean'))throw new TypeError('equalAspect requires a 3D view and boolean value');
   if(!view||!['2d','3d'].includes(view.kind))throw new Error('Invalid view kind');
   for(const axis of ['x','y','z'] as const){
     const scale=view[`${axis}Scale`];if(!['linear','log','time'].includes(scale))throw new Error('Scale must be linear, log or time');
@@ -40,6 +48,7 @@ function validateView(view:ViewSpec):void{
   for(const axis of ['x','y'] as const)if(view[`${axis}Format`]!==undefined)validateAxisFormat(view[`${axis}Format`]!);
   if(!view.camera||!['azimuth','elevation','distance'].every(key=>Number.isFinite(view.camera[key as keyof ViewSpec['camera']]))||view.camera.distance<=0)throw new Error('Invalid camera');
   if(view.pan3d!==undefined&&(!Array.isArray(view.pan3d)||view.pan3d.length!==2||!view.pan3d.every(Number.isFinite)))throw new Error('3D pan must contain two finite values');
+  if(view.boxAspect!==undefined&&(view.kind!=='3d'||!Array.isArray(view.boxAspect)||view.boxAspect.length!==3||!view.boxAspect.every(v=>Number.isFinite(v)&&v>0)))throw new Error('3D boxAspect must contain three positive finite values');
 }
 function copyView(view:ViewSpec):ViewSpec{
   validateView(view);const copy=structuredClone(view);
@@ -70,9 +79,10 @@ function validateLayout(spec:FigureSpec):void{
     if(typeof panel.title!=='string')throw new TypeError('Panel title must be a string');
     if(panel.id==='main'){
       if(panel.row!==0||panel.col!==0||panel.view!==undefined)throw new Error('The main panel must occupy (0, 0) and use the figure view');
-    }else{validateView(panel.view!);if(panel.view!.kind!=='2d')throw new Error('Grid panels must be 2D');}
+    }else validateView(panel.view!);
   }
-  if(!ids.has('main')||spec.view.kind!=='2d')throw new Error('Grid requires a main 2D panel');
+  if(!ids.has('main'))throw new Error('Grid requires a main panel');
+  if(panelEntries(spec).some(panel=>panel.view.kind==='3d')&&(layout.shareX||layout.shareY))throw new Error('Shared axes require an all-2D grid');
 }
 function captureViews(spec:FigureSpec):ViewState{
   const result:ViewState={view:copyView(spec.view)};
@@ -89,7 +99,7 @@ function validateViewState(spec:FigureSpec,state:ViewState):void{
     if(keys.length!==secondary.length||keys.some(key=>!secondary.some(panel=>panel.id===key)))throw new Error('View state must include every secondary panel exactly once');
   }else if(state.panelViews!==undefined)throw new Error('A single view cannot contain panelViews');
   const views=[state.view,...secondary.map(panel=>state.panelViews![panel.id])];
-  for(const view of views){validateView(view);if(spec.layout&&view.kind!=='2d')throw new Error('Grid views must be 2D');}
+  for(let i=0;i<views.length;i++){validateView(views[i]);if(spec.layout&&views[i].kind!==(i===0?spec.view:secondary[i-1].view).kind)throw new Error('Grid panel dimensionality is fixed');}
   for(const axis of ['x','y'] as const){
     if(!spec.layout?.[axis==='x'?'shareX':'shareY'])continue;
     const scale=state.view[`${axis}Scale`],domain=state.view[`${axis}Domain`];
@@ -142,7 +152,7 @@ function validateBookmarks(bookmarks:ViewBookmark[]|undefined,spec:FigureSpec):v
 function flatten(values:Grid):NumericArray{return toNumericArray(Array.isArray(values)&&Array.isArray(values[0])?(values as number[][]).flat():values as Series);}
 export function validateStyle(style:LayerStyle):void{
   if(!style||typeof style!=='object'||Array.isArray(style))throw new TypeError('Style must be an object');
-  for(const key of Object.keys(style))if(!['color','size','width','opacity','label','colormap','representation','colorDomain','colorbarLabel'].includes(key))throw new TypeError(`Unknown style option ${key}`);
+  for(const key of Object.keys(style))if(!['color','size','width','opacity','label','colormap','representation','colorDomain','colorbarLabel','shading','wireframe'].includes(key))throw new TypeError(`Unknown style option ${key}`);
   for(const key of ['label','colorbarLabel'] as const)if(style[key]!==undefined&&typeof style[key]!=='string')throw new TypeError(`${key} must be a string`);
   if(style.color!==undefined)parseColor(style.color);
   for(const key of ['width','size'] as const)if(style[key]!==undefined&&(!Number.isFinite(style[key])||style[key]!<=0))throw new RangeError(`${key} must be finite and positive`);
@@ -150,19 +160,22 @@ export function validateStyle(style:LayerStyle):void{
   if(style.representation!==undefined&&!['auto','points','density'].includes(style.representation))throw new Error('Invalid representation');
   if(style.colormap!==undefined&&!['viridis','magma'].includes(style.colormap))throw new Error('Invalid colormap');
   if(style.colorDomain)validateDomain(style.colorDomain,'linear');
+  if(style.shading!==undefined&&!['unlit','smooth'].includes(style.shading))throw new TypeError('Surface shading must be unlit or smooth');
+  if(style.wireframe!==undefined&&typeof style.wireframe!=='boolean')throw new TypeError('Surface wireframe must be boolean');
 }
 export class Layer {
   constructor(readonly figure:Figure,readonly id:string){}
   get spec():LayerSpec{const layer=this.figure.spec.layers.find(l=>l.id===this.id);if(!layer)throw new Error('Layer has been removed');return layer;}
   setData(data:Record<string,unknown>):this{this.figure.updateData(this.spec,data);return this;}
   enableStreaming(options:StreamingOptions):this{this.figure.enableStreaming(this,options);return this;}
-  appendData(data:Record<string,unknown>):Promise<void>{return this.figure.appendDataBatch([{layer:this,data}]);}
+  appendData(data:Record<string,unknown>,options:AppendOptions={}):Promise<void>{return this.figure.appendDataBatch([{layer:this,data}],options);}
   disableStreaming():this{this.figure.disableStreaming(this.id);return this;}
   setOptions(options:Record<string,unknown>):this{this.figure.updateOptions(this.spec,options);return this;}
   setStyle(style:LayerStyle):this{this.figure.updateStyle(this.spec,style);return this;}
   setVisible(visible:boolean):this{this.figure.updateVisibility(this.spec,visible);return this;}
-  remove():void{const layer=this.spec;this.figure.disableStreaming(this.id);this.figure.unlinkLayer(this.id);this.figure.spec.layers=this.figure.spec.layers.filter(l=>l.id!==this.id);for(const source of Object.values(layer.data))if(!this.figure.spec.layers.some(other=>Object.values(other.data).includes(source)))this.figure.registry.release(source);this.figure.changed();}
+  remove():void{this.figure.removeLayer(this.id);}
 }
+export class SurfaceSlice extends Layer {setIndex(index:number):this{this.figure.setSliceIndex(this.id,index);return this;}}
 export interface SelectionLinkOptions {scatter: [Layer,Layer] | Layer[]; histogram: Layer}
 export class SelectionLink {
   constructor(readonly figure:Figure,readonly id:string){}
@@ -189,6 +202,14 @@ export class Panel {
   setBarMode(mode:BarMode):this{this.figure.setPanelBarMode(this.id,mode);return this;}
   setCategories(axis:'x'|'y',values:string[]):this{this.figure.setPanelCategories(this.id,axis,values);return this;}
   heatmap(x:Series,y:Series,z:Grid,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'heatmap',{x,y,z},options);}
+  surface(x:Series,y:Series,z:Grid,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'surface',{x,y,z},options);}
+  scatter3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'scatter3d',{x,y,z},options);}
+  plot3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Layer{return this.figure.addToPanel(this.id,'line3d',{x,y,z},options);}
+  slice(surface:Layer,options:SurfaceSliceOptions):SurfaceSlice{return this.figure.addSurfaceSlice(this.id,surface,options);}
+  setCameraPreset(preset:CameraPreset):this{this.figure.setCameraPreset(preset,this.id);return this;}
+  setEqualAspect(enabled=true):this{this.figure.setEqualAspect(enabled,this.id);return this;}
+  fitToData():this{this.figure.fitToData(this.id);return this;}
+  focusSelection(bounds:Bounds&{z:Domain}):this{this.figure.focusSelection(bounds,this.id);return this;}
   setView(options:Partial<ViewSpec>):this{this.figure.setPanelView(this.id,options);return this;}
   setAxisFormat(axis:'x'|'y',format:AxisFormat|null):this{this.figure.setAxisFormat(axis,format,this.id);return this;}
   setTitle(title:string):this{this.figure.setPanelTitle(this.id,title);return this;}
@@ -197,6 +218,7 @@ export class Panel {
   axvline(x:number,style:AnnotationStyle={}):Annotation{return this.figure.addAnnotation(this.id,'vline',{x,...style});}
 }
 export class Figure {
+  acceptedRevision=0;
   readonly registry=new DataRegistry();
   readonly streams=new Map<string,StreamState>();
   readonly runtime:Readonly<RuntimeOptions>;
@@ -205,6 +227,8 @@ export class Figure {
   private semanticScans=0;
   spec:FigureSpec;
   private view?:FigureView;
+  private inspectionEnabled=true;
+  private exportStore:SnapshotStore;
   private listeners=new Map<FigureEvent,Set<(event:any)=>void>>();
   private closed=false;
   private pendingLink?:SelectionLinkSpec;
@@ -213,8 +237,9 @@ export class Figure {
   private knownStreamIds=new Set<string>();
   constructor(options:FigureOptions={}){
     const runtime={...options.runtime};
-    for(const value of Object.values(runtime))if(!Number.isSafeInteger(value)||value!<1)throw new RangeError('Runtime limits must be positive safe integers');
+    for(const value of Object.values(runtime))if(value!==undefined&&(!Number.isSafeInteger(value)||value<1))throw new RangeError('Runtime limits must be positive safe integers');
     this.runtime=Object.freeze(runtime);
+    this.exportStore=new SnapshotStore(runtime.maxSnapshotBytes);
     this.spec={protocolVersion:PROTOCOL_VERSION,id:id('figure'),title:options.title??'',width:options.width??800,height:options.height??520,view:defaultView(options.kind),layers:[]};
     if(!Number.isFinite(this.spec.width)||!Number.isFinite(this.spec.height)||this.spec.width<200||this.spec.height<180)throw new RangeError('Figure dimensions must be finite and at least 200 × 180');
     if(options.theme!==undefined)this.setTheme(options.theme);
@@ -292,11 +317,14 @@ export class Figure {
     this.changed(true);
   }
   /** Validate every layer/channel before publishing a multi-series append. */
-  appendDataBatch(updates:Array<{layer:Layer;data:Record<string,unknown>}>):Promise<void>{
+  appendDataBatch(updates:Array<{layer:Layer;data:Record<string,unknown>}>,options:AppendOptions={}):Promise<void>{
     try{
       this.assertOpen();if(!Array.isArray(updates))throw new TypeError('Append updates must be an array');
-      if(this.streamWaiters.size>=64)throw streamError('STREAM_BACKPRESSURE','Too many pending appends; await appendData before submitting more data');
-      const writes=new Map<string,DataEntry>(),states=new Map<string,StreamState>(),seen=new Set<string>();
+      if(!options||typeof options!=='object'||Array.isArray(options)||Object.keys(options).some(key=>key!=='waitFor')||options.waitFor!==undefined&&!['accepted','rendered'].includes(options.waitFor))throw new TypeError('waitFor must be accepted or rendered');
+      const rendered=options.waitFor!=='accepted';
+      if(rendered&&this.getInspectionState().mode==='frozen')throw Object.assign(streamError('PRESENTATION_FROZEN','Use waitFor: accepted while inspecting a frozen frame'),{accepted:false});
+      if(rendered&&this.streamWaiters.size>=64)throw streamError('STREAM_BACKPRESSURE','Too many pending appends; await appendData before submitting more data');
+      const writes=new Map<string,DataEntry>(),states=new Map<string,StreamState>(),seen=new Set<string>(),sequenceRanges:Record<string,{streamId:string;first:number;next:number}>={};
       for(const {layer,data}of updates){
         if(!(layer instanceof Layer)||layer.figure!==this||seen.has(layer.id))throw new Error('Append each layer of this figure at most once');seen.add(layer.id);
         const spec=layer.spec,state=this.streams.get(layer.id);if(!state)throw new Error('Enable streaming before appending');this.assertStreamingLayer(spec);
@@ -314,20 +342,21 @@ export class Figure {
         for(const axis of ['x','y']as const)if((view[`${axis}Scale`]==='time'||view[`${axis}Format`]?.kind==='date')&&added[axis].some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be within the JavaScript Date range');
         const nextSequence=state.nextSequence+count,retained=Math.min(state.maxPoints,state.retained+count),revision=state.revision+1;
         if(!Number.isSafeInteger(nextSequence)||!Number.isSafeInteger(revision))throw new RangeError('Streaming sequence exceeds the safe integer range');
-        states.set(layer.id,{...state,nextSequence,revision,retained,evicted:nextSequence-retained});
+        states.set(layer.id,{...state,nextSequence,revision,retained,evicted:nextSequence-retained});sequenceRanges[layer.id]={streamId:state.streamId,first:state.nextSequence,next:nextSequence};
         for(const [source,entry]of nextEntries)writes.set(source,entry);
       }
       if(!states.size)return Promise.resolve();this.checkSourceBudget(writes);
       for(const [source,entry]of writes)this.registry.store.set(source,entry);
       for(const [layerId,state]of states)this.streams.set(layerId,state);
       this.changed(true);
-      if(!this.view)return Promise.resolve();
-      const view=this.view,ids=new Set(states.keys());
+      if(!this.view||!rendered)return Promise.resolve();
+      const view=this.view,ids=new Set(states.keys()),revision=this.acceptedRevision;
       return new Promise<void>((resolve,reject)=>{
-        const waiter={ids,reject};this.streamWaiters.add(waiter);
-        void view.ready().then(()=>{if(this.streamWaiters.delete(waiter))resolve();},error=>{if(this.streamWaiters.delete(waiter))reject(error);});
+        const rejectAccepted=(error:Error)=>reject(Object.assign(error,{accepted:true,revision,sequenceRanges}));
+        const waiter={ids,reject:rejectAccepted};this.streamWaiters.add(waiter);
+        void view.ready().then(()=>{if(this.streamWaiters.delete(waiter))resolve();},error=>{if(this.streamWaiters.delete(waiter))rejectAccepted(error);});
       });
-    }catch(error){return Promise.reject(error);}
+    }catch(error){return Promise.reject(error instanceof Error?Object.assign(error,{accepted:false}):error);}
   }
   setTheme(theme:ThemeInput):this{this.assertOpen();const next=resolveTheme(theme);this.spec.theme=next;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,hasTypography(next)?QUALITY_PROTOCOL_VERSION:PRESENTATION_PROTOCOL_VERSION);this.changed();return this;}
   setHoverMode(mode:HoverMode):this{
@@ -336,7 +365,8 @@ export class Figure {
   }
   updateStyle(layer:LayerSpec,style:LayerStyle):void{
     this.assertOpen();validateStyle(style);if(layer.kind==='band')validateBandStyle(style);
-    Object.assign(layer.style,style);if(style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);this.changed();
+    if(layer.kind!=='surface'&&(style.shading!==undefined||style.wireframe!==undefined))throw new Error('Shading and wireframe require a surface');
+    Object.assign(layer.style,style);if(style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);if(style.shading!==undefined||style.wireframe!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,SCENE3D_PROTOCOL_VERSION);this.changed();
   }
   updateVisibility(layer:LayerSpec,visible:boolean):void{
     this.assertOpen();if(typeof visible!=='boolean')throw new TypeError('Layer visibility must be a boolean');
@@ -385,12 +415,12 @@ export class Figure {
     for(const [id,entry] of copies)registry.store.set(id,entry);
   }
   /** Internal viewer entry point; the completed predicate alone enters snapshots. */
-  selectLinked(layerId:string,bounds:Bounds):void{
+  selectLinked(layerId:string,bounds:Bounds,inspection=false):void{
     this.assertOpen();const link=this.selectionRequest();
     if(!link||!link.scatter.includes(layerId))throw new Error('Selection must originate in a linked scatter.');
     const next={...structuredClone(link),sequence:link.sequence+1,selection:{originLayerId:layerId,bounds:structuredClone(bounds)}};
     validateSelectionLink({...this.spec,selectionLink:next},this.registry);
-    if(!this.view)throw new Error('Mount the figure before selecting observations.');
+    if(!this.view&&!inspection)throw new Error('Mount the figure before selecting observations.');
     this.pendingLink=next;this.changed();
   }
   selectionRequest():SelectionLinkSpec|undefined{return this.pendingLink??this.spec.selectionLink;}
@@ -399,7 +429,7 @@ export class Figure {
     if(!link.selection)return;
     const next=structuredClone(link);next.sequence++;delete next.selection;
     validateSelectionLink({...this.spec,selectionLink:next},this.registry);
-    if(this.view)this.pendingLink=next;else this.spec.selectionLink=next;
+    if(this.view)this.pendingLink=next;else{this.spec.selectionLink=next;this.pendingLink=undefined;}
     this.changed();
   }
   removeSelectionLink(linkId:string):void{
@@ -408,14 +438,15 @@ export class Figure {
   }
   unlinkLayer(layerId:string):void{const link=this.spec.selectionLink;if(link&&(link.scatter.includes(layerId)||link.histogram===layerId))this.removeSelectionLink(link.id);}
   private assertMutableLayer(layerId:string):void{
+    if(this.spec.slices?.some(slice=>slice.targetLayerId===layerId))throw new Error('Slice data is derived from its source surface');
     const link=this.spec.selectionLink;
     if(link&&(link.scatter.includes(layerId)||link.histogram===layerId))throw new Error('Linked data and histogram options are fixed. Remove the selection link before updating.');
   }
-  commitLinkedSelection(link:SelectionLinkSpec,event:LinkedSelection):void{
+  commitLinkedSelection(link:SelectionLinkSpec,event?:LinkedSelection):void{
     const current=this.selectionRequest();if(!current||current.id!==link.id||current.generation!==link.generation||current.sequence!==link.sequence)return;
     this.spec.selectionLink=structuredClone(link);this.pendingLink=undefined;
     const token=`${link.id}:${link.generation}:${link.sequence}`;
-    if(token!==this.notifiedLink){this.notifiedLink=token;this.emit('selection',event);}
+    if(event&&token!==this.notifiedLink){this.notifiedLink=token;this.emit('selection',event);}
   }
   private allocateId(prefix:'layer'|'annotation'):string{
     // Imported snapshots can contain IDs generated by another runtime, or arbitrary
@@ -438,22 +469,55 @@ export class Figure {
   setBarMode(mode:BarMode):this{return this.setPanelBarMode('main',mode);}
   setCategories(axis:'x'|'y',values:string[]):this{return this.setPanelCategories('main',axis,values);}
   scatter3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Layer{return this.add('scatter3d',{x,y,z},options);}
+  plot3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Layer{return this.add('line3d',{x,y,z},options);}
   heatmap(x:Series,y:Series,z:Grid,options:LayerOptions={}):Layer{return this.add('heatmap',{x,y,z},options);}
   surface(x:Series,y:Series,z:Grid,options:LayerOptions={}):Layer{return this.add('surface',{x,y,z},options);}
   private add(kind:LayerKind,data:Record<string,unknown>,options:LayerOptions):Layer{
     return this.addToPanel('main',kind,data,options);
   }
-  addToPanel(panelId:string,kind:LayerKind,data:Record<string,unknown>,options:LayerOptions={},statOptions?:StatisticalOptions):Layer{
-    this.assertOpen();const view=this.panelView(panelId),dimension=kind==='surface'||kind==='scatter3d'?'3d':'2d';
-    if(this.spec.layout&&dimension!=='2d')throw new Error('Grid panels support 2D layers only');
-    if((this.spec.layers.length||this.spec.bookmarks?.length||this.spec.annotations?.length)&&view.kind!==dimension)throw new Error('2D and 3D layers need separate figures');
+  addToPanel(panelId:string,kind:LayerKind,data:Record<string,unknown>,options:LayerOptions={},statOptions?:StatisticalOptions,notify=true):Layer{
+    this.assertOpen();const view=this.panelView(panelId),dimension=is3D(kind)?'3d':'2d';
+    if(this.spec.layout&&view.kind!==dimension)throw new Error('2D/3D layer dimensionality does not match the fixed grid panel');
+    if((this.panelLayers(panelId).length||this.spec.bookmarks?.length||this.spec.annotations?.some(a=>(a.panelId??'main')===panelId))&&view.kind!==dimension)throw new Error('2D and 3D layers need separate figures or panels');
     if(kind==='band')validateBandStyle(options);
-    const {values,...style}=options;validateStyle(style);if(values)data={...data,color:values};
+    const {values,...style}=options;validateStyle(style);if(kind!=='surface'&&(style.shading!==undefined||style.wireframe!==undefined))throw new Error('Shading and wireframe require a surface');if(values)data={...data,color:values};
     const layer:LayerSpec={id:this.allocateId('layer'),kind,data:{},style,visible:true};
     if(statOptions)layer.options=statisticalOptions(kind,statOptions);
     if(panelId!=='main')layer.panelId=panelId;
-    this.updateData(layer,data,false);view.kind=dimension;this.spec.layers.push(layer);this.changed();return new Layer(this,layer.id);
+    this.updateData(layer,data,false);view.kind=dimension;this.spec.layers.push(layer);if(notify)this.changed();return new Layer(this,layer.id);
   }
+  addSurfaceSlice(panelId:string,surface:Layer,options:SurfaceSliceOptions):SurfaceSlice{
+    this.assertOpen();if(surface.figure!==this||surface.spec.kind!=='surface')throw new Error('Slice source must be a surface in this figure');
+    if(this.panelView(panelId).kind!=='2d')throw new Error('Slice target must be a 2D panel');
+    const {axis,index,...style}=options,values=surfaceSliceValues(this.layerValues(surface.spec),{axis,index});
+    const target=this.addToPanel(panelId,'line',values,style,undefined,false);
+    (this.spec.slices??=[]).push({sourceLayerId:surface.id,targetLayerId:target.id,axis,index});
+    this.spec.protocolVersion=Math.max(this.spec.protocolVersion,SCENE3D_PROTOCOL_VERSION);this.changed();return new SurfaceSlice(this,target.id);
+  }
+  setSliceIndex(targetLayerId:string,index:number):this{
+    this.assertOpen();const slice=this.spec.slices?.find(item=>item.targetLayerId===targetLayerId);if(!slice)throw new Error('Unknown surface slice');
+    const source=this.spec.layers.find(layer=>layer.id===slice.sourceLayerId)!,target=this.spec.layers.find(layer=>layer.id===targetLayerId)!,next={...slice,index};
+    const values=surfaceSliceValues(this.layerValues(source),next),entries=this.prepareSliceEntries(target,values);
+    validateSemantics(this.spec,layer=>layer.id===targetLayerId?values:this.layerValues(layer));this.checkSourceBudget(entries);
+    for(const [id,entry]of entries)this.registry.store.set(id,entry);slice.index=index;this.changed();return this;
+  }
+  private prepareSliceEntries(target:LayerSpec,values:{x:NumericArray;y:NumericArray}):Map<string,DataEntry>{
+    return new Map((['x','y'] as const).map(key=>{const id=target.data[key],old=this.registry.get(id);return [id,{descriptor:describeData(id,values[key],[values[key].length],old.descriptor.version+1),values:values[key]}];}));
+  }
+  removeLayer(layerId:string):void{
+    this.assertOpen();const layer=this.spec.layers.find(item=>item.id===layerId);if(!layer)throw new Error('Layer has been removed');
+    if(this.spec.slices?.some(slice=>slice.sourceLayerId===layerId))throw new Error('Remove dependent slices before removing their source surface');
+    this.disableStreaming(layerId);this.unlinkLayer(layerId);
+    if(this.spec.slices){this.spec.slices=this.spec.slices.filter(slice=>slice.targetLayerId!==layerId);if(!this.spec.slices.length)delete this.spec.slices;}
+    this.spec.layers=this.spec.layers.filter(item=>item.id!==layerId);for(const source of Object.values(layer.data))if(!this.spec.layers.some(item=>Object.values(item.data).includes(source)))this.registry.release(source);this.changed();
+  }
+  setCameraPreset(preset:CameraPreset,panelId='main'):this{
+    const view=this.panelView(panelId);if(view.kind!=='3d')throw new Error('Camera presets require a 3D panel');
+    return this.setPanelView(panelId,{camera:cameraPreset(preset),pan3d:[0,0]});
+  }
+  setEqualAspect(enabled=true,panelId='main'):this{if(this.panelView(panelId).kind!=='3d')throw new TypeError('Equal aspect requires a 3D panel');return this.setPanelView(panelId,{equalAspect:enabled});}
+  fitToData(panelId='main'):this{const view=this.panelView(panelId);return this.setPanelView(panelId,{xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{...view.camera,distance:3},pan3d:[0,0]});}
+  focusSelection(bounds:Bounds&{z:Domain},panelId='main'):this{if(this.panelView(panelId).kind!=='3d')throw new TypeError('3D focus requires a 3D panel');if(!bounds||!bounds.x||!bounds.y||!bounds.z)throw new TypeError('Focus bounds must contain x, y and z domains');const view=this.panelView(panelId);return this.setPanelView(panelId,{xDomain:bounds.x,yDomain:bounds.y,zDomain:bounds.z,camera:{...view.camera,distance:3},pan3d:[0,0]});}
   addHistogram(panelId:string,samples:Series,options:HistogramOptions):Layer{
     const {bins=10,range,density=false,cumulative=false,...style}=options;
     return this.addToPanel(panelId,'hist',{samples},style,statisticalOptions('hist',{bins,...(range!=null?{range}:{}),density,cumulative}));
@@ -524,6 +588,8 @@ export class Figure {
     this.assertOpen();
     if(!data||typeof data!=='object'||Array.isArray(data))throw new TypeError('Data must be an object');
     const candidate=structuredClone(layer),draft=structuredClone(this.spec),inputs={...data};
+    const dependentSlices=this.spec.slices?.filter(slice=>slice.sourceLayerId===layer.id)??[];
+    if(dependentSlices.length&&(Object.hasOwn(inputs,'x')||Object.hasOwn(inputs,'y')))throw new Error('Remove dependent slices before changing surface grid coordinates');
     const values=this.layerValues(layer),modified=new Set<string>();
     if(layer.kind==='boxplot'){
       for(const key of Object.keys(inputs))if(!['groups','labels'].includes(key))throw new Error(`Unknown boxplot data channel ${key}`);
@@ -559,7 +625,7 @@ export class Figure {
         else{
           if(Array.isArray(input)&&Array.isArray(input[0])){
             const rows=input as number[][];
-            if(key!=='z'||!(layer.kind==='heatmap'||layer.kind==='surface'))throw new Error('Point coordinates must be one-dimensional');
+            if(!(key==='z'&&(layer.kind==='heatmap'||layer.kind==='surface')||key==='color'&&layer.kind==='surface'))throw new Error('Point coordinates must be one-dimensional');
             if(rows.some(row=>row.length!==rows[0].length))throw new Error('Grid rows must have equal lengths');
           }
           values[key]=flatten(input as Grid);
@@ -577,6 +643,7 @@ export class Figure {
       const input=inputs.z;
       if(Array.isArray(input)&&Array.isArray(input[0])&&(input.length!==values.y.length||input[0].length!==values.x.length))throw new Error('Grid z shape must equal (y.length, x.length)');
       if(input===undefined&&layer.data.z){const shape=this.registry.get(layer.data.z).descriptor.shape;if(shape[0]!==values.y.length||shape[1]!==values.x.length)throw new Error('Supply a reshaped z grid when changing grid dimensions');}
+      if(layer.kind==='surface'&&values.color){const color=inputs.color;if(Array.isArray(color)&&Array.isArray(color[0])&&(color.length!==values.y.length||color[0].length!==values.x.length))throw new Error('Surface color shape must match z');if(color===undefined&&layer.data.color){const shape=this.registry.get(layer.data.color).descriptor.shape;if(shape[0]!==values.y.length||shape[1]!==values.x.length)throw new Error('Supply a reshaped color grid when changing grid dimensions');}}
     }
     for(const key of modified){
       let source=layer.data[key]??`${layer.id}-${key}`;
@@ -592,21 +659,23 @@ export class Figure {
       draft.layers.push(candidate);
       const panel=draft.panels?.find(item=>item.id===(layer.panelId??'main'));
       const view=panel&&panel.id!=='main'?panel.view!:draft.view;
-      view.kind=layer.kind==='surface'||layer.kind==='scatter3d'?'3d':'2d';
+      view.kind=is3D(layer.kind)?'3d':'2d';
     }else draft.layers[index]=candidate;
-    validateSemantics(draft,item=>item.id===candidate.id?values:this.layerValues(item));
+    const sliceValues=new Map(dependentSlices.map(slice=>[slice.targetLayerId,surfaceSliceValues(values,slice)]));
+    validateSemantics(draft,item=>item.id===candidate.id?values:sliceValues.get(item.id)??this.layerValues(item));
     const streaming=this.streams.get(layer.id),streamCount=values.x?.length??0;
     if(streaming){this.assertStreamingLayer(candidate);for(const channel of Object.keys(values))modified.add(channel);}
     // Prevalidate every descriptor too: an overflowing imported version must not
     // leave the first channel committed and the second channel unchanged.
     const writes=Array.from(modified,key=>{
       const source=candidate.data[key],old=this.registry.has(source)?this.registry.get(source):undefined;
-      const shape=key==='z'&&(layer.kind==='surface'||layer.kind==='heatmap')?[values.y.length,values.x.length]:[values[key].length];
+      const shape=key==='z'&&(layer.kind==='surface'||layer.kind==='heatmap')||key==='color'&&layer.kind==='surface'?[values.y.length,values.x.length]:[values[key].length];
       return {key,descriptor:describeData(source,values[key],shape,(old?.descriptor.version??0)+1)};
     });
     const entries=new Map<string,DataEntry>(writes.map(({key,descriptor})=>{
       const entry:DataEntry={descriptor,values:values[key]};return [descriptor.id,streaming?streamEntry(entry,streaming.maxPoints):entry];
     }));
+    for(const [targetId,derived]of sliceValues)for(const [id,entry]of this.prepareSliceEntries(this.spec.layers.find(item=>item.id===targetId)!,derived))entries.set(id,entry);
     this.checkSourceBudget(entries);
     if(streaming)this.rejectStreamWaiters(layer.id);
     for(const [source,entry]of entries)this.registry.store.set(source,entry);
@@ -615,6 +684,7 @@ export class Figure {
     if(draft.categories!==undefined)this.spec.categories=draft.categories;
     if(isStatistical(layer.kind)||layer.categorical)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);
     if(layer.kind==='band'||layer.style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);
+    if(layer.kind==='line3d'||layer.kind==='surface'&&(values.color||layer.style.shading!==undefined||layer.style.wireframe!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,SCENE3D_PROTOCOL_VERSION);
     for(const source of released)if(!this.spec.layers.some(item=>Object.values(item.data).includes(source)))this.registry.release(source);
     if(streaming)this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:streaming.maxPoints,nextSequence:streamCount,revision:0,retained:Math.min(streamCount,streaming.maxPoints),evicted:Math.max(0,streamCount-streaming.maxPoints)});
     if(notify)this.changed();
@@ -624,12 +694,12 @@ export class Figure {
     if(!v.x||!v.y)throw new Error('x and y are required');
     if(kind==='heatmap'||kind==='surface'){
       if(!v.x.length||!v.y.length)throw new Error('Grid requires at least a 1 × 1 grid');
-      if(v.color)throw new Error('Grid colors are determined by z values');
+      if(v.color&&kind==='heatmap')throw new Error('Heatmap colors are determined by z values');
       if(!v.z||v.z.length!==v.x.length*v.y.length)throw new Error('Grid z shape must equal (y.length, x.length)');
       if(kind==='surface'&&(v.x.length<2||v.y.length<2))throw new Error('Surface requires at least a 2 × 2 grid');
       for(const axis of [v.x,v.y])for(let i=0;i<axis.length;i++)if(!Number.isFinite(axis[i])||(i>0&&axis[i]<=axis[i-1]))throw new Error('Grid coordinates must be finite and strictly increasing');
-    }else if(v.x.length!==v.y.length||(kind==='scatter3d'&&(!v.z||v.z.length!==v.x.length)))throw new Error('Point coordinates must have equal lengths');
-    if(v.color&&v.color.length!==v.x.length)throw new Error('Color values must match point count');
+    }else if(v.x.length!==v.y.length||((kind==='scatter3d'||kind==='line3d')&&(!v.z||v.z.length!==v.x.length)))throw new Error('Point coordinates must have equal lengths');
+    if(v.color&&v.color.length!==(kind==='surface'?v.z.length:v.x.length))throw new Error('Color values must match point count or surface grid');
   }
   setView(options:Partial<ViewSpec>):this{
     return this.setPanelView('main',options);
@@ -642,8 +712,8 @@ export class Figure {
     this.applyViews(state);return this;
   }
   private assertDimension(next:ViewSpec,previous:ViewSpec):void{
-    if(this.spec.layout&&next.kind!=='2d')throw new Error('Grid views must be 2D');
-    if(this.spec.annotations?.length&&next.kind!=='2d')throw new Error('Annotations require a 2D panel');
+    if(this.spec.layout&&next.kind!==previous.kind)throw new Error('2D/3D grid panel dimensionality is fixed');
+    if(!this.spec.layout&&this.spec.annotations?.length&&next.kind!=='2d')throw new Error('Annotations require a 2D panel');
     if(next.kind!==previous.kind&&(this.spec.layers.length||this.spec.bookmarks?.length))throw new Error('Cannot change dimensionality of a populated figure');
   }
   private replacePanelView(state:ViewState,panelId:string,view:ViewSpec):void{
@@ -664,6 +734,7 @@ export class Figure {
     for(const panel of draft.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
     this.validateCurrentSemantics(draft);
     if([draft.view,...(draft.panels??[]).flatMap(panel=>panel.view?[panel.view]:[])].some(view=>view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,PRESENTATION_PROTOCOL_VERSION);
+    if([draft.view,...(draft.panels??[]).flatMap(panel=>panel.view?[panel.view]:[])].some(view=>view.boxAspect!==undefined||view.equalAspect!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,SCENE3D_PROTOCOL_VERSION);
     this.spec.view=copyView(state.view);
     for(const panel of this.spec.panels??[])if(panel.id!=='main')panel.view=copyView(state.panelViews![panel.id]);
     this.changed();
@@ -710,8 +781,27 @@ export class Figure {
     if(!bookmarks.length)delete this.spec.bookmarks;this.changed();return this;
   }
   setTitle(title:string):this{this.spec.title=title;this.changed();return this;}
-  mount(container:HTMLElement):this{
-    this.assertOpen();if(!container)throw new Error('A mount element is required');this.unmount();try{this.view=new FigureView(this,container);}catch(error){this.emit('error',{message:error instanceof Error?error.message:String(error)});throw error;}this.changed();return this;
+  mount(container:HTMLElement,options:{responsivePanels?:boolean}={}):this{
+    this.assertOpen();if(!container)throw new Error('A mount element is required');if(!options||typeof options!=='object'||options.responsivePanels!==undefined&&typeof options.responsivePanels!=='boolean')throw new TypeError('responsivePanels must be boolean');this.unmount();try{this.view=new FigureView(this,container,undefined,undefined,options.responsivePanels??false,this.exportStore);}catch(error){this.emit('error',{message:error instanceof Error?error.message:String(error)});throw error;}this.changed();return this;
+  }
+  hasMountedView():boolean{return this.view!==undefined;}
+  setInspectionEnabled(enabled:boolean):void{if(typeof enabled!=='boolean')throw new TypeError('Inspection capability must be boolean');this.inspectionEnabled=enabled;}
+  getInspectionState():InspectionState{return this.view?.getInspectionState()??{mode:'live',acceptedRevision:this.acceptedRevision,displayedRevision:0,frameId:0,snapshotBytes:this.exportStore.bytes,maxSnapshotBytes:this.exportStore.maximum,displayedStreams:{}};}
+  getInspectionSelection(){return this.view?.getInspectionSelection();}
+  getDisplayedStreamingState(layerId:string):StreamState|undefined{return this.view?.getDisplayedStreamingState(layerId);}
+  freezeInspection():InspectionState{this.assertOpen();if(!this.inspectionEnabled)throw streamError('TRANSPORT_UNSUPPORTED','Frozen inspection requires transport v3');if(!this.view)throw streamError('NOT_READY','Mount and render a figure before freezing inspection');return this.view.freezeInspection();}
+  async resumeLive():Promise<void>{this.assertOpen();if(!this.view)throw streamError('NOT_READY','Mount the figure before resuming');await this.view.resumeLive();}
+  getInspectionView(panelId='main'):ViewSpec{return this.view?.getInspectionView(panelId)??structuredClone(this.panelView(panelId));}
+  getInspectionSnapshot():Snapshot{return this.view?.getInspectionSnapshot()??this.snapshot();}
+  setInspectionSlice(targetLayerId:string,index:number):this{if(this.view)this.view.setInspectionSlice(targetLayerId,index);else this.setSliceIndex(targetLayerId,index);return this;}
+  setInspectionView(panelId:string,patch:Partial<ViewSpec>):this{this.assertOpen();if(this.view)this.view.setInspectionView(panelId,patch);else this.setPanelView(panelId,patch);return this;}
+  resetInspectionView(panelId?:string):this{this.assertOpen();if(this.view)this.view.resetInspectionView(panelId);return this;}
+  focusInspectionSelection(panelId='main'):this{this.assertOpen();if(!this.view)throw streamError('NOT_READY','Mount the figure before focusing a displayed selection');this.view.focusInspectionSelection(panelId);return this;}
+  captureExport(source:'accepted'|'displayed'='accepted'):SnapshotLease{
+    this.assertOpen();if(!['accepted','displayed'].includes(source))throw new TypeError('Export source must be accepted or displayed');
+    if(this.view)return this.view.captureExport(source);
+    if(source==='displayed')throw streamError('NOT_READY','Mount and render the figure before exporting a displayed frame');
+    return this.exportStore.capture(this.snapshot(),this.registry);
   }
   async ready(options:ReadyOptions={}):Promise<void>{this.assertOpen();if(options.signal?.aborted)throw new DOMException('Waiting for the figure was aborted','AbortError');if(options.timeoutMs!==undefined&&(!Number.isFinite(options.timeoutMs)||options.timeoutMs<=0))throw new RangeError('timeoutMs must be positive');if(this.view)await this.view.ready(options);}
   async savefig(options:ExportPNGOptions={}):Promise<Blob>{
@@ -721,28 +811,36 @@ export class Figure {
     // unmount/remount instead of reading this.view again after an async wait.
     return view.exportPNG(validated);
   }
+  savefigPNG(options:ExportPNGOptions={}):Promise<Blob>{return this.savefig(options);}
   /** Transport export of an invocation-time snapshot using the mounted GPU. */
-  async savefigSnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>,options:ExportPNGOptions={}):Promise<Blob>{
+  async savefigSnapshot(snapshot:Snapshot,buffers:ReadonlyMap<string,ArrayBuffer|NumericArray|DataEntry>,options:ExportPNGOptions={}):Promise<Blob>{
     this.assertOpen();if(!this.view)throw new Error('Mount the figure before exporting');
     return this.view.exportSnapshotPNG(snapshot,buffers,validateExportPNGOptions(options));
   }
   inspect():Array<RepresentationInfo&{layerId:string;panelId?:string}>{return this.view?.inspect()??[];}
-  diagnostics(){return {sourceBytes:Array.from(this.registry.entries(),([,entry])=>entry.descriptor.byteLength).reduce((sum,bytes)=>sum+bytes,0),semanticScans:this.semanticScans,pendingAppends:this.streamWaiters.size,streams:Object.fromEntries(Array.from(this.streams,([key,state])=>[key,{...state}])),...this.view?.diagnostics()};}
+  diagnostics(){return {sourceBytes:Array.from(this.registry.entries(),([,entry])=>entry.descriptor.byteLength).reduce((sum,bytes)=>sum+bytes,0),semanticScans:this.semanticScans,pendingAppends:this.streamWaiters.size,snapshotBytes:this.exportStore.bytes,maxSnapshotBytes:this.exportStore.maximum,snapshotCopiedBytes:this.exportStore.copiedBytes,streams:Object.fromEntries(Array.from(this.streams,([key,state])=>[key,{...state}])),...this.view?.diagnostics()};}
   on<K extends FigureEvent>(event:K,callback:(event:FigureEventMap[K])=>void):()=>void{let handlers=this.listeners.get(event);if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);return ()=>handlers!.delete(callback);}
   emit<K extends FigureEvent>(event:K,payload:FigureEventMap[K]):void{
     for(const callback of [...(this.listeners.get(event)??[])])try{callback(payload);}catch(error){try{console.error(`Vesora ${event} callback failed`,error);}catch{/* Diagnostics cannot interrupt ready/error settlement. */}}
   }
-  changed(streaming=false):void{this.assertOpen();this.view?.schedule(streaming);}
+  changed(streaming=false):void{this.assertOpen();this.acceptedRevision++;this.view?.schedule(streaming);}
   snapshot():Snapshot{this.assertOpen();return {figure:structuredClone(this.spec),sources:Array.from(this.registry.entries(),([,entry])=>structuredClone(entry.descriptor))};}
   applySnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>):void{
     // Clone before touching live storage; even a non-cloneable incoming field
     // must leave the previous scene and its source registry intact.
     this.assertOpen();const spec=structuredClone(snapshot.figure);
-    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
+    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
     const presentationViews=[spec.view,...(spec.panels??[]).flatMap(panel=>panel.view?[panel.view]:[]),...(spec.bookmarks??[]).flatMap(bookmark=>[bookmark.view,...Object.values(bookmark.panelViews??{})])];
     if(spec.theme!==undefined)validateTheme(spec.theme);
     if(spec.protocolVersion<PRESENTATION_PROTOCOL_VERSION&&(spec.theme!==undefined||presentationViews.some(view=>view&&(view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))))throw new Error('Themes, time scales and axis formats require protocol version 5');
     if(!Array.isArray(spec.layers)||!Array.isArray(snapshot.sources))throw new TypeError('Snapshot layers and sources must be arrays');
+    if(spec.inspection!==undefined){
+      const capture=spec.inspection;
+      if(spec.protocolVersion<SCENE3D_PROTOCOL_VERSION)throw new Error('Inspection captures require protocol version 7');
+      if(!capture||typeof capture!=='object'||typeof capture.capturedAt!=='string'||!Number.isFinite(Date.parse(capture.capturedAt))||!Number.isSafeInteger(capture.frameId)||capture.frameId<0||capture.snapshotId!==undefined&&(typeof capture.snapshotId!=='string'||!capture.snapshotId))throw new Error('Invalid inspection capture metadata');
+      if(capture.selection!==undefined&&(!capture.selection||typeof capture.selection!=='object'||!spec.layers.some(layer=>layer.id===capture.selection!.layerId)||!['point','bar','bin','box','outlier','density','cell','point3d','surface','segment3d'].includes(capture.selection.kind)))throw new Error('Invalid captured selection');
+    }
+    if(spec.protocolVersion<SCENE3D_PROTOCOL_VERSION&&(spec.slices!==undefined||spec.layout&&presentationViews.some(view=>view?.kind==='3d')||presentationViews.some(view=>view?.boxAspect!==undefined||view?.equalAspect!==undefined)||spec.layers.some(layer=>layer.kind==='line3d'||layer.kind==='surface'&&layer.data?.color||layer.style?.shading!==undefined||layer.style?.wireframe!==undefined)))throw new Error('Extended 3D scenes require protocol version 7');
     if(spec.protocolVersion<QUALITY_PROTOCOL_VERSION&&(spec.hoverMode!==undefined||spec.theme&&hasTypography(spec.theme)||spec.layers.some(layer=>layer.kind==='band'||layer.style?.colorbarLabel!==undefined)))throw new Error('Bands, x inspection, role typography and colorbar labels require protocol version 6');
     if(spec.protocolVersion===PROTOCOL_VERSION&&(spec.layout!==undefined||spec.panels!==undefined||spec.annotations!==undefined||spec.layers.some(layer=>layer.panelId!==undefined)||spec.bookmarks?.some(bookmark=>bookmark.panelViews!==undefined)))throw new Error('Panels and annotations require protocol version 2');
     if(spec.protocolVersion<STATISTICS_PROTOCOL_VERSION&&(spec.categories!==undefined||spec.barModes!==undefined||spec.layers.some(layer=>isStatistical(layer.kind)||layer.options!==undefined||layer.categorical!==undefined)))throw new Error('Statistics and categories require protocol version 3');
@@ -762,18 +860,31 @@ export class Figure {
     for(const layer of spec.layers){
       if(typeof layer.id!=='string'||!layer.id)throw new Error('Layer id must be a nonempty string');
       if(layerIds.has(layer.id))throw new Error('Duplicate layer id');layerIds.add(layer.id);
-      if(!['line','scatter','scatter3d','heatmap','surface','hist','bar','boxplot','band'].includes(layer.kind))throw new Error('Unknown layer kind');
+      if(!['line','line3d','scatter','scatter3d','heatmap','surface','hist','bar','boxplot','band'].includes(layer.kind))throw new Error('Unknown layer kind');
       if(typeof layer.visible!=='boolean')throw new TypeError('Layer visibility must be a boolean');
       if(layer.panelId!==undefined&&(typeof layer.panelId!=='string'||!layer.panelId))throw new TypeError('Layer panelId must be a nonempty string');
       const panel=panels.find(item=>item.id===(layer.panelId??'main'));if(!panel)throw new Error('Layer references an unknown panel');
-      if((layer.kind==='surface'||layer.kind==='scatter3d'?'3d':'2d')!==panel.view.kind)throw new Error('Layer dimensionality does not match view');
+      if((is3D(layer.kind)?'3d':'2d')!==panel.view.kind)throw new Error('Layer dimensionality does not match view');
       validateStyle(layer.style);if(layer.kind==='band')validateBandStyle(layer.style);const values:Record<string,NumericArray>={};for(const [key,source] of Object.entries(layer.data)){
         if(!isStatistical(layer.kind)&&!(layer.kind==='band'?['x','lower','upper']:['x','y','z','color']).includes(key))throw new Error('Unknown data channel');
-        const entry=next.get(source);const grid=key==='z'&&(layer.kind==='heatmap'||layer.kind==='surface');
+        const entry=next.get(source);const grid=key==='z'&&(layer.kind==='heatmap'||layer.kind==='surface')||key==='color'&&layer.kind==='surface';
         if(entry.descriptor.shape.length!==(grid?2:1))throw new Error('Invalid source dimensions');values[key]=entry.values;
       }
       if(isStatistical(layer.kind))validateStatisticalData(layer,values);else this.validateLayerData(layer.kind,values);
       if(layer.kind==='heatmap'||layer.kind==='surface'){const shape=next.get(layer.data.z).descriptor.shape;if(shape[0]!==values.y.length||shape[1]!==values.x.length)throw new Error('Grid source shape does not match coordinates');}
+      if(layer.kind==='surface'&&layer.data.color){const shape=next.get(layer.data.color).descriptor.shape;if(shape[0]!==values.y.length||shape[1]!==values.x.length)throw new Error('Surface color shape must match z');}
+    }
+    if(spec.slices!==undefined){
+      if(!Array.isArray(spec.slices))throw new TypeError('Surface slices must be an array');
+      const targets=new Set<string>();
+      for(const slice of spec.slices){
+        if(!slice||typeof slice!=='object'||Object.keys(slice).some(key=>!['sourceLayerId','targetLayerId','axis','index'].includes(key)))throw new Error('Invalid surface slice');
+        const source=spec.layers.find(layer=>layer.id===slice.sourceLayerId),target=spec.layers.find(layer=>layer.id===slice.targetLayerId);
+        if(!source||source.kind!=='surface'||!target||target.kind!=='line'||target.categorical||Object.keys(target.data).some(key=>key!=='x'&&key!=='y')||targets.has(target.id))throw new Error('Surface slices require one surface source and a unique numeric line target');
+        targets.add(target.id);
+        const values=surfaceSliceValues(Object.fromEntries(Object.entries(source.data).map(([key,id])=>[key,next.get(id).values])),slice);
+        for(const key of ['x','y'] as const){const id=target.data[key],actual=next.get(id).values,expected=values[key];if(actual.length!==expected.length||actual.some((value,i)=>value!==expected[i]&&!(Number.isNaN(value)&&Number.isNaN(expected[i]))))throw new Error('Surface slice samples do not match their source');if(spec.layers.some(layer=>Object.entries(layer.data).some(([channel,sourceId])=>sourceId===id&&(layer.id!==target.id||channel!==key))))throw new Error('Surface slice target data must own its sources');}
+      }
     }
     validateSemantics(spec,layer=>Object.fromEntries(Object.entries(layer.data).map(([key,source])=>[key,next.get(source).values])));
     validateSelectionLink(spec,next);
@@ -782,17 +893,19 @@ export class Figure {
     this.registry.clear();for(const [,entry]of next.entries())this.registry.set(entry.descriptor.id,entry.values,entry.descriptor.shape,entry.descriptor.version);
     this.spec=spec;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
   }
-  close():void{if(this.closed)return;this.rejectStreamWaiters();this.streams.clear();this.view?.dispose();this.view=undefined;this.registry.clear();this.listeners.clear();this.closed=true;}
+  close():void{if(this.closed)return;this.rejectStreamWaiters();this.streams.clear();this.view?.dispose();this.view=undefined;this.registry.clear();this.exportStore.dispose();this.listeners.clear();this.closed=true;}
   private assertOpen():void{if(this.closed)throw new Error('Figure is closed');}
 }
 export function figure(options:FigureOptions={}):Figure{return new Figure(options);}
 export function subplots(options:SubplotsOptions):Figure{
-  const {rows,cols,shareX=false,shareY=false,...figureOptions}=options;
+  const {rows,cols,shareX=false,shareY=false,kinds,...figureOptions}=options;
   if(!Number.isSafeInteger(rows)||!Number.isSafeInteger(cols)||rows<1||cols<1||!Number.isSafeInteger(rows*cols))throw new RangeError('Grid rows and cols must be positive safe integers');
   if(typeof shareX!=='boolean'||typeof shareY!=='boolean')throw new TypeError('Shared axis options must be booleans');
-  const result=figure({...figureOptions,kind:'2d'});
-  result.spec.protocolVersion=Math.max(result.spec.protocolVersion,EXTENDED_PROTOCOL_VERSION);result.spec.layout={rows,cols,shareX,shareY};result.spec.panels=[];
-  for(let row=0;row<rows;row++)for(let col=0;col<cols;col++)result.spec.panels.push(row===0&&col===0?{id:'main',row,col,title:''}:{id:`panel-${row}-${col}`,row,col,title:'',view:defaultView()});
+  if(kinds!==undefined&&(!Array.isArray(kinds)||kinds.length!==rows||kinds.some(row=>!Array.isArray(row)||row.length!==cols||row.some(kind=>kind!=='2d'&&kind!=='3d'))))throw new Error('Panel kinds must match the rows and cols grid');
+  const threeD=kinds?.some(row=>row.includes('3d'))??false;if(threeD&&(shareX||shareY))throw new Error('Shared axes require an all-2D grid');
+  const result=figure({...figureOptions,kind:kinds?.[0][0]??'2d'});
+  result.spec.protocolVersion=Math.max(result.spec.protocolVersion,threeD?SCENE3D_PROTOCOL_VERSION:EXTENDED_PROTOCOL_VERSION);result.spec.layout={rows,cols,shareX,shareY};result.spec.panels=[];
+  for(let row=0;row<rows;row++)for(let col=0;col<cols;col++)result.spec.panels.push(row===0&&col===0?{id:'main',row,col,title:''}:{id:`panel-${row}-${col}`,row,col,title:'',view:defaultView(kinds?.[row][col])});
   return result;
 }
 export function plot(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Figure{const f=figure();f.plot(x,y,options);return f;}
@@ -801,6 +914,7 @@ export function scatter(x:AxisSeries,y:AxisSeries,options:LayerOptions={}):Figur
 export function heatmap(x:Series,y:Series,z:Grid,options:LayerOptions={}):Figure{const f=figure();f.heatmap(x,y,z,options);return f;}
 export function surface(x:Series,y:Series,z:Grid,options:LayerOptions={}):Figure{const f=figure();f.surface(x,y,z,options);return f;}
 export function scatter3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Figure{const f=figure();f.scatter3d(x,y,z,options);return f;}
+export function plot3d(x:Series,y:Series,z:Series,options:LayerOptions={}):Figure{const f=figure();f.plot3d(x,y,z,options);return f;}
 
 export function hist(samples:Series,options:HistogramOptions={}):Figure{const f=figure();f.hist(samples,options);return f;}
 export function bar(x:AxisSeries,values:Series,options:BarOptions={}):Figure{const f=figure();f.bar(x,values,options);return f;}

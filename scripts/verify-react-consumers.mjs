@@ -8,18 +8,20 @@ import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
+import {loadRelease} from './release-validation.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
 const archives = resolve(process.argv[2] ?? join(root, 'dist', `release-v${manifest.version}`));
+const release = await loadRelease(archives,{packagesOnly:true});
 const npm = [process.env.npm_execpath, join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), join(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js')].find(path => path && existsSync(path));
 assert.ok(npm, 'Cannot locate npm-cli.js; run this verifier with npm run test:consumers.');
 const workspace = await mkdtemp(join(tmpdir(), 'vesora-react-consumers-'));
 const env = {...process.env, NEXT_TELEMETRY_DISABLED: '1', npm_config_cache: process.env.VESORA_NPM_CACHE ?? join(root, 'artifacts/npm-cache')};
 for (const key of ['NODE_PATH', 'NODE_OPTIONS']) delete env[key];
-const core = join(archives, `vesora-core-${manifest.version}.tgz`);
-const adapter = join(archives, `vesora-react-${manifest.version}.tgz`);
+const core = join(archives, `vesora-core-${release.identity.npm}.tgz`);
+const adapter = join(archives, `vesora-react-${release.identity.npm}.tgz`);
 assert.ok(existsSync(core) && existsSync(adapter), 'Run npm run package:release first.');
 const exact = name => lock.packages[`node_modules/${name}`].version;
 const requestedReact = process.env.VESORA_REACT_VERSION ?? '19';
@@ -33,11 +35,25 @@ const run = (command, args, cwd) => execFileSync(command, args, {cwd, env, stdio
 const dashboard = `'use client';
 import React, {useState,useRef,useEffect,useMemo} from 'react';
 import {VesoraChart,type VesoraChartHandle} from '@vesora/react';
+import {VesoraViewer} from '@vesora/react/viewer';
+import {subplots,toHTML,type Figure} from '@vesora/core';
 const start = Date.UTC(2026,9,1);
 const series = [{key:'revenue',label:'Revenue'}] as const;
 type Row = {timestamp:number;revenue:number;lower:number;upper:number};
+function ScientificConsumer(){
+  const [figure,setFigure]=useState<Figure>();
+  useEffect(()=>{
+    const fig=subplots({rows:1,cols:2,kinds:[['3d','2d']],height:360,title:'Installed PRISM viewer'});
+    const surface=fig.panel(0,0).surface([0,1,2],[0,1],[[0,1,0],[1,2,1]],{values:[[2,3,4],[5,6,7]],label:'Measured surface'});
+    fig.panel(0,1).slice(surface,{axis:'y',index:0,label:'Exact profile'});
+    (window as any).vesoraScientific={figure:fig,surface,html:()=>toHTML(fig,{source:'displayed'})};setFigure(fig);
+    return()=>{delete (window as any).vesoraScientific;fig.close();};
+  },[]);
+  return figure?<VesoraViewer figure={figure} theme="dark"/>:null;
+}
 export default function Dashboard(){
   const [offset,setOffset]=useState(0),[theme,setTheme]=useState<'light'|'dark'>('dark'),[quality,setQuality]=useState(false),[streaming,setStreaming]=useState(false);
+  const [science,setScience]=useState(false);
   const chart=useRef<VesoraChartHandle<Row>>(null);
   useEffect(()=>{(window as any).vesoraConsumer=chart.current;});
   const data=useMemo(()=>[{timestamp:start,revenue:100+offset,lower:80+offset,upper:120+offset},{timestamp:start+86400000,revenue:200+offset,lower:180+offset,upper:220+offset}],[offset]);
@@ -46,10 +62,12 @@ export default function Dashboard(){
     <button onClick={()=>setTheme(value=>value==='dark'?'light':'dark')}>Switch theme</button>
     <button onClick={()=>setQuality(true)}>Enable interval inspection</button>
     <button onClick={()=>{setQuality(false);setStreaming(true);}}>Enable streaming</button>
+    <button onClick={()=>setScience(true)}>Open scientific viewer</button>
     <output>{offset}</output>
     <VesoraChart ref={chart} type="line" data={data} xKey="timestamp" series={quality?[{...series[0],band:{lowerKey:'lower',upperKey:'upper'}}]:series} theme={theme} hoverMode={quality||streaming?'x':undefined} streaming={streaming?{maxPoints:2}:undefined}
       xAxis={{type:'time'}} yAxis={{format:'currency',currency:'USD'}} height={360}
       />
+    {science&&<ScientificConsumer/>}
   </main>;
 }
 `;
@@ -62,6 +80,11 @@ async function prepare(name, dependencies){
   run(process.execPath,[npm,'install','--ignore-scripts','--no-audit','--no-fund','--prefer-offline',core,adapter,...dependencies.map(name=>`${name}@${dependencyVersion(name)}`)],directory);
   const installedReact = JSON.parse(await readFile(join(directory, 'node_modules/react/package.json'), 'utf8')).version;
   assert.equal(installedReact, reactVersion, `${name}: installed React must match the requested matrix member`);
+  for(const packageName of ['core','react']){
+    const installed=JSON.parse(await readFile(join(directory,`node_modules/@vesora/${packageName}/package.json`),'utf8'));
+    assert.equal(installed.name,`@vesora/${packageName}`,`${name}: installed Vesora package identity differs`);
+    assert.equal(installed.version,release.identity.npm,`${name}: installed Vesora must match the archive manifest`);
+  }
   return directory;
 }
 
@@ -121,10 +144,21 @@ async function verify(browser,url,name,blockedWorker=false){
     await page.waitForFunction(async()=>{const html=await window.vesoraConsumer.exportHTML();return JSON.parse(new DOMParser().parseFromString(html,'text/html').getElementById('vesora-payload').textContent).snapshot.figure.theme.background!=='#ffffff';});
     const styled=await page.evaluate(async()=>{const html=await window.vesoraConsumer.exportHTML();return JSON.parse(new DOMParser().parseFromString(html,'text/html').getElementById('vesora-payload').textContent).snapshot.sources;});
     assert.deepEqual(styled,retained.sources,`${name}: styling must preserve streaming source versions`);
+    await page.getByRole('button',{name:'Open scientific viewer',exact:true}).click();
+    await page.waitForFunction(()=>window.vesoraScientific?.figure.getInspectionState().frameId>0);
+    const scientific=page.locator('[data-vesora-viewer]');
+    await scientific.getByRole('button',{name:'Freeze view',exact:true}).click();
+    const frozen=await page.evaluate(()=>{const s=window.vesoraScientific;s.surface.setData({z:[[10,11,10],[11,12,11]]});return JSON.parse(new DOMParser().parseFromString(s.html(),'text/html').getElementById('vesora-payload').textContent);});
+    assert.equal(frozen.snapshot.figure.protocolVersion,7);assert.equal(frozen.snapshot.figure.slices.length,1);
+    const surface=frozen.snapshot.figure.layers.find(layer=>layer.kind==='surface'),z=frozen.buffers.find(buffer=>buffer.id===surface.data.z);
+    assert.deepEqual([...new Float64Array(Uint8Array.from(atob(z.base64),character=>character.charCodeAt(0)).buffer)],[0,1,0,1,2,1]);
+    const sciencePNG=await page.evaluate(async()=>{const blob=await window.vesoraScientific.figure.savefig({source:'displayed',width:800,height:400,scale:1});return [...new Uint8Array(await blob.arrayBuffer()).slice(0,8)];});assert.deepEqual(sciencePNG,[137,80,78,71,13,10,26,10]);
+    await scientific.getByRole('button',{name:'Return to live',exact:true}).click();await page.waitForFunction(()=>window.vesoraScientific.figure.getInspectionState().mode==='live');
+    await page.evaluate(()=>window.vesoraScientific.figure.ready());
     await page.screenshot({path:join(workspace,`${name}.png`),fullPage:true});
     assert.deepEqual(errors,[],`${name}: uncaught browser errors`);
     checks.push(name);
-    console.log(`${name}: React ${reactVersion}, installed archive, update identity, v6 export and bounded streaming passed.`);
+    console.log(`${name}: React ${reactVersion}, installed archive, updates, streaming and protocol-7 viewer/frozen exports passed.`);
   }finally{await context.close();}
 }
 
@@ -156,7 +190,7 @@ try{
   try{await verify(browser,nextServer.url,'next');}finally{nextServer.stop();}
   }
   const archiveHashes = Object.fromEntries(await Promise.all([core, adapter].map(async path => [path, createHash('sha256').update(await readFile(path)).digest('hex')])));
-  const result={version:manifest.version,reactVersion,archives,archiveHashes,browser:browser.version(),recordedAt:new Date().toISOString(),checks};
+  const result={version:release.identity.canonical,commit:release.manifest.commit,manifestSha256:release.manifestSha256,reactVersion,archives,archiveHashes,browser:browser.version(),recordedAt:new Date().toISOString(),checks};
   await writeFile(join(workspace,'verification.json'),JSON.stringify(result,null,2));
   await mkdir(join(root,'artifacts','consumers'),{recursive:true});
   await writeFile(join(root,'artifacts','consumers',`react-${reactVersion}.json`),JSON.stringify(result,null,2));

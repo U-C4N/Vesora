@@ -99,7 +99,7 @@ describe('bounded streaming transactions',()=>{
   });
   it('bounds outstanding append promises and rejects them promptly on reset',async()=>{
     const figure=new Figure(),layer=figure.plot([],[]).enableStreaming({maxPoints:2});
-    (figure as any).view={schedule(){},ready(){return new Promise(()=>{});},dispose(){}};
+    (figure as any).view={getInspectionState(){return {mode:'live'};},schedule(){},ready(){return new Promise(()=>{});},dispose(){}};
     const pending=Array.from({length:64},(_,i)=>layer.appendData({x:[i],y:[i]}).catch(error=>error));
     await expect(layer.appendData({x:[64],y:[64]})).rejects.toMatchObject({code:'STREAM_BACKPRESSURE'});
     layer.setData({x:[],y:[]});expect((await Promise.all(pending)).every(error=>error.code==='STREAM_RESET')).toBe(true);

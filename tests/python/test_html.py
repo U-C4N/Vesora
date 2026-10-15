@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from array import array
 from html.parser import HTMLParser
 from pathlib import Path
@@ -83,6 +84,22 @@ def test_html_preserves_nonfinite_binary_data_and_empty_arrays(template):
         assert base64.b64decode(item["base64"]) == fig._data_bytes(source["id"], source["version"])
 
 
+def test_scene7_export_has_owned_scalar_slice_buffers_and_capture_time(template):
+    fig = vs.subplots(1, 2, kinds=[["3d", "2d"]])
+    surface = fig.panel(0, 0).surface([[1., 2.], [3., 4.]], values=[[10., 20.], [30., 40.]], shading="smooth")
+    fig.panel(0, 0).plot3d([0., 1.], [0., 1.], [0., 1.])
+    fig.panel(0, 1).slice(surface, axis="x", index=1)
+    before = datetime.now(timezone.utc)
+    envelope = decode(fig.to_html())
+    captured = datetime.fromisoformat(envelope["capture"]["capturedAt"].replace("Z", "+00:00"))
+    assert abs((captured - before).total_seconds()) < 2
+    assert envelope["capture"]["source"] == "accepted"
+    assert envelope["snapshot"]["figure"]["protocolVersion"] == 7
+    for item, source in zip(envelope["buffers"], envelope["snapshot"]["sources"]):
+        assert base64.b64decode(item["base64"]) == fig._data_bytes(source["id"], source["version"])
+    fig.close()
+
+
 def test_html_escapes_text_and_writes_without_starting_a_host(template, tmp_path):
     text = '</script><script>alert("x")</script><!--&>\u2028\u2029 İ 🌌'
     fig = vs.Figure(title=text)
@@ -95,7 +112,11 @@ def test_html_escapes_text_and_writes_without_starting_a_host(template, tmp_path
     assert spec["title"] == spec["bookmarks"][0]["note"] == text
     path = tmp_path / "discovery.html"
     assert fig.save_html(path) == path
-    assert path.read_text(encoding="utf-8") == document
+    saved = decode(path.read_text(encoding="utf-8"))
+    initial = decode(document)
+    assert saved["snapshot"] == initial["snapshot"]
+    assert saved["buffers"] == initial["buffers"]
+    assert saved["capture"]["source"] == initial["capture"]["source"] == "accepted"
     assert fig._host is fig._window is fig._widget is None
     with pytest.raises(ValueError, match="HTML"):
         fig.save_html(tmp_path / "wrong.png")
@@ -108,7 +129,7 @@ def test_export_snapshot_is_detached_before_serializing(template, monkeypatch):
     old = fig.snapshot()
     original = exporter.make_html
 
-    def serialize(snapshot, buffers):
+    def serialize(snapshot, buffers, *, captured_at):
         updated = threading.Event()
 
         def update():
@@ -119,7 +140,7 @@ def test_export_snapshot_is_detached_before_serializing(template, monkeypatch):
         thread.start()
         assert updated.wait(5), "HTML serialization must not hold the figure lock"
         thread.join()
-        return original(snapshot, buffers)
+        return original(snapshot, buffers, captured_at=captured_at)
 
     monkeypatch.setattr(exporter, "make_html", serialize)
     envelope = decode(fig.to_html())

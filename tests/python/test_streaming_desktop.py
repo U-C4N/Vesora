@@ -66,10 +66,10 @@ def test_qt_streaming_latency_three_curves_100k_retention(tmp_path):
         timings, pending = [None] * samples, []
         def collect():
             with fig._host._state_lock:
-                acknowledged = max((queue.acknowledged or -1 for queue in fig._host._views.values()), default=-1)
+                presented = max((queue.presented_revision if queue.presented_revision is not None else -1 for queue in fig._host._views.values()), default=-1)
             completed = time.perf_counter()
             for index, begin, revision in pending:
-                if timings[index] is None and revision <= acknowledged:
+                if timings[index] is None and revision <= presented:
                     timings[index] = (completed - begin) * 1000
         start = time.perf_counter()
         for sample in range(samples):
@@ -88,20 +88,20 @@ def test_qt_streaming_latency_three_curves_100k_retention(tmp_path):
         producer_duration = time.perf_counter() - start
         deadline = time.perf_counter() + 30
         while any(value is None for value in timings):
-            assert time.perf_counter() < deadline, "Qt streaming ACK deadline exceeded"
+            assert time.perf_counter() < deadline, "Qt streaming presentation deadline exceeded"
             vs.process_events()
             collect()
             time.sleep(.001)
         duration = time.perf_counter() - start
         renderer = javascript(fig._window._vesora_view.page(), "(()=>{const gl=document.querySelector('canvas').getContext('webgl2'),e=gl.getExtension('WEBGL_debug_renderer_info');return e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);})()")
         ordered = sorted(timings)
-        report = {"scenario": "Python append to final renderer ACK", "platform": platform.platform(), "python": platform.python_version(),
+        report = {"scenario": "Python append to completed live frame", "platform": platform.platform(), "python": platform.python_version(),
                   "renderer": renderer, "series": 3, "retention_per_series": count, "batch_rows_per_series": batch_size,
                   "samples": samples, "requested_hz": requested_hz, "observed_hz": samples / duration,
                   "producer_duration_seconds": producer_duration,
                   "duration_seconds": duration, "p50_ms": ordered[49], "p95_ms": ordered[94], "max_ms": ordered[-1],
                   "latency_ms": timings, "retained_source_bytes": sum(source[0]["byteLength"] for source in fig._sources.values()),
-                  "scope": "Includes Python validation, binary transport, JS append, worker planning, GPU draw and ACK; excludes initial construction and PNG."}
+                  "scope": "Includes Python validation, binary transport, JS append, worker planning, GPU draw and frame notification; excludes initial construction and PNG."}
         destination = tmp_path / "qt-streaming-benchmark.json"
         destination.write_text(json.dumps(report, indent=2), encoding="utf-8")
         assert all(state["retained"] == count and state["nextSequence"] == count + samples * batch_size for state in fig._streams.values())

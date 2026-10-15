@@ -1,5 +1,5 @@
 import type {CSSProperties, ReactNode} from 'react';
-import type {AxisFormat, ExportPNGOptions, FigureEventMap, HoverEvent, ThemeInput, XHoverEvent} from '@vesora/core';
+import type {AppendOptions, AxisFormat, ExportHTMLOptions, ExportPNGOptions, FigureEventMap, HoverEvent, InspectionState, ThemeInput, XHoverEvent} from '@vesora/core';
 
 export type ChartType = 'line' | 'bar' | 'scatter';
 
@@ -64,10 +64,13 @@ export interface ChartXInteraction<Row extends object> {
 export interface VesoraChartHandle<Row extends object = Record<string, unknown>> {
   exportPNG(options?: ExportPNGOptions): Promise<Blob>;
   /** The HTML includes every chart source row. React callbacks are not included. */
-  exportHTML(): Promise<string>;
+  exportHTML(options?:ExportHTMLOptions): Promise<string>;
   resetView(): void;
   /** Append to all numeric line/scatter series in one atomic bounded update. */
-  appendRows(rows: readonly Row[]): Promise<void>;
+  appendRows(rows: readonly Row[], options?: AppendOptions): Promise<void>;
+  freezeInspection(): InspectionState;
+  resumeLive(): Promise<void>;
+  getInspectionState(): InspectionState;
 }
 
 export interface VesoraChartProps<Row extends object> {

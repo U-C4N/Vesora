@@ -13,10 +13,16 @@
   <a href="#see-it-in-action">Scientific gallery</a> ·
   <a href="#get-started">Quick start</a> ·
   <a href="docs/api.md">API reference</a> ·
-  <a href="docs/releases/v0.8.0.md">v0.8 overview</a>
+  <a href="docs/releases/v0.9.0.md">PRISM candidate</a>
 </p>
 
-> **v0.8 developer preview, MIT licensed.** Build and install the release archives below. Registry publication is a separate authenticated step; these instructions do not assume published npm/PyPI packages. WebGL2 is required; Python desktop windows use QtWebEngine.
+> **v0.9.0-rc.1 PRISM candidate, MIT licensed.** Build and install the local archives below. This checkout is not a completed public release; the [release gates](docs/releases/v0.9.0.md) track remaining validation. WebGL2 is required; Python desktop windows use QtWebEngine.
+
+## PRISM: scientific inspection and live telemetry
+
+Explore a surface alongside exact row/column profiles, color it by a separate scalar, and inspect continuous 3D trajectories. The optional Obsidian viewer shares camera controls, source identities and displayed-frame exports across JavaScript, React, Python hosts and offline HTML. Freeze inspection while bounded live ingestion continues; return to live when ready.
+
+Start with the [PRISM API and migration guide](docs/prism.md), [three interactive reference demos](examples/web/v09.html), [measured evidence](docs/benchmarks/v0.9.0.md), or [five-participant pilot packet](docs/pilot/v0.9.0/README.md). Existing `VesoraChart` defaults remain available. Experimental bounded 3D streams and A/B pins require the separate `@vesora/core/labs` entry; automatic adaptive detail is not included.
 
 ## New in v0.8: bounded live measurements
 
@@ -103,7 +109,7 @@ Open the URL printed by Vite to run Signal Studio. See the [React API](packages/
 Build portable packages with `npm run package:release`, then install the matching archives into another React project:
 
 ```bash
-npm install ./vesora-core-0.8.0.tgz ./vesora-react-0.8.0.tgz
+npm install ./vesora-core-0.9.0-rc.1.tgz ./vesora-react-0.9.0-rc.1.tgz
 ```
 
 React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HTML export explicitly includes all chart source rows and excludes React callbacks; use the ref handle's `exportPNG`, `exportHTML` and `resetView` methods. The pilot thresholds are proposed validation criteria, not completed user research or measured competitive advantages.
@@ -232,23 +238,23 @@ Python functions run in Python, and JavaScript functions run in JavaScript. Supp
 
 ## Get started
 
-Build the v0.8 packages from this checkout with Node.js 22.12+ and Python 3.10+:
+Build local v0.9 candidate packages from this checkout with Node.js 22.12+ and Python 3.10+:
 
 ```bash
 python -m pip install "setuptools>=77" wheel
 npm ci
 npm run build
-npm run package:release
+npm run package:release -- --candidate
 ```
 
-The result is `dist/release-v0.8.0`: a Python wheel, core and React npm tarballs, seven standalone demos, a provenance manifest and `SHA256SUMS.txt`. Packaging alone does not publish a release. The already published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for the previous feature set.
+The result is `dist/release-v0.9.0-rc.1`: a Python wheel, core and React npm tarballs, ten standalone demos, a provenance manifest and `SHA256SUMS.txt`. `--candidate` permits local review builds; publication requires a clean matching tag and passed gates. Packaging does not publish a release. The previously published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for its original feature set.
 
 ### Python: a plot in a few lines
 
 With Python 3.10+, install the wheel you built:
 
 ```bash
-python -m pip install ./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl
+python -m pip install ./dist/release-v0.9.0-rc.1/vesora-0.9.0rc1-py3-none-any.whl
 ```
 
 ```python
@@ -276,7 +282,7 @@ fig.show()
 Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
 
 ```bash
-python -m pip install "./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl[notebook]"
+python -m pip install "./dist/release-v0.9.0-rc.1/vesora-0.9.0rc1-py3-none-any.whl[notebook]"
 ```
 
 ### JavaScript / TypeScript: the same engine in your app
@@ -284,7 +290,7 @@ python -m pip install "./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl[noteb
 Copy the built tarball into your frontend project and install it:
 
 ```bash
-npm install ./vesora-core-0.8.0.tgz
+npm install ./vesora-core-0.9.0-rc.1.tgz
 ```
 
 Add a mount element to your HTML:
@@ -321,9 +327,9 @@ The core package includes TypeScript declarations and has **no runtime npm depen
 | Rendering | WebGL2 data drawing; Canvas2D text and annotations. | Multiple raster, vector and interactive backends. |
 | Interaction | Pan/zoom, shared 2D axes, hover and region selection, 3D orbit in the shared viewer. | Interactive figures, navigation tools and an event system. |
 | Dense data | Automatic scatter count aggregation, extrema-preserving line reduction and representation inspection. | Line simplification, marker subsampling and Agg path chunking are available. |
-| 3D | Regular-grid surfaces and 3D scatter with depth testing. | `mplot3d` supports a wider range of 3D plot types. |
+| 3D | Regular-grid surfaces, scalar colors, 3D scatter/trajectories, mixed panels and exact row/column slices. | `mplot3d` supports a wider range of 3D plot types. |
 | Export | PNG, including axes and labels; self-contained interactive HTML with bookmarks. | PNG, SVG, PDF and other formats, depending on backend. |
-| Maturity | v0.8 preview; bounded streaming, interval bands, shared-x inspection, explicit PNG sizing, React, themes and fixed 2D grids. | An established plotting library with extensive configuration and documentation. |
+| Maturity | v0.9 PRISM candidate; scientific inspection, bounded streaming and shared viewer, with explicit outstanding release gates. | An established plotting library with extensive configuration and documentation. |
 
 Choose Vesora when sharing one engine between Python and a browser application is central to your workflow. Prefer Matplotlib today when you need its broader plotting catalog, publication layout controls or vector export. Vesora does not implement the Matplotlib API, and this project makes **no unmeasured speedup claim** against it.
 
@@ -359,7 +365,7 @@ The Python adapter manages the local viewer connection. Numeric buffers retain t
 | In-memory adaptive representations, bounded numeric streaming and cancellable queries | Indexed disk data, tiles and additional streaming plot types |
 | Sized PNG export, readable typography, self-contained HTML and view bookmarks | SVG/PDF export and additional render backends |
 
-Scatter and general line queries can scan **O(n)** source rows; sorted numeric lines narrow the visible x interval. Workers copy source buffers and reuse immutable chunks when streaming. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, 3D panels, indexed out-of-core data, statistical/3D streaming and general mesh/volume rendering are outside this release. WebGPU is a future option to evaluate against measured bottlenecks.
+Scatter and general line queries can scan **O(n)** source rows; sorted numeric lines narrow the visible x interval. Workers copy source buffers and reuse immutable chunks when streaming. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, indexed out-of-core data, statistical streaming and general mesh/volume rendering remain outside this release. Bounded trajectory and rolling-surface experiments live in the separate Labs entry; automatic adaptive detail is excluded. WebGPU remains a future option to evaluate against measured bottlenecks.
 
 ## Develop and validate
 

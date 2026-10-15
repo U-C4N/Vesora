@@ -19,6 +19,7 @@ await build({
   external: ['react', 'react/jsx-runtime', '@vesora/core'],
 });
 await copyFile(`${root}/LICENSE`, `${root}/packages/react/LICENSE`);
+await build({entryPoints:[`${root}/packages/react/src/viewer.tsx`],outfile:`${output}/viewer.js`,bundle:true,format:'esm',target:'es2022',sourcemap:true,jsx:'automatic',external:['react','react/jsx-runtime','@vesora/core','@vesora/core/viewer']});
 await build({
   entryPoints: [`${root}/tests/fixtures/react/fixture.tsx`],
   outfile: `${root}/tests/fixtures/react/fixture.js`, bundle: true, format: 'esm', target: 'es2022', jsx: 'automatic',

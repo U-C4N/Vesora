@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs';
 import {resolve} from 'node:path';
 import assert from 'node:assert/strict';
 import {figure, subplots, PROTOCOL_VERSION} from '../packages/core/dist/index.js';
+import {releaseIdentity} from './release-identity.mjs';
 
 const python=process.env.VESORA_PYTHON??(existsSync('.venv/Scripts/python.exe')?resolve('.venv/Scripts/python.exe'):existsSync('.venv/bin/python')?resolve('.venv/bin/python'):'python');
 const code=`import json, base64
@@ -32,7 +33,7 @@ function normalize(f){
 }
 assert.deepEqual(normalize(py),normalize(js));assert.equal(result.snapshot.figure.protocolVersion,PROTOCOL_VERSION);
 const packageVersion=JSON.parse(execFileSync(process.execPath,['-p',"JSON.stringify(require('./packages/core/package.json'))"],{encoding:'utf8'})).version;
-assert.equal(result.version,packageVersion);
+assert.equal(result.version,releaseIdentity(packageVersion).python);
 js.close();py.close();
 const gridCode=`import json,base64
 import vesora as vs
@@ -268,4 +269,55 @@ for(let i=0;i<streamLayers.length;i++)for(const channel of ['x','y']){
   assert.equal(Buffer.from(entry.values.buffer,entry.values.byteOffset,entry.values.byteLength).toString('base64'),streamingResult.buffers[pythonSource],`Retained ${channel} bytes differ for curve ${i}`);
 }
 streaming.close();importedStream.close();
-console.log('Python and JavaScript produce equivalent v1–v6 scenes, retained three-curve streaming buffers/state, bands, inspection, presentation, linked groups, statistical defaults and package versions.');
+const scienceCode=`import json,base64
+import vesora as vs
+fig=vs.subplots(2,2,kinds=[['3d','2d'],['2d','2d']],title='PRISM parity',width=1000,height=700)
+left=fig.panel(0,0)
+surface=left.surface([10.,20.,30.,40.],[-1.,0.,1.],[[0.,1.,2.,3.],[4.,float('nan'),6.,7.],[8.,9.,10.,11.]],values=[[12.,13.,14.,15.],[16.,17.,18.,19.],[20.,21.,22.,23.]],shading='smooth',wireframe=True,colorbarLabel='Temperature / K')
+left.plot3d([10.,20.,float('nan'),40.],[-1.,0.,1.,1.],[0.,6.,8.,11.],values=[1.,2.,3.,4.],width=4,label='Path')
+left.set_equal_aspect().fit_to_data()
+column=fig.panel(0,1).slice(surface,axis='x',index=1,label='Column')
+row=fig.panel(1,0).slice(surface,axis='y',index=1,label='Row')
+surface.set_data(values=[[23.,22.,21.,20.],[19.,18.,17.,16.],[15.,14.,13.,12.]])
+column.set_index(3)
+row.set_index(2)
+curves=[fig.panel(1,1).plot([0.,1.],[float(j),float(j+1)],label='Channel '+str(j)).enable_streaming(max_points=4) for j in range(3)]
+fig.append_data_batch([(layer,{'x':[2.,3.,4.],'y':[float(j+2),float(j+3),float(j+4)]}) for j,layer in enumerate(curves)])
+before=fig._frozen_transfer()
+try:
+    fig.append_data_batch([(curves[0],{'x':[5.],'y':[5.]}),(curves[2],{'x':[5.],'y':[9.,10.]})])
+    raise AssertionError('Invalid final channel committed')
+except ValueError:
+    pass
+assert fig._frozen_transfer()==before
+fig.bookmark('Scientific view')
+s=fig.snapshot()
+print(json.dumps({'snapshot':s,'buffers':{d['id']:base64.b64encode(fig._data_bytes(d['id'],d['version'])).decode() for d in s['sources']},'states':[{k:v for k,v in fig._streams[layer.id].items() if k!='streamId'} for layer in curves]}))
+fig.close()
+`;
+const scienceResult=JSON.parse(execFileSync(python,['-X','utf8','-c',scienceCode],{env:{...process.env,PYTHONPATH:resolve('python')},encoding:'utf8'}));
+const science=subplots({rows:2,cols:2,kinds:[['3d','2d'],['2d','2d']],title:'PRISM parity',width:1000,height:700});
+const scienceLeft=science.panel(0,0);
+const surface=scienceLeft.surface([10,20,30,40],[-1,0,1],[[0,1,2,3],[4,NaN,6,7],[8,9,10,11]],{values:[[12,13,14,15],[16,17,18,19],[20,21,22,23]],shading:'smooth',wireframe:true,colorbarLabel:'Temperature / K'});
+scienceLeft.plot3d([10,20,NaN,40],[-1,0,1,1],[0,6,8,11],{values:[1,2,3,4],width:4,label:'Path'});
+scienceLeft.setEqualAspect().fitToData();
+const column=science.panel(0,1).slice(surface,{axis:'x',index:1,label:'Column'}),row=science.panel(1,0).slice(surface,{axis:'y',index:1,label:'Row'});
+surface.setData({color:[[23,22,21,20],[19,18,17,16],[15,14,13,12]]});column.setIndex(3);row.setIndex(2);
+const curves=Array.from({length:3},(_,j)=>science.panel(1,1).plot([0,1],[j,j+1],{label:`Channel ${j}`}).enableStreaming({maxPoints:4}));
+await science.appendDataBatch(curves.map((layer,j)=>({layer,data:{x:[2,3,4],y:[j+2,j+3,j+4]}})),{waitFor:'accepted'});
+const beforeScience=science.snapshot();
+await assert.rejects(science.appendDataBatch([{layer:curves[0],data:{x:[5],y:[5]}},{layer:curves[2],data:{x:[5],y:[9,10]}}],{waitFor:'accepted'}));
+assert.deepEqual(science.snapshot(),beforeScience);
+science.bookmark('Scientific view');
+const importedScience=figure();
+importedScience.applySnapshot(scienceResult.snapshot,new Map(Object.entries(scienceResult.buffers).map(([id,value])=>{const bytes=Buffer.from(value,'base64');return [id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)];})));
+function normalizeScience(fig){const scene=normalize(fig),ids=fig.spec.layers.map(layer=>layer.id);scene.slices=scene.slices.map(relation=>({...relation,sourceLayerId:ids.indexOf(relation.sourceLayerId),targetLayerId:ids.indexOf(relation.targetLayerId)}));return scene;}
+assert.equal(scienceResult.snapshot.figure.protocolVersion,7);
+assert.deepEqual(normalizeScience(importedScience),normalizeScience(science),'Protocol 7 mixed scenes, scalar data, exact slices and NaN gaps must agree');
+assert.deepEqual(curves.map(layer=>{const {streamId,...state}=science.getStreamingState(layer.id);return state;}),scienceResult.states,'Atomic retained sequence identity must agree across Python and JavaScript');
+for(let index=0;index<science.spec.layers.length;index++)for(const channel of Object.keys(science.spec.layers[index].data)){
+  const entry=science.registry.get(science.spec.layers[index].data[channel]),id=scienceResult.snapshot.figure.layers[index].data[channel];
+  assert.equal(Buffer.from(entry.values.buffer,entry.values.byteOffset,entry.values.byteLength).toString('base64'),scienceResult.buffers[id],`Protocol 7 source bytes differ at layer ${index}, channel ${channel}`);
+}
+science.close();importedScience.close();
+console.log('Python and JavaScript produce equivalent v1–v7 scenes, exact scientific source bytes, slices, scalar fields, atomic retained streams, statistical defaults and canonical release versions.');

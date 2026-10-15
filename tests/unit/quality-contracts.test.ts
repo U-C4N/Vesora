@@ -1,3 +1,4 @@
+import {SnapshotStore} from '../../packages/core/src/snapshot-store';
 import {describe, expect, it} from 'vitest';
 import {Figure} from '../../packages/core/src/figure';
 import {FigureView} from '../../packages/core/src/view';
@@ -90,7 +91,7 @@ describe('controlled PNG request contracts', () => {
       const figure=new Figure();let settle!:()=>void;
       const ready=new Promise<void>(resolve=>{settle=resolve;});
       const view=Object.create(FigureView.prototype);
-      Object.assign(view,{figure,exportQueue:ready,exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){}},completed:0,generation:0,disposed:false,dispose(){this.disposed=true;}});
+      Object.assign(view,{snapshotStore:new SnapshotStore(),retiredSnapshots:new Set(),frameCopies:new WeakMap(),figure,exportQueue:ready,exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){}},completed:0,generation:0,disposed:false,dispose(){this.disposed=true;}});
       (figure as any).view=view;
       const pending=figure.savefig({scale:2});
       figure[action]();
@@ -104,7 +105,7 @@ describe('controlled PNG request contracts', () => {
   it('bounds both PNG entry points before source capture and releases reservations on cancellation', async () => {
     const figure=new Figure();figure.plot([0,1],[2,3]);let settle!:()=>void,reads=0,clones=0;
     const blocked=new Promise<void>(resolve=>{settle=resolve;}),view=Object.create(FigureView.prototype);
-    Object.assign(view,{figure,exportQueue:blocked,exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){}}});
+    Object.assign(view,{snapshotStore:new SnapshotStore(),retiredSnapshots:new Set(),frameCopies:new WeakMap(),figure,exportQueue:blocked,exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){}}});
     const snapshot=figure.snapshot(),input=new Map<string,ArrayBuffer>();
     for(const [id,entry]of figure.registry.entries()){
       const values=entry.values,buffer=values.buffer.slice(values.byteOffset,values.byteOffset+values.byteLength) as ArrayBuffer;
@@ -124,7 +125,7 @@ describe('controlled PNG request contracts', () => {
   });
   it('releases a PNG reservation after snapshot validation fails',async()=>{
     const figure=new Figure(),view=Object.create(FigureView.prototype);
-    Object.assign(view,{figure,exportQueue:Promise.resolve(),exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){throw new Error('Raster budget exceeded');}}});
+    Object.assign(view,{snapshotStore:new SnapshotStore(),retiredSnapshots:new Set(),frameCopies:new WeakMap(),figure,exportQueue:Promise.resolve(),exportReservations:new Set(),width:800,height:520,dpr:1,renderer:{validateRasterSize(){throw new Error('Raster budget exceeded');}}});
     await expect(view.exportPNG()).rejects.toThrow('Raster budget exceeded');expect(view.exportReservations.size).toBe(0);figure.close();
   });
   it('keeps caller options isolated, accepts downscale and computes exact raster dimensions', () => {

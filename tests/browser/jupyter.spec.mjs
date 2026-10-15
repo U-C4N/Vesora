@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 test('real JupyterLab runs panels, statistics and linked cohorts through actual widget comms', async ({ page, request, browser }, testInfo) => {
   test.skip(process.env.VESORA_TEST_JUPYTER !== '1', 'Set VESORA_TEST_JUPYTER=1 and install jupyterlab + ipykernel to run the real notebook host');
   test.setTimeout(240_000);
+  page.setDefaultTimeout(15_000);
   const localPython = resolve(process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python');
   const python = process.env.VESORA_PYTHON ?? process.env.PYTHON ?? (existsSync(localPython) ? localPython : 'python');
   const jupyterData = testInfo.outputPath('jupyter-data');
@@ -228,16 +229,16 @@ curves = [bench.plot(array("d", range(count)), array("d", (curve_value(index, se
 bench.show()
 await bench.savefig_async("jupyter-benchmark-initial.png", timeout=45)
 for attempt in range(600):
-    if bench._widget._views and all(q.acknowledged == bench._widget.revision for q in bench._widget._views.values()):
+    if bench._widget._views and all(q.presented_revision == bench._widget.revision for q in bench._widget._views.values()):
         break
     await asyncio.sleep(.01)
-assert bench._widget._views and all(q.acknowledged == bench._widget.revision for q in bench._widget._views.values())
+assert bench._widget._views and all(q.presented_revision == bench._widget.revision for q in bench._widget._views.values())
 timings, pending = [None] * samples, []
 def collect_timings():
-    acknowledged = max((q.acknowledged or -1 for q in tuple(bench._widget._views.values())), default=-1)
+    presented = max((q.presented_revision if q.presented_revision is not None else -1 for q in tuple(bench._widget._views.values())), default=-1)
     completed = time.perf_counter()
     for index, begin, revision in pending:
-        if timings[index] is None and revision <= acknowledged:
+        if timings[index] is None and revision <= presented:
             timings[index] = (completed - begin) * 1000
 benchmark_start = time.perf_counter()
 for sample in range(samples):
@@ -254,23 +255,74 @@ for sample in range(samples):
 producer_duration = time.perf_counter() - benchmark_start
 deadline = time.perf_counter() + 30
 while any(value is None for value in timings):
-    assert time.perf_counter() < deadline, "Notebook ACK deadline exceeded"
+    assert time.perf_counter() < deadline, "Notebook presentation deadline exceeded"
     await asyncio.sleep(.001)
     collect_timings()
 duration = time.perf_counter() - benchmark_start
 ordered = sorted(timings)
-report = {"scenario":"Python append to notebook renderer ACK", "platform":platform.platform(), "python":platform.python_version(), "series":3, "retention_per_series":count, "batch_rows_per_series":batch_size, "samples":samples, "requested_hz":requested_hz, "observed_hz":samples/duration, "producer_duration_seconds":producer_duration, "duration_seconds":duration, "p50_ms":ordered[49], "p95_ms":ordered[94], "max_ms":ordered[-1], "latency_ms":timings, "retained_source_bytes":sum(source[0]["byteLength"] for source in bench._sources.values()), "scope":"Includes Python validation, notebook binary comms, JS append, worker planning, GPU draw and ACK; excludes initial construction and PNG."}
+report = {"scenario":"Python append to completed notebook live frame", "platform":platform.platform(), "python":platform.python_version(), "series":3, "retention_per_series":count, "batch_rows_per_series":batch_size, "samples":samples, "requested_hz":requested_hz, "observed_hz":samples/duration, "producer_duration_seconds":producer_duration, "duration_seconds":duration, "p50_ms":ordered[49], "p95_ms":ordered[94], "max_ms":ordered[-1], "latency_ms":timings, "retained_source_bytes":sum(source[0]["byteLength"] for source in bench._sources.values()), "scope":"Includes Python validation, notebook binary comms, JS append, worker planning, GPU draw and frame notification; excludes initial construction and PNG."}
 assert all(state["retained"] == count and state["nextSequence"] == count + samples * batch_size for state in bench._streams.values())
 Path("jupyter-streaming-benchmark.json").write_text(json.dumps(report, indent=2))
 print("VESORA_STREAM_BENCHMARK_READY")`,
     ];
     notebook.cells.push(...streamingCells.map((source,index)=>({cell_type:'code',id:`vesora-stream-${index}`,execution_count:null,metadata:{},source,outputs:[]})));
+    const scienceCells = [
+      `bench.close()
+science = vs.subplots(1, 3, kinds=[["3d", "2d", "2d"]], title="Notebook protocol 7", width=1100, height=500)
+surface = science.panel(0, 0).surface([[1., 2.], [3., 4.]], values=[[10., 20.], [30., 40.]], shading="smooth", wireframe=True)
+science.panel(0, 0).plot3d([0., 1.], [0., 1.], [0., 1.])
+section = science.panel(0, 1).slice(surface, axis="x", index=0)
+signal = science.panel(0, 2).plot([0., 1.], [2., 3.]).enable_streaming(max_points=3)
+science.show()
+await science.savefig_async("science-initial.png", timeout=45)
+peer = vs.subplots(1, 2, kinds=[["3d", "2d"]], title="Notebook scientific peer", width=900, height=420)
+peer.panel(0, 0).surface([[2., 3.], [4., 5.]], shading="smooth")
+peer_signal = peer.panel(0, 1).plot([0., 1.], [5., 6.]).enable_streaming(max_points=3)
+peer.show()
+await peer.savefig_async("science-peer-initial.png", timeout=45)
+peer_before = peer.snapshot()
+print("VESORA_SCIENCE_SHARED_READY")`,
+      `assert science.snapshot()["figure"]["slices"][0]["index"] == 1
+assert peer.snapshot() == peer_before
+assert all(q.frame and q.frame["mode"] == "live" for q in peer._widget._views.values())
+assert all(q.frame and q.frame["mode"] == "frozen" for q in science._widget._views.values())
+old_frame = next(iter(science._widget._views.values())).frame.copy()
+signal.append_data(x=[2., 3.], y=[4., 5.])
+for attempt in range(100):
+    if all(q.acknowledged == science._widget.revision for q in science._widget._views.values()):
+        break
+    await asyncio.sleep(.05)
+assert all(q.acknowledged == science._widget.revision and q.frame["revision"] == old_frame["revision"] and q.frame["snapshotId"] == old_frame["snapshotId"] for q in science._widget._views.values())
+assert science.snapshot()["figure"]["slices"][0]["index"] == 1
+science.save_html("science-accepted.html")
+await science.savefig_async("science-accepted.png", timeout=45)
+assert all(q.frame["mode"] == "frozen" for q in science._widget._views.values())
+print("VESORA_SCIENCE_FROZEN_ACCEPTED")`,
+      `for attempt in range(100):
+    if all(q.presented_revision == science._widget.revision for q in science._widget._views.values()):
+        break
+    await asyncio.sleep(.05)
+assert all(q.presented_revision == science._widget.revision for q in science._widget._views.values())
+assert list(science._layer_arrays(signal._spec())["x"]) == [1., 2., 3.]
+assert science.snapshot()["figure"]["slices"][0]["index"] == 1
+science.close()
+peer_signal.append_data(x=[2.], y=[7.])
+await peer.savefig_async("science-peer-survived.png", timeout=45)
+assert list(peer._layer_arrays(peer_signal._spec())["x"]) == [0., 1., 2.]
+assert not peer._widget._vesora_closed
+print("VESORA_SCIENCE_RESUMED_CLEANED")`,
+      `peer_widget = peer._widget
+peer.close()
+assert peer_widget._vesora_closed and not peer_widget._views
+print("VESORA_SCIENCE_PEER_CLEANED")`,
+    ];
+    notebook.cells.push(...scienceCells.map((source,index)=>({cell_type:'code',id:`vesora-science-${index}`,execution_count:null,metadata:{},source,outputs:[]})));
     const savedNotebook = await request.put(notebookURL, { headers, data: { type: 'notebook', format: 'json', content: notebook } });
     expect(savedNotebook.ok()).toBe(true);
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.goto(`${metadata.url}/lab/tree/vesora-host-test.ipynb?token=${encodeURIComponent(metadata.token)}`);
     const cells = page.locator('.jp-NotebookPanel .jp-CodeCell');
-    await expect(cells).toHaveCount(16, { timeout: 45_000 });
+    await expect(cells).toHaveCount(20, { timeout: 45_000 });
     await expect.poll(async () => {
       const response = await request.get(`${metadata.url}/api/kernels`, {headers});
       if (!response.ok()) return false;
@@ -366,20 +418,23 @@ print("VESORA_STREAM_BENCHMARK_READY")`,
     const marks = await linkedFigure.locator('canvas').first().evaluate(canvas => {
       const gl=canvas.getContext('webgl2'),pixels=new Uint8Array(canvas.width*canvas.height*4);
       gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
-      const groups=[];let group;
-      for(let x=0;x<Math.floor(canvas.width/3);x++){
-        let minY=Infinity,maxY=-Infinity;
-        for(let y=0;y<canvas.height;y++){
-          const i=(y*canvas.width+x)*4;
-          if(pixels[i]<100&&pixels[i+1]>120&&pixels[i+2]>180){const top=canvas.height-1-y;minY=Math.min(minY,top);maxY=Math.max(maxY,top);}
+      const box=canvas.getBoundingClientRect(),mask=new Uint8Array(canvas.width*canvas.height),groups=[];
+      for(let i=0;i<mask.length;i++)mask[i]=Number(pixels[i*4]<100&&pixels[i*4+1]>120&&pixels[i*4+2]>180);
+      // Connected marks stay distinct when responsive layout stacks the panels.
+      // Column projection merged points from multiple rows with histogram bars.
+      for(let seed=0;seed<mask.length;seed++)if(mask[seed]){
+        const queue=[seed],g={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};mask[seed]=0;
+        while(queue.length){const at=queue.pop(),x=at%canvas.width,y=Math.floor(at/canvas.width),top=canvas.height-1-y;
+          g.left=Math.min(g.left,x);g.right=Math.max(g.right,x);g.top=Math.min(g.top,top);g.bottom=Math.max(g.bottom,top);
+          for(const next of [x?at-1:-1,x+1<canvas.width?at+1:-1,y?at-canvas.width:-1,y+1<canvas.height?at+canvas.width:-1])
+            if(next>=0&&mask[next]){mask[next]=0;queue.push(next);}
         }
-        if(Number.isFinite(minY)){
-          if(!group){group={left:x,right:x,top:minY,bottom:maxY};groups.push(group);}
-          group.right=x;group.top=Math.min(group.top,minY);group.bottom=Math.max(group.bottom,maxY);
-        }else group=undefined;
+        const width=(g.right-g.left+1)*box.width/canvas.width,height=(g.bottom-g.top+1)*box.height/canvas.height;
+        if(width>=12&&width<=50&&height>=12&&height<=50)groups.push(g);
       }
-      const box=canvas.getBoundingClientRect();
-      return groups.map(g=>({left:g.left*box.width/canvas.width,right:g.right*box.width/canvas.width,
+      const stacked=box.height>621;
+      groups.sort((a,b)=>stacked?a.top-b.top:a.left-b.left);
+      return groups.slice(0,4).sort((a,b)=>a.left-b.left).map(g=>({left:g.left*box.width/canvas.width,right:g.right*box.width/canvas.width,
         top:g.top*box.height/canvas.height,bottom:g.bottom*box.height/canvas.height}));
     });
     expect(marks).toHaveLength(4);
@@ -466,6 +521,40 @@ print("VESORA_STREAM_BENCHMARK_READY")`,
     await writeFile(testInfo.outputPath('jupyter-streaming-benchmark.json'),JSON.stringify(benchmark,null,2));
     await testInfo.attach('jupyter-streaming-benchmark',{body:JSON.stringify(benchmark,null,2),contentType:'application/json'});
     console.log(`Jupyter streaming p50=${benchmark.p50_ms.toFixed(2)}ms p95=${benchmark.p95_ms.toFixed(2)}ms`);
+    await run(16, 'VESORA_SCIENCE_SHARED_READY');
+    await expect(page.locator('[data-vesora-viewer]')).toHaveCount(2);
+    const scienceViewer=page.locator('[data-vesora-viewer][aria-label="Notebook protocol 7"]');
+    const peerViewer=page.locator('[data-vesora-viewer][aria-label="Notebook scientific peer"]');
+    await expect(scienceViewer).toHaveCount(1);
+    await expect(peerViewer).toHaveCount(1);
+    const peerColor=await peerViewer.evaluate(node=>getComputedStyle(node).color);
+    await scienceViewer.getByRole('button',{name:'Light theme',exact:true}).click();
+    await expect(scienceViewer).toHaveAttribute('data-theme','light');
+    await expect(peerViewer).toHaveAttribute('data-theme','dark');
+    expect(await peerViewer.evaluate(node=>getComputedStyle(node).color)).toBe(peerColor);
+    expect(await scienceViewer.evaluate(node=>getComputedStyle(node).color)).not.toBe(peerColor);
+    await expect(scienceViewer.getByRole('button',{name:'Freeze view',exact:true})).toBeEnabled();
+    const scienceInspector=scienceViewer.locator('details').filter({has:page.locator('summary').filter({hasText:/^Inspector$/})});
+    if(!await scienceInspector.evaluate(node=>node.open))await scienceInspector.locator('summary').click();
+    const sliceInput=scienceViewer.getByRole('slider',{name:'Surface X slice',exact:true});
+    await sliceInput.fill('1');
+    await page.waitForTimeout(300);
+    const focusedFreeze=scienceViewer.getByRole('button',{name:'Freeze view',exact:true});
+    await focusedFreeze.focus();await page.keyboard.press('Space');
+    await expect(scienceViewer.getByRole('status')).toContainText('Frozen snapshot');
+    await expect(peerViewer.getByRole('status')).toHaveText('Live');
+    await sliceInput.fill('0');
+    await run(17, 'VESORA_SCIENCE_FROZEN_ACCEPTED');
+    await scienceViewer.getByRole('button',{name:'Return to live',exact:true}).click();
+    await expect(scienceViewer.getByRole('status')).toHaveText('Live');
+    await run(18, 'VESORA_SCIENCE_RESUMED_CLEANED');
+    await expect(scienceViewer).toHaveCount(0);
+    await expect(peerViewer).toHaveCount(1);
+    await expect(peerViewer.getByRole('status')).toHaveText('Live');
+    const peerPNG=await readFile(join(metadata.workspace,'science-peer-survived.png'));
+    expect(peerPNG.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))).toBe(true);
+    await run(19,'VESORA_SCIENCE_PEER_CLEANED');
+    await expect(page.locator('[data-vesora-viewer]')).toHaveCount(0);
     const offlineContext = await browser.newContext({offline:true});
     try {
       const offline = await offlineContext.newPage();
@@ -487,6 +576,17 @@ print("VESORA_STREAM_BENCHMARK_READY")`,
       expect(qualityPayload.snapshot.figure.hoverMode).toBe('x');
       expect(qualityPayload.snapshot.figure.layers.some(layer=>layer.kind==='band')).toBe(true);
       expect(qualityPayload.snapshot.figure.theme.tickFontSize).toBe(14);
+      await offline.goto(pathToFileURL(join(metadata.workspace,'science-accepted.html')).href);
+      await expect(offline.locator('#vesora-viewer')).toHaveAttribute('data-ready','ready');
+      await expect(offline.locator('[data-vesora-viewer]')).toHaveCount(1);
+      const sciencePayload=JSON.parse(await offline.locator('#vesora-payload').textContent());
+      expect(sciencePayload.snapshot.figure.protocolVersion).toBe(7);
+      expect(sciencePayload.snapshot.figure.slices[0].index).toBe(1);
+      expect(sciencePayload.capture.source).toBe('accepted');
+      expect(Number.isFinite(Date.parse(sciencePayload.capture.capturedAt))).toBe(true);
+      const offlineInspector=offline.locator('[data-vesora-viewer] details').filter({has:offline.locator('summary').filter({hasText:/^Inspector$/})});
+      if(!await offlineInspector.evaluate(node=>node.open))await offlineInspector.locator('summary').click();
+      await expect(offline.getByRole('slider',{name:'Surface X slice',exact:true})).toHaveValue('1');
     } finally {
       await offlineContext.close();
     }

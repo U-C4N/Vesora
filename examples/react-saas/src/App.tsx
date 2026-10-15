@@ -7,6 +7,7 @@ import type {AccountRow, DashboardData} from './api';
 import {Icon, MetricSparkline, SignalOrbit, VesoraMark} from './components/Visuals';
 import {CommandPalette} from './components/CommandPalette';
 import type {CommandAction} from './components/CommandPalette';
+import {version as packageVersion} from '../../../package.json';
 
 type Lens = 'revenue' | 'activeUsers' | 'expansion';
 const lenses: Array<{key: Lens; label: string; series: string; unit: string}> = [
@@ -161,7 +162,7 @@ export function App() {
       <nav className="rail-nav" aria-label="Dashboard">
         {[{id: 'overview', label: 'Overview', icon: 'grid' as const}, {id: 'plans', label: 'Plans', icon: 'chart' as const}, {id: 'accounts', label: 'Accounts', icon: 'users' as const}].map(item => <a key={item.id} href={`#${item.id}`} className={activeNav === item.id ? 'active' : ''} aria-current={activeNav === item.id ? 'location' : undefined} onClick={() => setActiveNav(item.id)}><Icon name={item.icon} size={22} /><span className="nav-text">{item.label}</span></a>)}
       </nav>
-      <div className="rail-bottom"><button type="button" className="rail-command" aria-label="Open quick actions" onClick={() => setCommandOpen(true)}><Icon name="command" size={22} /></button><span className="rail-version">v0.6</span><span className="avatar" title="Demo workspace owner">JD</span></div>
+      <div className="rail-bottom"><button type="button" className="rail-command" aria-label="Open quick actions" onClick={() => setCommandOpen(true)}><Icon name="command" size={22} /></button><span className="rail-version">v{packageVersion}</span><span className="avatar" title="Demo workspace owner">JD</span></div>
     </aside>
     <main id="overview" tabIndex={-1}>
       <header className="topbar">
@@ -207,7 +208,7 @@ export function App() {
         <div className="table-scroll"><table><thead><tr><th>Account</th><th>Plan</th><th>Team</th><th>Sessions</th><th className="numeric">Revenue</th><th><span className="sr-only">Details</span></th></tr></thead><tbody>{visibleAccounts.map(row => <tr key={row.id} data-selected={selected === row.id}><td><button className="account-name" type="button" onClick={() => selectAccount(row.id)}><span className={`account-avatar avatar-${row.plan.toLowerCase()}`}>{row.name[0]}</span><span><strong>{row.name}</strong><span>Workspace {row.id.split('-')[1].padStart(2, '0')}</span></span></button></td><td><span className={`plan-tag plan-${row.plan.toLowerCase()}`}>{row.plan}</span></td><td>{row.seats}<span className="cell-muted"> seats</span></td><td>{integer.format(row.sessions)}</td><td className="numeric">{currency.format(row.revenue)}</td><td><button className="row-action" id={`inspect-${row.id}`} type="button" aria-label={`Inspect ${row.name}`} onClick={() => selectAccount(row.id)}><Icon name="arrow" size={16} /></button></td></tr>)}</tbody></table>{!matchingAccounts.length && <div className="table-empty"><Icon name="search" size={26} /><strong>No accounts in this view.</strong><button type="button" onClick={() => {setQuery(''); choosePlan(null);}}>Clear filters</button></div>}</div>
         <div className="table-pagination"><span>{matchingAccounts.length ? `${safePage * 6 + 1}–${Math.min((safePage + 1) * 6, matchingAccounts.length)}` : '0'} <span className="cell-muted">of {matchingAccounts.length} accounts</span></span><div><button type="button" aria-label="Previous account page" disabled={safePage === 0} onClick={() => setPage(value => Math.max(0, value - 1))}><Icon name="chevron" className="rotate-right" size={14} /></button><span>{safePage + 1} / {pageCount}</span><button type="button" aria-label="Next account page" disabled={safePage + 1 >= pageCount} onClick={() => setPage(value => value + 1)}><Icon name="chevron" className="rotate-left" size={14} /></button></div></div>
       </section>
-      <footer><div className="footer-brand"><VesoraMark size={20} /><span>vesora <b>Signal Studio</b></span></div><span className="demo-notice">Synthetic demo data<span className="status-dot" />Updated snapshot #{data.revision}</span><details className="demo-controls"><summary>Demo controls<Icon name="chevron" size={12} /></summary><label><input type="checkbox" checked={fail} onChange={event => setFail(event.target.checked)} />Simulate API failure on next refresh</label><span>Local preview · v0.6 · MIT</span></details></footer>
+      <footer><div className="footer-brand"><VesoraMark size={20} /><span>vesora <b>Signal Studio</b></span></div><span className="demo-notice">Synthetic demo data<span className="status-dot" />Updated snapshot #{data.revision}</span><details className="demo-controls"><summary>Demo controls<Icon name="chevron" size={12} /></summary><label><input type="checkbox" checked={fail} onChange={event => setFail(event.target.checked)} />Simulate API failure on next refresh</label><span>Local preview · v{packageVersion} · MIT</span></details></footer>
     </main>
     <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} actions={actions} />
   </div>;

@@ -1,4 +1,6 @@
+import {numericReader} from './data';
 import type {DataRegistry} from './data';
+import {entryExtent} from './source-metadata';
 import {normalize, extent} from './scales';
 import {parseColor, colorMap} from './color';
 import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, BandResult, ViewSpec, Domain} from './types';
@@ -55,15 +57,16 @@ function clipLine(ax:number,ay:number,bx:number,by:number):[number,number,number
   return [...coordinates,low,high] as [number,number,number,number,number,number];
 }
 export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bounds, zDomain:Domain, view:ViewSpec, width:number,height:number,plan?:PointPlan|LineResult|BandResult):Geometry {
-  const x=registry.get(layer.data.x).values,y=registry.get(layer.data.y??layer.data.lower).values;
+  const xe=registry.get(layer.data.x),ye=registry.get(layer.data.y??layer.data.lower),xr=numericReader(xe),yr=numericReader(ye);
+  const x=xe.chunks?new Float64Array(0):xe.values,y=ye.chunks?new Float64Array(0):ye.values;
   const z=layer.data.z?registry.get(layer.data.z).values:undefined;
-  const scalar=layer.data.color?registry.get(layer.data.color).values:undefined;
+  const scalarEntry=layer.data.color?registry.get(layer.data.color):undefined,scalar=scalarEntry?numericReader(scalarEntry):undefined;
   const base=parseColor(layer.style.color,layer.style.opacity??1);
   // Avoid boxed number arrays and an additional full-size float32 conversion.
   // A per-layer cap bounds CPU and GPU geometry even for pathological topology.
   const vertexBudget=2_000_000;
   let capacity=1024,count=0,positions=new Float32Array(capacity*3),colors=new Float32Array(capacity*4);
-  const scalarDomain=layer.style.colorDomain??extent(scalar??z??new Float64Array([0,1]));
+  const scalarDomain=layer.style.colorDomain??(scalarEntry?entryExtent(scalarEntry,'linear')??[0,1]:extent(z??new Float64Array([0,1])));
   const nX=(v:number)=>normalize(v,bounds.x,view.xScale)*2-1;
   const nY=(v:number)=>normalize(v,bounds.y,view.yScale)*2-1;
   const nZ=(v:number)=>normalize(v,zDomain,view.zScale)*2-1;
@@ -81,7 +84,7 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
     const upper=registry.get(layer.data.upper).values;
     for(const segment of plan.segments)for(let j=1;j<segment.length;j++){
       const a=segment[j-1],b=segment[j];
-      let polygon:number[][]=[[nX(x[a]),nY(y[a])],[nX(x[b]),nY(y[b])],[nX(x[b]),nY(upper[b])],[nX(x[a]),nY(upper[a])]];
+      let polygon:number[][]=[[nX(xr.get(a)),nY(yr.get(a))],[nX(xr.get(b)),nY(yr.get(b))],[nX(xr.get(b)),nY(upper[b])],[nX(xr.get(a)),nY(upper[a])]];
       if(polygon.some(p=>!p.every(Number.isFinite)))continue;
       // Clip the paired envelope as one polygon before converting to float32.
       for(const [axis,edge,sign] of [[0,-1,1],[0,1,-1],[1,-1,1],[1,1,-1]]){
@@ -108,41 +111,71 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
   }else if(layer.kind==='line'&&plan?.kind==='line'){
     const half=(layer.style.width??1.5)/2;
     for(const segment of plan.segments)for(let j=1;j<segment.length;j++){
-      const a=segment[j-1],b=segment[j],clipped=clipLine(nX(x[a]),nY(y[a]),nX(x[b]),nY(y[b]));if(!clipped)continue;
-      if(scalar){let invalid=false;for(let i=a;i<=b;i++)if(!Number.isFinite(scalar[i])){invalid=true;break;}if(invalid)continue;}
+      const a=segment[j-1],b=segment[j],clipped=clipLine(nX(xr.get(a)),nY(yr.get(a)),nX(xr.get(b)),nY(yr.get(b)));if(!clipped)continue;
+      if(scalar){let invalid=false;for(let i=a;i<=b;i++)if(!Number.isFinite(scalar.get(i))){invalid=true;break;}if(invalid)continue;}
       const [x0,y0,x1,y1,t0,t1]=clipped;
       const dx=(x1-x0)*width/2,dy=(y1-y0)*height/2,len=Math.hypot(dx,dy);if(!len)continue;
       const ox=-dy/len*half*2/width,oy=dx/len*half*2/height;
-      const start=color(scalar?.[a]),end=color(scalar?.[b]);
+      const start=color(scalar?.get(a)),end=color(scalar?.get(b));
       const first=start.map((value,i)=>value+(end[i]-value)*t0),last=start.map((value,i)=>value+(end[i]-value)*t1);
       push(x0+ox,y0+oy,0,first);push(x0-ox,y0-oy,0,first);push(x1-ox,y1-oy,0,last);
       push(x0+ox,y0+oy,0,first);push(x1-ox,y1-oy,0,last);push(x1+ox,y1+oy,0,last);
     }
+  }else if(layer.kind==='line3d'){
+    const directions:number[]=[],sides:number[]=[],sources:number[]=[];
+    for(let i=1;i<xr.length;i++){
+      const a=i-1,b=i,p=[nX(xr.get(a)),nY(yr.get(a)),nZ(z![a])],q=[nX(xr.get(b)),nY(yr.get(b)),nZ(z![b])];
+      if(![...p,...q].every(Number.isFinite)||scalar&&(!Number.isFinite(scalar.get(a))||!Number.isFinite(scalar.get(b))))continue;
+      const direction=q.map((value,k)=>value-p[k]);if(!direction.some(value=>value!==0))continue;
+      if(direction.some(value=>!Number.isFinite(value)||Math.abs(value)>3.4028234663852886e38))throw new RangeError('3D line direction exceeds float32 coordinates. Narrow the data domain.');
+      for(const [end,side]of [[0,1],[0,-1],[1,-1],[0,1],[1,-1],[1,1]]){const v=end?q:p;push(v[0],v[1],v[2],color(scalar?.get(end?b:a)));directions.push(...direction);sides.push(side);}
+      sources.push(a);
+    }
+    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',lineDirections:Float32Array.from(directions),lineSides:Float32Array.from(sides),width:layer.style.width??1.5,sourceIndices:Uint32Array.from(sources)};
   }else if(layer.kind==='heatmap'){
     const xe=gridEdges(x,view.xScale),ye=gridEdges(y,view.yScale);
-    for(let r=0;r<y.length;r++)for(let c=0;c<x.length;c++){
-      const v=z![r*x.length+c];if(!Number.isFinite(v))continue;
+    for(let r=0;r<yr.length;r++)for(let c=0;c<xr.length;c++){
+      const v=z![r*xr.length+c];if(!Number.isFinite(v))continue;
       const x0=nX(xe[c]),x1=nX(xe[c+1]),y0=nY(ye[r]),y1=nY(ye[r+1]);
       if(x1< -1||x0>1||y1< -1||y0>1)continue;
       quad(Math.max(-1,x0),Math.max(-1,y0),Math.min(1,x1),Math.min(1,y1),color(v));
     }
   }else if(layer.kind==='surface'){
-    for(let r=0;r<y.length-1;r++)for(let c=0;c<x.length-1;c++){
-      const indices=[r*x.length+c,r*x.length+c+1,(r+1)*x.length+c+1,r*x.length+c,(r+1)*x.length+c+1,(r+1)*x.length+c];
+    const maximumIndices=(xr.length-1)*(yr.length-1)*6;
+    if(maximumIndices>6_000_000)throw new RangeError('Surface exceeds the renderer index budget of 6,000,000 indices');
+    const lookup=new Int32Array(z!.length).fill(-1),indexData=new Uint32Array(maximumIndices),sourceTriangles=new Uint32Array(maximumIndices/3);let indexCount=0;
+    const vertex=(i:number)=>{
+      if(lookup[i]<0){lookup[i]=count;push(nX(xr.get(i%xr.length)),nY(yr.get(Math.floor(i/xr.length))),nZ(z![i]),color(scalar?.get(i)??z![i]));}
+      return lookup[i];
+    };
+    for(let r=0;r<yr.length-1;r++)for(let c=0;c<xr.length-1;c++){
+      const indices=[r*xr.length+c,r*xr.length+c+1,(r+1)*xr.length+c+1,r*xr.length+c,(r+1)*xr.length+c+1,(r+1)*xr.length+c];
       for(let k=0;k<6;k+=3){
         const tri=indices.slice(k,k+3);
-        if(tri.some(i=>![nX(x[i%x.length]),nY(y[Math.floor(i/x.length)]),nZ(z![i])].every(Number.isFinite)))continue;
-        for(const i of tri)push(nX(x[i%x.length]),nY(y[Math.floor(i/x.length)]),nZ(z![i]),color(z![i]));
+        if(tri.some(i=>![nX(xr.get(i%xr.length)),nY(yr.get(Math.floor(i/xr.length))),nZ(z![i])].every(Number.isFinite)||scalar&&!Number.isFinite(scalar.get(i))))continue;
+        sourceTriangles[indexCount/3]=(r*(xr.length-1)+c)*2+k/3;
+        for(const i of tri)indexData[indexCount++]=vertex(i);
       }
     }
-  }else{
-    const indices=plan?.kind==='points'?plan.indices:undefined;
-    for(let k=0;k<(indices?.length??x.length);k++){
-      const i=indices?indices[k]:k;
-      const a=nX(x[i]),b=nY(y[i]),c=z?nZ(z[i]):0;
-      if(!Number.isFinite(a)||!Number.isFinite(b)||!Number.isFinite(c)||scalar&&!Number.isFinite(scalar[i]))continue;
-      push(a,b,c,color(scalar?.[i]));
+    const indices=indexData.subarray(0,indexCount);let normals:Float32Array|undefined,wireframeIndices:Uint32Array|undefined;
+    if(layer.style.shading==='smooth'){
+      normals=new Float32Array(count*3);
+      for(let i=0;i<indices.length;i+=3){const a=indices[i]*3,b=indices[i+1]*3,c=indices[i+2]*3,ux=positions[b]-positions[a],uy=positions[b+1]-positions[a+1],uz=positions[b+2]-positions[a+2],vx=positions[c]-positions[a],vy=positions[c+1]-positions[a+1],vz=positions[c+2]-positions[a+2],normal=[uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx];for(const at of [a,b,c])for(let k=0;k<3;k++)normals[at+k]+=normal[k];}
+      for(let i=0;i<normals.length;i+=3){const length=Math.hypot(normals[i],normals[i+1],normals[i+2]);if(length)for(let k=0;k<3;k++)normals[i+k]/=length;else normals[i+2]=1;}
     }
+    if(layer.style.wireframe){const edges=new Set<number>(),wire:number[]=[];for(let i=0;i<indices.length;i+=3)for(const [a,b]of [[indices[i],indices[i+1]],[indices[i+1],indices[i+2]],[indices[i+2],indices[i]]]){const key=Math.min(a,b)*count+Math.max(a,b);if(!edges.has(key)){edges.add(key);wire.push(a,b);}}wireframeIndices=Uint32Array.from(wire);}
+    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',indices,...(normals?{normals}:{}),...(wireframeIndices?{wireframeIndices}:{}),sourceIndices:sourceTriangles.subarray(0,indexCount/3)};
+  }else{
+    const sourceIndices:number[]=[];
+    const indices=plan?.kind==='points'?plan.indices:undefined;
+    for(let k=0;k<(indices?.length??xr.length);k++){
+      const i=indices?indices[k]:k;
+      const a=nX(xr.get(i)),b=nY(yr.get(i)),c=z?nZ(z[i]):0;
+      if(!Number.isFinite(a)||!Number.isFinite(b)||!Number.isFinite(c)||scalar&&!Number.isFinite(scalar.get(i)))continue;
+      push(a,b,c,color(scalar?.get(i)));
+      sourceIndices.push(i);
+    }
+    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'points',size:layer.style.size??5,sourceIndices:Uint32Array.from(sourceIndices)};
   }
-  return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:plan?.kind==='density'||layer.kind==='band'||layer.kind==='line'||layer.kind==='heatmap'||layer.kind==='surface'?'triangles':'points',size:layer.style.size??5};
+  return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',size:layer.style.size??5};
 }

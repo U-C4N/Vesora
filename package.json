@@ -1,7 +1,7 @@
 {
   "name": "vesora-workspace",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.9.0-rc.1",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -19,7 +19,7 @@
     "build:example": "npm run build --workspace vesora-react-saas-example",
     "capture:readme": "npm run build:example && node scripts/capture-readme.mjs",
     "test:browser": "playwright test",
-    "check": "npm run build && npm run typecheck && npm test && npm run test:react && npm run build:example",
+    "check": "npm run build && npm run typecheck && npm run test:release-contracts && npm test && npm run test:react && npm run build:example",
     "demo": "node scripts/serve.mjs",
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:panels": "node scripts/benchmark-panels.mjs",
@@ -30,9 +30,13 @@
     "package:release": "node scripts/package-release.mjs",
     "test:packages": "node scripts/verify-packages.mjs && node scripts/verify-react-consumers.mjs",
     "test:consumers": "node scripts/verify-react-consumers.mjs",
-    "publish:packages": "npm publish --workspace @vesora/core --access public --tag beta && npm publish --workspace @vesora/react --access public --tag beta",
+    "publish:packages": "node scripts/publish-release.mjs",
     "test:release": "node scripts/verify-release.mjs",
-    "benchmark:streaming": "node scripts/benchmark-v08.mjs"
+    "test:release-contracts": "node --test tests/scripts/release-validation.test.mjs tests/scripts/github-release.test.mjs",
+    "init:release-gates": "node scripts/init-release-gates.mjs",
+    "benchmark:streaming": "node scripts/benchmark-v08.mjs",
+    "verify:published": "node scripts/verify-published.mjs",
+    "benchmark:prism": "node scripts/benchmark-v09.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

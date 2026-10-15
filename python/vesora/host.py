@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 import threading
 import uuid
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 from .transport import TransferQueue, binary_packet
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from .figure import Figure
 
 ASSETS = Path(__file__).parent / "_assets"
+MAX_HELD_VIEW_SESSIONS = 32
 
 
 class LocalHost:
@@ -27,6 +29,8 @@ class LocalHost:
         self._runner: Any = None
         self._sockets: set[Any] = set()
         self._views: dict[Any, TransferQueue] = {}
+        self._view_ids: dict[Any, str] = {}
+        self._held_frames: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._started = threading.Event()
         self.ready = threading.Event()
         self._state_lock = threading.RLock()
@@ -158,6 +162,7 @@ class LocalHost:
         finally:
             self._sockets.discard(socket)
             self._views.pop(socket, None)
+            self._view_ids.pop(socket, None)
             if not self._sockets:
                 self.ready.clear()
                 self._fail_exports("Viewer disconnected during export")
@@ -167,29 +172,59 @@ class LocalHost:
         if not isinstance(message, dict):
             raise ValueError("Protocol message must be an object")
         kind = message.get("type")
-        if kind == "hello" and message.get("transportVersion") == 2 and socket is not None:
+        if kind == "hello" and message.get("transportVersion") in (2, 3) and socket is not None:
             with self.figure._lock, self._state_lock:
-                self._views[socket] = TransferQueue(self.figure._frozen_transfer, self._revision)
+                supported = message.get("supportedTransportVersions", [])
+                version = 3 if isinstance(supported, list) and 3 in supported else message["transportVersion"]
+                queue = TransferQueue(self.figure._frozen_transfer, self._revision, version)
+                view_id = message.get("viewId")
+                if version == 3 and isinstance(view_id, str) and 0 < len(view_id) <= 128:
+                    self._view_ids[socket] = view_id
+                    if "heldFrame" in message:
+                        queue.restore_frozen_frame(message["heldFrame"], self._held_frames.get(view_id))
+                self._views[socket] = queue
             self._schedule_outbound()
         elif kind in ("ack", "resync") and socket in self._views:
             with self._state_lock:
                 view = self._views[socket]
                 if kind == "resync":
                     view.resync()
-                elif view.acknowledge(message.get("transferId"), message.get("revision")) and message.get("revision") == self._revision:
+                elif view.acknowledge(message.get("transferId"), message.get("revision")) and view.transport_version == 2 and message.get("revision") == self._revision:
                     self.render_error = None
                     self.ready.set()
             self._schedule_outbound()
+        elif kind == "frame" and socket in self._views:
+            with self._state_lock:
+                view = self._views[socket]
+                if view.record_frame(message.get("revision"), message.get("frameId"), message.get("mode"), message.get("snapshotId")):
+                    view_id = self._view_ids.get(socket)
+                    if view_id is not None:
+                        if message.get("mode") == "frozen":
+                            self._held_frames[view_id] = dict(view.frame)
+                            self._held_frames.move_to_end(view_id)
+                            while len(self._held_frames) > MAX_HELD_VIEW_SESSIONS:
+                                self._held_frames.popitem(last=False)
+                        else:
+                            self._held_frames.pop(view_id, None)
+                    if message.get("mode") == "live" and message.get("revision") == self._revision:
+                        self.render_error = None
+                        self.ready.set()
         elif kind == "ready":
             with self._state_lock:
                 if message.get("revision") == self._revision:
                     self.render_error = None
                     self.ready.set()
         elif kind == "event":
-            if message.get("event") in ("viewchange", "selection", "click"):
+            if message.get("event") in ("viewchange", "selection", "click", "slicechange"):
                 with self.figure._lock, self._state_lock:
                     view = self._views.get(socket)
-                    if message.get("revision") != self._revision and not (view and view.accepts_events(message.get("revision"))):
+                    if view and view.transport_version == 3:
+                        if not view.accepts_events(message.get("revision"), message.get("frameId"), message.get("snapshotId")):
+                            return
+                        # Inspection owns a private view; it cannot rewrite live axes or cohorts.
+                        if view.frame and view.frame["mode"] == "frozen" and message.get("event") in ("viewchange", "selection", "slicechange"):
+                            return
+                    elif message.get("revision") != self._revision and not (view and view.accepts_events(message.get("revision"))):
                         return
                     self.figure._emit(message["event"], message.get("payload"))
                 return
@@ -352,6 +387,8 @@ class LocalHost:
         if self._closed:
             return
         self._closed = True
+        self._held_frames.clear()
+        self._view_ids.clear()
         if self.publish in self.figure._listeners:
             self.figure._listeners.remove(self.publish)
         self._fail_exports("Figure closed during export")

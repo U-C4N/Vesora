@@ -2,6 +2,7 @@ import {StrictMode, useMemo, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {VesoraChart} from '@vesora/react';
 import type {ChartInteraction, ChartType, ChartXInteraction, ExportPNGOptions, VesoraChartHandle} from '@vesora/react';
+import type {AppendOptions, ExportHTMLOptions} from '@vesora/core';
 
 interface Row {id: string; timestamp: number; revenue: number; expense: number | null; lower: number; upper: number}
 const initial: Row[] = [
@@ -27,21 +28,29 @@ function Fixture() {
   const [selection, setSelection] = useState(0);
   const [lastError, setLastError] = useState('');
   const [band, setBand] = useState(quality);
+  const [alternateSchema, setAlternateSchema] = useState(false);
   const [xHover, setXHover] = useState<ChartXInteraction<Row> | null>(null);
-  const displayedSeries = useMemo(() => series.map(item => item.key === 'revenue' && type === 'line' && band ? {...item, band: {lowerKey: 'lower' as const, upperKey: 'upper' as const}} : item), [band, type]);
+  const displayedSeries = useMemo(() => alternateSchema ? [{key:'expense' as const,label:'New expense',color:'#dc2626'}] : series.map(item => item.key === 'revenue' && type === 'line' && band ? {...item, band: {lowerKey: 'lower' as const, upperKey: 'upper' as const}} : item), [alternateSchema,band,type]);
   const chart = useRef<VesoraChartHandle<Row>>(null);
+  const lastClick = useRef<ChartInteraction<Row> | null>(null);
   (window as unknown as {reactFixture: object}).reactFixture = {
-    exportHTML: () => chart.current!.exportHTML(),
+    exportHTML: (options?:ExportHTMLOptions) => chart.current!.exportHTML(options),
     exportPNG: async (options?: ExportPNGOptions) => (await chart.current!.exportPNG(options)).size,
     exportPNGDimensions: async (options?: ExportPNGOptions) => {
       const blob = await chart.current!.exportPNG(options), bitmap = await createImageBitmap(blob);
       const size = {width: bitmap.width, height: bitmap.height}; bitmap.close(); return size;
     },
     lastXHover: () => xHover,
-    appendRows: (rows: Row[]) => chart.current!.appendRows(rows),
+    lastClick: () => lastClick.current,
+    replaceData: (rows:Row[]) => setData(rows),
+    replaceSchema: () => setAlternateSchema(true),
+    freezeInspection: () => chart.current!.freezeInspection(),
+    resumeLive: () => chart.current!.resumeLive(),
+    getInspectionState: () => chart.current!.getInspectionState(),
+    appendRows: (rows: Row[],options?:AppendOptions) => chart.current!.appendRows(rows,options),
     reset: () => chart.current!.resetView(),
   };
-  const click = (value: ChartInteraction<Row>) => setClicked(value.row?.id ?? '');
+  const click = (value: ChartInteraction<Row>) => {lastClick.current=value;setClicked(value.row?.id ?? '');};
   return <>
     <div>
       <button onClick={() => setData(previous => previous.map(row => ({...row, revenue: row.revenue + 5})))}>Refresh data</button>
@@ -56,7 +65,7 @@ function Fixture() {
       {quality && <button onClick={() => setBand(previous => !previous)}>Toggle band</button>}
     </div>
     <div id="chart">{mounted && <VesoraChart ref={chart} type={type} data={data} xKey="timestamp" series={displayedSeries} title="Revenue trend" theme={theme} height={300}
-      xAxis={xAxis} yAxis={yAxis} loading={loading} error={error}
+      xAxis={xAxis} yAxis={alternateSchema?{format:'percent'}:yAxis} loading={loading} error={error}
       streaming={streaming ? {maxPoints: 3} : undefined}
       onClick={click} onSelection={value => setSelection(value.count)} onError={value => setLastError(value.message)}
       hoverMode={(quality || streaming) && type === 'line' ? 'x' : 'nearest'} onXHover={setXHover}

@@ -190,7 +190,8 @@ def test_sync_savefig_and_qt_forward_only_explicit_options(tmp_path, monkeypatch
     monkeypatch.setattr(qt, "_ensure_window", lambda *_args, **_kwargs: None)
     fig.savefig(tmp_path / "explicit.png", width=800, height=600, scale=2)
     fig.savefig(tmp_path / "default.png")
-    assert calls == [{"width": 800, "height": 600, "scale": 2}, {}]
+    assert all(call["_frozen"][0] == fig.snapshot() for call in calls)
+    assert [{key: value for key, value in call.items() if key != "_frozen"} for call in calls] == [{"width": 800, "height": 600, "scale": 2}, {}]
     assert (tmp_path / "explicit.png").read_bytes() == b"PNG fixture"
     fig._host = None
 

@@ -1,18 +1,18 @@
 # @vesora/core
 
-A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; fixed 2D grids with shared axes; scientific text and reference lines; and single-panel 3D surfaces and scatter. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
+A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; mixed 2D/3D grids; scientific text and reference lines; and 3D surfaces, lines and scatter with source-aware inspection. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
 
-**0.7 developer preview, MIT licensed:** the API is evolving. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative SaaS charts.
+**v0.9.0-rc.1 PRISM candidate, MIT licensed:** this checkout is not a completed public release. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative charts or an application-owned scientific viewer.
 
 ## Installation
 
-From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). Copy `dist/release-v0.8.0/vesora-core-0.8.0.tgz` into your frontend project:
+From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v0.9.0-rc.1/vesora-core-0.9.0-rc.1.tgz` into your frontend project:
 
 ```bash
-npm install ./vesora-core-0.8.0.tgz
+npm install ./vesora-core-0.9.0-rc.1.tgz
 ```
 
-Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [v0.8 overview](../../docs/releases/v0.8.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication.
+Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [PRISM release gates](../../docs/releases/v0.9.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication. A publishable build requires a clean source commit and matching release tag.
 
 ## Match your application theme and metrics
 
@@ -95,7 +95,7 @@ downloadHTML(fig, 'comparison.html');
 
 `subplots` returns a `Figure`; panel indices are zero-based. `shareX` and `shareY` default to `false`; when enabled, the corresponding scale and limits are shared by all panels. Labels stay independent. The figure owns one WebGL context, data registry and worker. Mount the figure to show it in a page; HTML export does not require mounting.
 
-Panel methods include `plot`, `fillBetween`, `scatter`, `heatmap`, `hist`, `bar`, `barh`, `boxplot`, `setTitle`, `setView`, `text`, `axhline`, and `axvline`. Annotation handles support flattened `update` options and `remove()`. Grid shape is fixed; 3D panels are not supported. Explicit linked observation selection is available for two numeric scatters and one count histogram. Existing figure plotting and axis methods address the main panel.
+Panel methods include `plot`, `fillBetween`, `scatter`, `heatmap`, `hist`, `bar`, `barh`, `boxplot`, `setTitle`, `setView`, `text`, `axhline`, and `axvline`. Annotation handles support flattened `update` options and `remove()`. Grid shape is fixed; use `kinds` to declare mixed 2D/3D panels, with `surface`, `scatter3d`, `plot3d` and exact row/column `slice` operations. Explicit linked observation selection is available for two numeric scatters and one count histogram. Existing figure plotting and axis methods address the main panel. See the [PRISM guide](../../docs/prism.md) for the optional viewer and inspection controls.
 
 ## Follow the same observations
 
@@ -135,7 +135,7 @@ downloadHTML(fig, 'measurements.html'); // Browser download.
 
 The file embeds the engine, worker, and original source data. It opens offline directly from disk and includes bookmarks, reset, PNG download, and a representation inspector. In a grid, bookmarks restore every panel view and PNG captures the whole layout. Bookmarks do not capture historical annotations, styles or data. The file does not include application callbacks or live connections. `removeBookmark(name)` removes a saved view. Reusing a bookmark name updates it in place.
 
-The v0.8 engine accepts scene protocols 1–6. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, links v4 and base presentation extensions v5. Bands, explicit hover mode, role typography and colorbar labels use v6. Export-size options and streaming runtime metadata do not change scene protocol. HTML embeds its matching runtime and a static snapshot of retained source values. The package continues to have no runtime npm dependencies.
+The v0.9 engine accepts scene protocols 1–7. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, links v4 and base presentation extensions v5. Bands, explicit hover mode, role typography and colorbar labels use v6. Mixed scientific scenes, 3D presentation/slices and displayed inspection metadata use v7. Streaming transport versions remain separate from scene protocols. HTML embeds its matching runtime and a static snapshot of retained source values. The package continues to have no runtime npm dependencies.
 
 ## Append live measurements
 

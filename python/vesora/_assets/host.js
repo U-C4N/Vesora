@@ -1,20 +1,49 @@
 import { figure, Layer, decodeData } from '/assets/index.js';
+import { mountViewer } from '/assets/viewer.js';
 
 const token=new URL(location.href).searchParams.get('token');
 const status=document.getElementById('status');
 const chart=document.getElementById('chart');
 const fig=figure();
+const viewId=globalThis.crypto?.randomUUID?.()??`view-${Date.now()}-${Math.random()}`;
 window.vesoraFigure=fig;
 let socket, generation=0, mounted=false, reconnects=0, controller;
 let buffers=new Map();
 let applying=Promise.resolve();
 let currentRevision=0, renderFailure=null, applyingView=true;
-let binaryMode=false;
+let binaryMode=false,transportVersion=2;
+const viewerOptions={preserveTheme:true,theme:'dark',live:false,exportHTML:true};
+let viewer;
+fig.setInspectionEnabled(false);
+const revisions=new Map();
+let displayedHostRevision,pendingCoreRevision;
+const trimRevisions=()=>{
+  const displayed=fig.getInspectionState().displayedRevision,keys=[...revisions.keys()];
+  const keep=new Set([keys.at(-1),keys.filter(key=>key<=displayed).at(-1),keys.filter(key=>pendingCoreRevision!==undefined&&key<=pendingCoreRevision).at(-1)]);
+  for(const key of keys)if(!keep.has(key))revisions.delete(key);
+};
+const rememberRevision=revision=>{
+  revisions.set(fig.getInspectionState().acceptedRevision,revision);
+  trimRevisions();
+};
+const frameMetadata=()=>{
+  const state=fig.getInspectionState();let covered;
+  for(const [core,host]of revisions)if(core<=state.displayedRevision)covered=host;
+  if(covered!==undefined)displayedHostRevision=covered;
+  return {...state,revision:displayedHostRevision};
+};
 const endpoint=(path)=>`${path}${path.includes('?')?'&':'?'}token=${encodeURIComponent(token??'')}`;
 const send=(message)=>{if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));};
-for(const event of ['selection','click','viewchange','representation','error'])fig.on(event,payload=>{
+const reportFrame=()=>{if(transportVersion!==3)return;const state=frameMetadata();if(state.revision===undefined)return;send({type:'frame',revision:state.revision,frameId:state.frameId,mode:state.mode,snapshotId:state.snapshotId});};
+fig.on('frame',reportFrame);fig.on('inspectionchange',reportFrame);
+fig.on('framepending',state=>{pendingCoreRevision=state.displayedRevision;trimRevisions();});
+for(const event of ['selection','click','viewchange','slicechange','representation','error'])fig.on(event,payload=>{
   if(event==='viewchange'&&applyingView)return;
-  send({type:'event',event,payload,revision:currentRevision});
+  const frame=transportVersion===3&&event!=='error'?frameMetadata():undefined;
+  // Linked selection can be emitted after draw/commit but before the frame hook.
+  // Establish that completed frame's ownership before forwarding its event.
+  if(frame)reportFrame();
+  send({type:'event',event,payload,revision:frame?.revision??currentRevision,...(frame?{frameId:frame.frameId,snapshotId:frame.snapshotId}:{})});
 });
 async function apply(snapshot,revision=0){
   renderFailure=null;applyingView=true;chart.style.pointerEvents='none';
@@ -33,7 +62,7 @@ async function apply(snapshot,revision=0){
     }
     if(version!==generation)return;
     fig.applySnapshot(snapshot,new Map([...next].map(([id,data])=>[id,data.buffer])));buffers=next;currentRevision=revision;
-    if(!mounted){fig.mount(chart);mounted=true;}
+    if(!mounted){viewer=mountViewer(fig,chart,viewerOptions);mounted=true;}
     await fig.ready();if(version!==generation)return;
     applyingView=false;chart.style.pointerEvents='';
     status.textContent='';document.title=snapshot.figure.title||'Vesora';send({type:'ready',revision});
@@ -57,7 +86,7 @@ function unpack(packet){
   return {header,parts};
 }
 async function applyTransfer(header,parts){
-  binaryMode=true;const version=++generation;controller?.abort();renderFailure=null;
+  binaryMode=true;transportVersion=header.transportVersion===3?3:2;viewerOptions.live=transportVersion===3;fig.setInspectionEnabled(transportVersion===3);const version=++generation;controller?.abort();renderFailure=null;
   try{
     if(header.type==='stream-snapshot'){
       applyingView=true;chart.style.pointerEvents='none';
@@ -65,13 +94,23 @@ async function applyTransfer(header,parts){
       currentRevision=header.revision;
       fig.applySnapshot(header.snapshot,new Map(header.snapshot.sources.map((source,i)=>[source.id,parts[i]])));
       fig.restoreStreaming(header.streams??{});
-      if(!mounted){fig.mount(chart);mounted=true;}
-      await fig.ready();
+      if(!mounted){viewer=mountViewer(fig,chart,viewerOptions);mounted=true;}
+      rememberRevision(header.revision);
+      if(transportVersion===2)await fig.ready();
     }else{
       if(header.baseRevision!==currentRevision)throw new Error('Transfer revision mismatch');
       const versions=new Map();
       // Check the complete packet before committing its first append.
-      const prepared=header.updates.map(update=>{
+      const transactions=transportVersion===3?header.transactions:header.updates.map(update=>({revision:header.revision,updates:[update]}));
+      if(!Array.isArray(transactions))throw new Error('Invalid append transactions');
+      let transactionRevision=header.baseRevision;
+      const prepared=transactions.map(transaction=>{
+        if(!Array.isArray(transaction.updates)||!transaction.updates.length)throw new Error('Invalid append transaction');
+        if(transportVersion===3&&(!Number.isSafeInteger(transaction.revision)||transaction.revision<=transactionRevision||transaction.revision>header.revision))throw new Error('Invalid transaction revision');
+        transactionRevision=transaction.revision;
+        const seen=new Set();
+        return {revision:transaction.revision,updates:transaction.updates.map(update=>{
+        if(seen.has(update.layerId))throw new Error('Duplicate layer in append transaction');seen.add(update.layerId);
         const layer=new Layer(fig,update.layerId),channels=Object.keys(layer.spec.data);
         const state=fig.getStreamingState(update.layerId);
         if(!state||state.streamId!==update.state.streamId)throw new Error('Stream epoch mismatch');
@@ -88,17 +127,21 @@ async function applyTransfer(header,parts){
         }
         if(channels.some(channel=>data[channel].length!==data.x.length))throw new Error('Append channel lengths differ');
         return {layer,data};
+        })};
       });
+      if(transportVersion===3&&transactionRevision!==header.revision)throw new Error('Incomplete append transaction revisions');
       const pending=[];
-      for(const update of prepared){
-        pending.push(fig.appendDataBatch([update]));
+      for(const transaction of prepared){
+        if(transportVersion===3){await fig.appendDataBatch(transaction.updates,{waitFor:'accepted'});rememberRevision(transaction.revision);}
+        else pending.push(fig.appendDataBatch(transaction.updates));
         if(pending.length===32){await Promise.all(pending);pending.length=0;}
       }
       await Promise.all(pending);
     }
     if(version!==generation)return;
-    currentRevision=header.revision;applyingView=false;chart.style.pointerEvents='';status.textContent='';
+    currentRevision=header.revision;applyingView=false;chart.style.pointerEvents='';status.textContent=header.inspectionRegistration==='unrecognized'?'The frozen view remains available locally. Return to live to restore Python callbacks.':'';
     send({type:'ack',transferId:header.transferId,revision:header.revision});
+    reportFrame();
   }catch(error){
     if(version!==generation)return;
     if(header.type==='stream-snapshot'){
@@ -122,7 +165,7 @@ async function exportSnapshot(header,parts){
 function connect(){
   socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${endpoint('/ws')}`);
   socket.binaryType='arraybuffer';
-  socket.onopen=()=>{reconnects=0;send({type:'hello',transportVersion:2});};
+  socket.onopen=()=>{reconnects=0;const held=transportVersion===3?frameMetadata():undefined;send({type:'hello',transportVersion:2,supportedTransportVersions:[2,3],viewId,...(held?.mode==='frozen'&&held.revision!==undefined?{heldFrame:{revision:held.revision,frameId:held.frameId,snapshotId:held.snapshotId}}:{})});};
   socket.onmessage=event=>{
     if(event.data instanceof ArrayBuffer){
       try{const {header,parts}=unpack(event.data);if(header.type==='stream-export')void exportSnapshot(header,parts);else applying=applyTransfer(header,parts);}
@@ -135,5 +178,5 @@ function connect(){
   socket.onclose=()=>{status.textContent='Python connection closed.';if(reconnects++<3)setTimeout(connect,1000*reconnects);};
   socket.onerror=()=>{status.textContent='Unable to connect to the Python figure.';};
 }
-window.addEventListener('beforeunload',()=>{controller?.abort();socket?.close();fig.close();});
+window.addEventListener('beforeunload',()=>{controller?.abort();socket?.close();viewer?.dispose();fig.close();});
 connect();

@@ -1,6 +1,6 @@
 {
   "name": "@vesora/core",
-  "version": "0.8.0",
+  "version": "0.9.0-rc.1",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -23,7 +23,15 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./worker": "./dist/worker.js"
+    "./worker": "./dist/worker.js",
+    "./viewer": {
+      "types": "./dist/viewer.d.ts",
+      "import": "./dist/viewer.js"
+    },
+    "./labs": {
+      "types": "./dist/labs.d.ts",
+      "import": "./dist/labs.js"
+    }
   },
   "files": [
     "dist"

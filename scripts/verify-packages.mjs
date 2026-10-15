@@ -1,9 +1,12 @@
+import {releaseIdentity} from './release-identity.mjs';
+import {loadRelease} from './release-validation.mjs';
 // Validate release archives as installed consumers, outside the checkout.
 // Usage: node scripts/verify-packages.mjs [release-directory]
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -13,6 +16,7 @@ import { chromium } from '@playwright/test';
 const checkout = fileURLToPath(new URL('../', import.meta.url));
 const packageVersion = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8')).version;
 const archiveDirectory = resolve(process.argv[2] ?? join(checkout, 'dist', `release-v${packageVersion}`));
+const release = await loadRelease(archiveDirectory,{packagesOnly:true});
 const environment = { ...process.env };
 for (const name of ['PYTHONPATH', 'PYTHONHOME', 'NODE_PATH', 'NODE_OPTIONS']) delete environment[name];
 let workspace;
@@ -189,6 +193,111 @@ async function verifyQualityHTML(browser, name, path, outputDirectory) {
   } finally {await context.close();}
 }
 
+async function verifyScienceHTML(browser, name, path, outputDirectory, {source = 'accepted', sliceIndex = 1} = {}) {
+  const context = await browser.newContext({offline: true, acceptDownloads: true, viewport: {width: 1400, height: 850}});
+  const page = await context.newPage(), errors = [], network = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => {if (/^https?:/i.test(request.url())) network.push(request.url());});
+  try {
+    await page.goto(pathToFileURL(path).href);
+    await page.waitForSelector('#vesora-viewer[data-ready="ready"]', {timeout: 45_000});
+    const payload = JSON.parse(await page.locator('#vesora-payload').textContent()), scene = payload.snapshot.figure;
+    assert.equal(scene.protocolVersion, 7);
+    assert.equal(payload.capture.source, source);
+    assert.ok(Number.isFinite(Date.parse(payload.capture.capturedAt)), 'Missing capture timestamp');
+    assert.equal(scene.view.kind, '3d');assert.equal(scene.view.equalAspect, true);
+    assert.equal(scene.panels[1].view.kind, '2d');assert.equal(scene.panels[2].view.kind, '2d');
+    assert.equal(scene.slices[0].index, sliceIndex);
+    const surface = scene.layers.find(layer => layer.kind === 'surface');
+    assert.equal(surface.style.shading, 'smooth');assert.equal(surface.style.wireframe, true);
+    assert.deepEqual(payload.snapshot.sources.find(item => item.id === surface.data.color).shape, [2, 2]);
+    assert.ok(scene.layers.some(layer => layer.kind === 'line3d'));
+    assert.equal(await page.locator('[data-vesora-viewer]').count(), 1);
+    assert.equal(await page.locator('.vv-slices input').inputValue(), String(sliceIndex));
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', {name: 'Download PNG', exact: true}).click(),
+    ]);
+    const png = join(outputDirectory, `${name}-science.png`);
+    await download.saveAs(png);assert.equal(await download.failure(), null);
+    assert.ok((await readFile(png)).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+    await page.screenshot({path: join(outputDirectory, `${name}-science-viewer.png`), fullPage: true});
+    assert.deepEqual(errors, []);assert.deepEqual(network, []);
+    console.log(`${name}: installed protocol 7, mixed panels/scalar surface/slice, shared viewer and offline PNG passed.`);
+    return {html: path, png, capture: payload.capture};
+  } finally {await context.close();}
+}
+
+// Serve only the installed package's four browser modules. No checkout source or
+// dependency fallback can accidentally satisfy this consumer's imports.
+async function verifyFrozenConsumer(browser, npmDirectory, outputDirectory) {
+  const assets = new Map([['/', Buffer.from('<!doctype html><html><body><div id="chart" style="width:1300px"></div></body></html>')]]);
+  for (const name of ['index', 'worker', 'viewer', 'labs']) assets.set(`/${name}.js`, await readFile(join(npmDirectory, 'node_modules/@vesora/core/dist', `${name}.js`)));
+  const server = createServer((request, response) => {
+    const path = new URL(request.url, 'http://127.0.0.1').pathname, body = assets.get(path);
+    response.writeHead(body ? 200 : 404, {
+      'Content-Type': path === '/' ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8',
+      // Keep this isolated consumer restricted to its installed modules even on
+      // hosts whose HTTP scanners inject third-party scripts into local HTML.
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'",
+    });
+    response.end(body ?? 'Not found');
+  });
+  await new Promise((resolve, reject) => {server.once('error', reject);server.listen(0, '127.0.0.1', resolve);});
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const context = await browser.newContext({viewport: {width: 1400, height: 850}});
+  // Deliver the empty fixture document verbatim. Local HTTP scanners can rewrite
+  // HTML (including its CSP) before Chromium sees it; that is not package code.
+  // Runtime/worker modules still come from the installed-package HTTP server.
+  await context.route(origin + '/', route => route.fulfill({status: 200,
+    contentType: 'text/html; charset=utf-8', body: assets.get('/'),
+    headers: {'Content-Security-Policy': "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'"},
+  }));
+  const page = await context.newPage(), errors = [], externalRequests = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => {if (/^https?:/i.test(request.url()) && !request.url().startsWith(origin + '/')) externalRequests.push(request.url());});
+  try {
+    await page.goto(origin);
+    const result = await page.evaluate(async () => {
+      const core = await import('/index.js'), {mountViewer} = await import('/viewer.js'), {createABPins} = await import('/labs.js');
+      const fig = core.subplots({rows: 1, cols: 3, kinds: [['3d', '2d', '2d']], width: 1100, height: 500, title: 'Installed frozen scientific consumer'});
+      const surface = fig.panel(0, 0).surface([0, 1], [0, 1], [[1, 2], [3, 4]], {values: [[10, 20], [30, 40]], shading: 'smooth', wireframe: true});
+      fig.panel(0, 0).plot3d([0, 1], [0, 1], [1, 4]);fig.panel(0, 0).setEqualAspect();
+      const slice = fig.panel(0, 1).slice(surface, {axis: 'x', index: 1});
+      const a = fig.panel(0, 2).plot([0, 1], [10, 11]).enableStreaming({maxPoints: 3});
+      const b = fig.panel(0, 2).plot([0, 1], [20, 21]).enableStreaming({maxPoints: 3});
+      const viewer = mountViewer(fig, document.querySelector('#chart'), {preserveTheme: true}), pins = createABPins(fig);
+      try {
+        await fig.ready();const frozen = fig.freezeInspection();pins.pin('A');
+        await fig.appendDataBatch([{layer: a, data: {x: [2, 3, 4], y: [12, 13, 14]}}, {layer: b, data: {x: [2, 3, 4], y: [22, 23, 24]}}], {waitFor: 'accepted'});
+        fig.setInspectionSlice(slice.id, 0);await fig.ready({target: 'displayed'});pins.pin('B');
+        const lease = fig.captureExport('displayed');
+        const shown = Array.from(lease.registry.get(a.spec.data.x).values);lease.release();
+        const canonicalIndex = fig.snapshot().figure.slices[0].index, held = fig.getInspectionState();
+        const html = core.toHTML(fig, {source: 'displayed'}), pendingPNG = fig.savefig({source: 'displayed', width: 1100, height: 500, scale: 1});
+        const pinIndices = [pins.get('A').snapshot.figure.slices[0].index, pins.get('B').snapshot.figure.slices[0].index];
+        await fig.resumeLive();const png = Array.from(new Uint8Array(await (await pendingPNG).arrayBuffer()));pins.close();
+        const resumed = fig.getInspectionState(), retained = Array.from(fig.registry.get(a.spec.data.x).values);
+        viewer.dispose();const preserved = fig.snapshot().figure.layers.length > 0;
+        return {html, png, frozen, held, resumed, shown, retained, canonicalIndex, pinIndices, preserved};
+      } finally {pins.close();viewer.dispose();fig.close();}
+    });
+    assert.deepEqual(result.shown, [0, 1]);assert.deepEqual(result.retained, [2, 3, 4]);
+    assert.equal(result.canonicalIndex, 1);assert.deepEqual(result.pinIndices, [1, 0]);
+    assert.equal(result.held.snapshotId, result.frozen.snapshotId);
+    assert.ok(result.held.acceptedRevision > result.held.displayedRevision);
+    assert.equal(result.resumed.mode, 'live');assert.equal(result.resumed.snapshotBytes, 0);
+    assert.equal(result.resumed.acceptedRevision, result.resumed.displayedRevision);assert.equal(result.preserved, true);
+    const html = join(outputDirectory, 'javascript-frozen-science.html'), png = join(outputDirectory, 'javascript-frozen-at-invocation.png');
+    await writeFile(html, result.html);await writeFile(png, Buffer.from(result.png));
+    assert.ok(Buffer.from(result.png).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+    assert.deepEqual(errors, []);assert.deepEqual(externalRequests, []);
+    const reopened = await verifyScienceHTML(browser, 'javascript-frozen', html, outputDirectory, {source: 'displayed', sliceIndex: 0});
+    console.log('Installed frozen consumer: atomic ingestion, private slice, A/B pins, export across resume and borrowed figure cleanup passed.');
+    return {...reopened, invocationPNG: png, frozen: result.frozen, resumed: result.resumed};
+  } finally {await context.close();await new Promise(resolve => server.close(resolve));}
+}
+
 async function main() {
   if (process.argv.length > 3) throw new Error('Usage: node scripts/verify-packages.mjs [release-directory]');
   const files = await readdir(archiveDirectory);
@@ -196,7 +305,7 @@ async function main() {
   const tarballs = files.filter(name => /^vesora-core-.*\.tgz$/i.test(name));
   assert.equal(wheels.length, 1, `Expected one Vesora wheel in ${archiveDirectory}; found ${wheels.length}`);
   assert.equal(tarballs.length, 1, `Expected one @vesora/core tarball in ${archiveDirectory}; found ${tarballs.length}`);
-  const expectedVersion = JSON.parse(await readFile(join(checkout, 'package.json'), 'utf8')).version;
+  const expectedVersion = release.identity.canonical;
   const wheel = join(archiveDirectory, wheels[0]), tarball = join(archiveDirectory, tarballs[0]);
   workspace = await mkdtemp(join(tmpdir(), 'vesora-packages-'));
   environment.npm_config_cache = process.env.VESORA_NPM_CACHE ?? join(workspace, 'npm-cache');
@@ -216,6 +325,7 @@ async function main() {
   const pythonLinkedHTML = join(outputDirectory, 'python-linked.html');
   const pythonPresentationHTML = join(outputDirectory, 'python-presentation.html');
   const pythonQualityHTML = join(outputDirectory, 'python-quality.html');
+  const pythonScienceHTML = join(outputDirectory, 'python-science.html');
   const pythonScript = join(pythonDirectory, 'verify.py');
   await writeFile(pythonScript, `import json
 import sys
@@ -284,9 +394,24 @@ quality.set_hover_mode('x')
 assert quality.snapshot()['figure']['protocolVersion'] == 6
 quality.save_html(sys.argv[6])
 quality.close()
+science = vs.subplots(1, 3, kinds=[['3d', '2d', '2d']], title='Installed Python science', width=1100, height=500)
+surface = science.panel(0, 0).surface([0., 1.], [0., 1.], [[1., 2.], [3., 4.]], values=[[10., 20.], [30., 40.]], shading='smooth', wireframe=True)
+science.panel(0, 0).plot3d([0., 1.], [0., 1.], [1., 4.])
+science.panel(0, 0).set_equal_aspect().focus_selection({'x': [0., 1.], 'y': [0., 1.], 'z': [1., 4.]}).fit_to_data()
+section = science.panel(0, 1).slice(surface, axis='x', index=0)
+assert isinstance(section, vs.SurfaceSlice)
+section.set_index(1)
+a = science.panel(0, 2).plot([0.], [1.]).enable_streaming(max_points=2)
+b = science.panel(0, 2).plot([0.], [2.]).enable_streaming(max_points=2)
+science.append_data_batch([(a, {'x': [1., 2.], 'y': [3., 4.]}), (b, {'x': [1., 2.], 'y': [5., 6.]})])
+assert science.snapshot()['figure']['protocolVersion'] == 7
+science.save_html(sys.argv[7])
+science.close()
+for dependency in ('PySide6', 'aiohttp', 'numpy', 'anywidget'):
+    assert not any(name == dependency or name.startswith(dependency + '.') for name in sys.modules), f'Science HTML unexpectedly imported {dependency}'
 print(json.dumps({"version": vs.__version__, "module": str(module), "html": sys.argv[2]}))
 `, 'utf8');
-  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, expectedVersion, pythonLinkedHTML, pythonPresentationHTML, pythonQualityHTML], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
+  run(isolatedPython, ['-I', pythonScript, checkout, pythonHTML, releaseIdentity(expectedVersion).python, pythonLinkedHTML, pythonPresentationHTML, pythonQualityHTML, pythonScienceHTML], pythonDirectory, 'Verifying isolated Python import and HTML export before show()…');
 
   await writeFile(join(npmDirectory, 'package.json'), JSON.stringify({ name: 'vesora-release-consumer', version: '1.0.0', private: true, type: 'module' }, null, 2), 'utf8');
   run(process.execPath, [npmCLI(), 'install', '--global=false', '--prefix', npmDirectory, '--ignore-scripts', '--no-audit', '--no-fund', '--offline', tarball], npmDirectory, 'Installing the npm tarball in a clean offline consumer…');
@@ -294,12 +419,16 @@ print(json.dumps({"version": vs.__version__, "module": str(module), "html": sys.
   const javascriptLinkedHTML = join(outputDirectory, 'javascript-linked.html');
   const javascriptPresentationHTML = join(outputDirectory, 'javascript-presentation.html');
   const javascriptQualityHTML = join(outputDirectory, 'javascript-quality.html');
+  const javascriptScienceHTML = join(outputDirectory, 'javascript-science.html');
   const javascriptScript = join(npmDirectory, 'verify.mjs');
   await writeFile(javascriptScript, `import assert from 'node:assert/strict';
 import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { figure, subplots, toHTML } from '@vesora/core';
+import { mountViewer } from '@vesora/core/viewer';
+import { createTrajectory, createRollingSurface, createABPins, sampleSurfaceGrid } from '@vesora/core/labs';
+for (const fn of [mountViewer, createTrajectory, createRollingSurface, createABPins, sampleSurfaceGrid]) assert.equal(typeof fn, 'function');
 const directory = ${JSON.stringify(npmDirectory)};
 const modulePath = await realpath(fileURLToPath(import.meta.resolve('@vesora/core')));
 const packageDirectory = await realpath(join(directory, 'node_modules/@vesora/core'));
@@ -356,12 +485,31 @@ quality.setHoverMode('x');
 assert.equal(quality.snapshot().figure.protocolVersion, 6);
 await writeFile(${JSON.stringify(javascriptQualityHTML)}, toHTML(quality), 'utf8');
 quality.close();
+const science = subplots({rows: 1, cols: 3, kinds: [['3d', '2d', '2d']], title: 'Installed JavaScript science', width: 1100, height: 500});
+const surface = science.panel(0, 0).surface([0, 1], [0, 1], [[1, 2], [3, 4]], {values: [[10, 20], [30, 40]], shading: 'smooth', wireframe: true});
+science.panel(0, 0).plot3d([0, 1], [0, 1], [1, 4]);
+science.panel(0, 0).setEqualAspect().focusSelection({x: [0, 1], y: [0, 1], z: [1, 4]}).fitToData();
+science.panel(0, 1).slice(surface, {axis: 'x', index: 0}).setIndex(1);
+const liveA = science.panel(0, 2).plot([0], [1]).enableStreaming({maxPoints: 2});
+const liveB = science.panel(0, 2).plot([0], [2]).enableStreaming({maxPoints: 2});
+await science.appendDataBatch([{layer: liveA, data: {x: [1, 2], y: [3, 4]}}, {layer: liveB, data: {x: [1, 2], y: [5, 6]}}], {waitFor: 'accepted'});
+assert.equal(science.snapshot().figure.protocolVersion, 7);
+await writeFile(${JSON.stringify(javascriptScienceHTML)}, toHTML(science), 'utf8');science.close();
+const trajectoryFigure = subplots({rows: 1, cols: 1, kinds: [['3d']]});
+const trajectory = createTrajectory(trajectoryFigure.panel(0, 0), {maxPoints: 2});
+await trajectory.append({x: [0, 1, 2], y: [1, 2, 3], z: [2, 3, 4]}, {waitFor: 'accepted'});
+assert.equal(trajectory.getState().retained, 2);assert.equal(trajectory.sequenceAt(0), 1);trajectory.close();trajectoryFigure.close();
+const rolling = createRollingSurface({x: [0, 1], y: [0, 1], z: [[1, 2], [3, 4]], maxRows: 2});
+await rolling.appendRows({y: [2], z: [[5, 6]]}, {waitFor: 'accepted'});assert.equal(rolling.getState().evictedRows, 1);rolling.close();
+assert.equal(sampleSurfaceGrid([0, 1], [0, 1], [[1, 2], [3, 4]], {maxVertices: 4}).info.exact, true);
 console.log(JSON.stringify({ version: packageJSON.version, module: modulePath, html: ${JSON.stringify(javascriptHTML)} }));
 `, 'utf8');
   run(process.execPath, [javascriptScript], npmDirectory, 'Verifying installed ESM import and HTML export without a DOM…');
 
   const typeScript = join(npmDirectory, 'verify-types.ts');
   await writeFile(typeScript, `import { figure, subplots, toHTML, downloadHTML, type Figure, type Panel, type Annotation, type ViewSpec, type ViewBookmark, type FillBetweenOptions, type ExportPNGOptions, type XHoverEvent } from '@vesora/core';
+import {mountViewer, type ViewerHandle} from '@vesora/core/viewer';
+import {createTrajectory, createRollingSurface, createABPins, sampleSurfaceGrid, type PinnedSnapshot} from '@vesora/core/labs';
 const chart: Figure = figure({ title: 'Typed consumer' });
 chart.scatter(new Float64Array([1, 2]), new Float64Array([3, 4]));
 const view: ViewSpec = chart.snapshot().figure.view;
@@ -400,6 +548,23 @@ quality.on('xhover', (event: XHoverEvent | null) => {if (event) console.log(even
 const exportOptions: ExportPNGOptions = {width: 1000, height: 600, scale: 2};
 const savePNG: (options?: ExportPNGOptions) => Promise<Blob> = options => quality.savefig(options);
 void savePNG;void exportOptions;quality.close();
+const science = subplots({rows: 1, cols: 2, kinds: [['3d', '2d']]});
+const surface = science.panel(0, 0).surface([0, 1], [0, 1], [[1, 2], [3, 4]], {values: [[10, 20], [30, 40]], shading: 'smooth', wireframe: true});
+science.panel(0, 0).plot3d([0, 1], [0, 1], [1, 4]);
+science.panel(0, 0).setEqualAspect().focusSelection({x: [0, 1], y: [0, 1], z: [1, 4]}).fitToData();
+science.panel(0, 1).slice(surface, {axis: 'x', index: 0}).setIndex(1);
+const viewer: ViewerHandle = mountViewer(science, document.body, {preserveTheme: true, live: true});
+science.freezeInspection();science.getInspectionState();science.ready({target: 'displayed'});
+toHTML(science, {source: 'displayed'});science.savefig({source: 'displayed'});
+const pins = createABPins(science), pin: PinnedSnapshot = pins.pin('A');pin.toHTML();pins.close();
+science.resumeLive();viewer.dispose();science.close();
+const live = figure().plot([0], [1]).enableStreaming({maxPoints: 2});
+live.figure.appendDataBatch([{layer: live, data: {x: [1], y: [2]}}], {waitFor: 'accepted'});
+const trajectory = createTrajectory(subplots({rows: 1, cols: 1, kinds: [['3d']]}).panel(0, 0), {maxPoints: 2});
+trajectory.append({x: [0], y: [1], z: [2]}, {waitFor: 'accepted'});trajectory.close();
+const rolling = createRollingSurface({x: [0, 1], y: [0, 1], z: [[1, 2], [3, 4]], maxRows: 2});
+rolling.appendRows({y: [2], z: [[5, 6]]}, {waitFor: 'accepted'});rolling.close();
+sampleSurfaceGrid([0, 1], [0, 1], [[1, 2], [3, 4]], {maxVertices: 4});
 `, 'utf8');
   run(process.execPath, [join(checkout, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022,DOM', typeScript], npmDirectory, 'Type-checking installed declarations with NodeNext resolution…');
 
@@ -417,12 +582,15 @@ void savePNG;void exportOptions;quality.close();
       javascriptPresentation: await verifyPresentationHTML(browser, 'javascript', javascriptPresentationHTML, outputDirectory),
       pythonQuality: await verifyQualityHTML(browser, 'python', pythonQualityHTML, outputDirectory),
       javascriptQuality: await verifyQualityHTML(browser, 'javascript', javascriptQualityHTML, outputDirectory),
+      pythonScience: await verifyScienceHTML(browser, 'python', pythonScienceHTML, outputDirectory),
+      javascriptScience: await verifyScienceHTML(browser, 'javascript', javascriptScienceHTML, outputDirectory),
+      javascriptFrozenScience: await verifyFrozenConsumer(browser, npmDirectory, outputDirectory),
     };
   } finally {
     await browser.close();
   }
   const archiveHashes = Object.fromEntries(await Promise.all([wheel, tarball].map(async path => [path, createHash('sha256').update(await readFile(path)).digest('hex')])));
-  const result = { version: expectedVersion, wheel, tarball, archiveHashes, recordedAt: new Date().toISOString(), workspace, outputs };
+  const result = { version: expectedVersion, commit:release.manifest.commit, manifestSha256:release.manifestSha256, wheel, tarball, archiveHashes, recordedAt: new Date().toISOString(), workspace, outputs };
   await writeFile(join(workspace, 'verification.json'), JSON.stringify(result, null, 2), 'utf8');
   await mkdir(join(checkout, 'artifacts', 'consumers'), { recursive: true });
   await writeFile(join(checkout, 'artifacts', 'consumers', 'packages.json'), JSON.stringify(result, null, 2), 'utf8');

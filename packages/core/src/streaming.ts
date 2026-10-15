@@ -23,9 +23,10 @@ export function appendEntry(entry: DataEntry, input: ArrayLike<number>, maxPoint
   const added = streamValues(input, entry.descriptor.dtype);
   const chunks = [...(entry.chunks ?? ownChunks(entry.values, maxPoints))];
   const incoming = ownChunks(added, maxPoints);
-  // A bounded partial block avoids one allocation per historical sample.
+  // Preserve append deltas instead of repeatedly retransmitting an expanding
+  // tail. Compact small batches only when chunk metadata would become excessive.
   const last = chunks[chunks.length - 1], first = incoming[0];
-  if (last && first && last.length + first.length <= BLOCK) {
+  if (chunks.length > 1024 && last && first && last.length + first.length <= BLOCK) {
     const joined = new (last.constructor as {new(length: number): NumericArray})(last.length + first.length);
     joined.set(last); joined.set(first, last.length); chunks[chunks.length - 1] = joined; incoming.shift();
   }

@@ -20,8 +20,9 @@ STATISTICS_PROTOCOL_VERSION = 3
 LINKED_PROTOCOL_VERSION = 4
 PRESENTATION_PROTOCOL_VERSION = _presentation.PRESENTATION_PROTOCOL_VERSION
 QUALITY_PROTOCOL_VERSION = _presentation.QUALITY_PROTOCOL_VERSION
+SCENE3D_PROTOCOL_VERSION = 7
 _MAX_SAFE_SELECTION_SEQUENCE = 2**53 - 1
-_STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain", "colorbarLabel"}
+_STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain", "colorbarLabel", "shading", "wireframe"}
 _BAND_STYLES = {"color", "opacity", "label"}
 
 
@@ -94,6 +95,13 @@ def _view(value: Any, kind: str) -> dict[str, Any]:
     if not isinstance(pan, (list, tuple)) or len(pan) != 2 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in pan):
         raise ValueError("3D pan must contain two finite numbers")
     view["pan3d"] = list(pan)
+    if "boxAspect" in view:
+        aspect = view["boxAspect"]
+        if kind != "3d" or not isinstance(aspect, (list, tuple)) or len(aspect) != 3 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in aspect):
+            raise ValueError("box_aspect requires three positive finite numbers in a 3D view")
+        view["boxAspect"] = list(aspect)
+    if "equalAspect" in view and (kind != "3d" or not isinstance(view["equalAspect"], bool)):
+        raise ValueError("equal_aspect requires a boolean in a 3D view")
     return view
 
 
@@ -135,6 +143,10 @@ def _style(values: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("representation must be 'auto', 'points', or 'density'")
     if "colorDomain" in result:
         result["colorDomain"] = _domain(result["colorDomain"], "color_domain")
+    if "shading" in result and result["shading"] not in ("unlit", "smooth"):
+        raise ValueError("shading must be 'unlit' or 'smooth'")
+    if "wireframe" in result and not isinstance(result["wireframe"], bool):
+        raise TypeError("wireframe must be a boolean")
     return result
 
 
@@ -187,9 +199,9 @@ def _prepare(kind: str, *args: Any, **kwargs: Any) -> dict[str, NumericData]:
         if len(args) != 2:
             raise TypeError(f"{kind} expects y or x, y")
         values = {"x": _array(args[0], "x"), "y": _array(args[1], "y")}
-    elif kind == "scatter3d":
+    elif kind in ("scatter3d", "line3d"):
         if len(args) != 3:
-            raise TypeError("scatter3d expects x, y, z")
+            raise TypeError(f"{kind} expects x, y, z")
         values = {k: _array(v, k) for k, v in zip(("x", "y", "z"), args)}
     else:
         if len(args) == 1:
@@ -206,7 +218,7 @@ def _prepare(kind: str, *args: Any, **kwargs: Any) -> dict[str, NumericData]:
             raise TypeError(f"{kind} expects z or x, y, z")
     if kwargs:
         raise TypeError(f"Unknown data arguments: {', '.join(kwargs)}")
-    if kind in ("line", "scatter", "scatter3d", "band"):
+    if kind in ("line", "scatter", "scatter3d", "line3d", "band"):
         if any(a.ndim != 1 for a in values.values()):
             raise ValueError(f"{kind} coordinates must be 1D arrays")
         if len({a.size for a in values.values()}) != 1:
@@ -233,7 +245,7 @@ def _prepare(kind: str, *args: Any, **kwargs: Any) -> dict[str, NumericData]:
                     raise ValueError(f"Grid {name} coordinates must be finite and strictly increasing")
                 previous = value
     if colors is not None:
-        if kind in ("heatmap", "surface"):
+        if kind == "heatmap":
             raise ValueError("Grid colors are determined by z; separate scalar colors are not supported")
         color = _array(colors, "color")
         expected = values["z"].shape if kind in ("heatmap", "surface") else values["x"].shape
@@ -256,6 +268,8 @@ class Layer:
         raise RuntimeError("Layer has been removed")
 
     def set_data(self, *args: Any, **kwargs: Any) -> Layer:
+        if any(item["targetLayerId"] == self.id for item in self.figure._spec.get("slices", [])):
+            raise ValueError("A bound surface slice is read-only; update the source or slice index")
         if self._spec()["kind"] in ("hist", "bar", "boxplot", "line", "scatter", "band"):
             self.figure._update_layer_data(self._spec(), args, kwargs)
             return self
@@ -270,16 +284,17 @@ class Layer:
                     raise TypeError(f"Unknown data channels: {', '.join(unknown)}")
                 changed = set(kwargs)
                 current.update(kwargs)
-                names = ("x", "y", "z") if layer["kind"] in ("surface", "heatmap", "scatter3d") else ("x", "y")
+                names = ("x", "y", "z") if layer["kind"] in ("surface", "heatmap", "scatter3d", "line3d") else ("x", "y")
                 arrays = _prepare(layer["kind"], *(current[name] for name in names), color=current.get("color"))
             else:
                 arrays = _prepare(layer["kind"], *args, **kwargs)
                 changed = set(arrays)
                 if "color" not in arrays and "color" in current:
-                    if current["color"].shape != arrays["x"].shape:
+                    if current["color"].shape != arrays["z" if layer["kind"] == "surface" else "x"].shape:
                         raise ValueError("Update scalar colors when changing the point count")
                     arrays["color"] = current["color"]
             self.figure._validate_layer_candidate(layer, arrays, self.figure._spec.get("categories", {}))
+            slices = self.figure._prepare_surface_slices(layer, arrays, changed)
             for name in changed:
                 array = arrays[name]
                 data_id = layer["data"].get(name, _id("data"))
@@ -287,6 +302,10 @@ class Layer:
                 version = old[0]["version"] + 1 if old else 1
                 layer["data"][name] = data_id
                 self.figure._sources[data_id] = (self.figure._descriptor(data_id, array, version), array)
+            for target, slice_arrays in slices:
+                self.figure._commit_layer_arrays(target, slice_arrays, set(slice_arrays), self.figure._spec.get("categories", {}))
+            if layer["kind"] == "surface" and "color" in arrays:
+                self.figure._spec["protocolVersion"] = max(self.figure._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
         self.figure._publish()
         return self
 
@@ -295,6 +314,8 @@ class Layer:
         if isinstance(max_points, bool) or not isinstance(max_points, int) or not 0 < max_points <= 2**32 - 1:
             raise ValueError("max_points must be a positive integer at most 2**32 - 1")
         with self.figure._lock:
+            if any(item["targetLayerId"] == self.id for item in self.figure._spec.get("slices", [])):
+                raise ValueError("A bound surface slice cannot enable streaming")
             layer = self._spec()
             previous = self.figure._streams.get(self.id)
             if previous is not None:
@@ -324,6 +345,11 @@ class Layer:
 
     def append_data(self, **channels: Any) -> Layer:
         """Atomically append all existing channels, retaining at most max_points."""
+        self.figure.append_data_batch([(self, channels)])
+        return self
+
+    def _prepare_append(self, channels: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+        """Prepare one append under the figure lock without changing canonical data."""
         with self.figure._lock:
             layer = self._spec()
             state = self.figure._streams.get(self.id)
@@ -337,7 +363,7 @@ class Layer:
                 raise TypeError("Streaming append must preserve each channel's dtype")
             count = arrays["x"].size
             if not count:
-                return self
+                return None
             if state["nextSequence"] + count > 2**53 - 1 or state["revision"] >= 2**53 - 1 or any(self.figure._sources[source][0]["version"] >= 2**53 - 1 for source in layer["data"].values()):
                 raise ValueError("Streaming sequence exceeds the JavaScript safe integer range")
             view = self.figure._panel_view(layer.get("panelId", "main"))
@@ -355,21 +381,20 @@ class Layer:
                     previous = value
             updated = {name: value.append(arrays[name], state["maxPoints"]) for name, value in current.items()}
             patches = []
+            writes = {}
             for name, value in updated.items():
                 source_id = layer["data"][name]
                 previous = self.figure._sources[source_id][0]
                 descriptor = self.figure._descriptor(source_id, value, previous["version"] + 1)
-                self.figure._sources[source_id] = (descriptor, value)
+                writes[source_id] = (descriptor, value)
                 patches.append({"channel": name, "sourceId": source_id, "baseVersion": previous["version"],
                                 "descriptor": self.figure._descriptor(source_id, arrays[name], descriptor["version"]),
                                 "buffer": arrays[name].tobytes()})
             retained = updated["x"].size
-            state.update(nextSequence=state["nextSequence"] + count, revision=state["revision"] + 1,
-                         retained=retained, evicted=state["nextSequence"] + count - retained)
-            self.figure._stream_last_x[self.id] = next(reversed(tuple(arrays["x"])))
-            self.figure._publish({"kind": "append", "layerId": self.id, "channels": patches,
-                                  "state": copy.deepcopy(state)})
-        return self
+            next_state = {**state, "nextSequence": state["nextSequence"] + count, "revision": state["revision"] + 1,
+                          "retained": retained, "evicted": state["nextSequence"] + count - retained}
+            change = {"kind": "append", "layerId": self.id, "channels": patches, "state": next_state}
+            return writes, change, next(reversed(tuple(arrays["x"])))
 
     def set_options(self, **options: Any) -> Layer:
         with self.figure._lock:
@@ -397,9 +422,13 @@ class Layer:
             layer = self._spec()
             if layer["kind"] == "band" and validated.keys() - _BAND_STYLES:
                 raise TypeError("Band styles only accept color, opacity and label")
+            if layer["kind"] != "surface" and validated.keys() & {"shading", "wireframe"}:
+                raise ValueError("shading and wireframe are surface-only styles")
             layer["style"].update(validated)
             if "colorbarLabel" in validated:
                 self.figure._spec["protocolVersion"] = max(self.figure._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
+            if validated.keys() & {"shading", "wireframe"}:
+                self.figure._spec["protocolVersion"] = max(self.figure._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
         self.figure._publish()
         return self
 
@@ -415,6 +444,14 @@ class Layer:
     def remove(self) -> None:
         with self.figure._lock:
             spec = self._spec()
+            if any(item["sourceLayerId"] == self.id for item in self.figure._spec.get("slices", [])):
+                raise ValueError("Remove bound slices before removing their source surface")
+            if "slices" in self.figure._spec:
+                remaining = [item for item in self.figure._spec["slices"] if item["targetLayerId"] != self.id]
+                if remaining:
+                    self.figure._spec["slices"] = remaining
+                else:
+                    self.figure._spec.pop("slices")
             self.figure._unlink_member(self.id)
             self.figure._spec["layers"].remove(spec)
             self.figure._streams.pop(self.id, None)
@@ -422,6 +459,24 @@ class Layer:
             for data_id in spec["data"].values():
                 self.figure._sources.pop(data_id, None)
         self.figure._publish()
+
+
+class SurfaceSlice(Layer):
+    """A materialized, exact row or column of a surface grid."""
+
+    def set_index(self, index: int) -> SurfaceSlice:
+        with self.figure._lock:
+            target = self._spec()
+            relation = next((item for item in self.figure._spec.get("slices", []) if item["targetLayerId"] == self.id), None)
+            if relation is None:
+                raise RuntimeError("Surface slice has been removed")
+            source = Layer(self.figure, relation["sourceLayerId"])._spec()
+            arrays = self.figure._slice_arrays(self.figure._layer_arrays(source), relation["axis"], index)
+            self.figure._validate_layer_candidate(target, arrays, self.figure._spec.get("categories", {}))
+            self.figure._commit_layer_arrays(target, arrays, set(arrays), self.figure._spec.get("categories", {}))
+            relation["index"] = index
+        self.figure._publish()
+        return self
 
 
 class SelectionLink:
@@ -506,6 +561,18 @@ class Panel:
     def scatter(self, x: Any, y: Any, **style: Any) -> Layer:
         return self.figure._add("scatter", (x, y), style, panel_id=self.id)
 
+    def plot3d(self, x: Any, y: Any, z: Any, **style: Any) -> Layer:
+        return self.figure._add("line3d", (x, y, z), style, panel_id=self.id)
+
+    def scatter3d(self, x: Any, y: Any, z: Any, **style: Any) -> Layer:
+        return self.figure._add("scatter3d", (x, y, z), style, panel_id=self.id)
+
+    def surface(self, *args: Any, **style: Any) -> Layer:
+        return self.figure._add("surface", args, style, panel_id=self.id)
+
+    def slice(self, surface: Layer, *, axis: str, index: int, **style: Any) -> SurfaceSlice:
+        return self.figure._add_slice(surface, axis, index, style, self.id)
+
     def heatmap(self, *args: Any, **style: Any) -> Layer:
         return self.figure._add("heatmap", args, style, panel_id=self.id)
 
@@ -541,6 +608,18 @@ class Panel:
 
     def set_axes(self, **options: Any) -> Panel:
         self.figure._set_panel_axes(self.id, options)
+        return self
+
+    def set_equal_aspect(self, enabled: bool = True) -> Panel:
+        self.figure.set_equal_aspect(enabled, panel_id=self.id)
+        return self
+
+    def fit_to_data(self) -> Panel:
+        self.figure.fit_to_data(panel_id=self.id)
+        return self
+
+    def focus_selection(self, bounds: dict[str, Any]) -> Panel:
+        self.figure.focus_selection(bounds, panel_id=self.id)
         return self
 
     def set_axis_format(self, axis: str, format: dict[str, Any] | None) -> Panel:
@@ -589,16 +668,23 @@ class Figure:
         if self._closed:
             raise RuntimeError("Figure is closed")
 
-    def _set_layout(self, rows: int, cols: int, *, sharex: bool, sharey: bool) -> None:
+    def _set_layout(self, rows: int, cols: int, *, sharex: bool, sharey: bool, kinds: Any = None) -> None:
         if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (rows, cols)):
             raise ValueError("Subplot rows and cols must be positive integers")
         if not isinstance(sharex, bool) or not isinstance(sharey, bool):
             raise TypeError("sharex and sharey must be booleans")
+        if kinds is not None and (not isinstance(kinds, (list, tuple)) or len(kinds) != rows or any(not isinstance(row, (list, tuple)) or len(row) != cols or any(kind not in ("2d", "3d") for kind in row) for row in kinds)):
+            raise ValueError("kinds must match the subplot grid and contain only '2d' or '3d'")
+        has_3d = kinds is not None and any(kind == "3d" for row in kinds for kind in row)
+        if has_3d and (sharex or sharey):
+            raise ValueError("Shared axes are not supported by grids containing 3D panels")
         with self._lock:
             self._ensure_open()
-            if self._spec["view"]["kind"] != "2d":
+            if self._spec["view"]["kind"] != "2d" and kinds is None:
                 raise ValueError("Subplots support 2D figures only")
-            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], EXTENDED_PROTOCOL_VERSION)
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION if has_3d else EXTENDED_PROTOCOL_VERSION)
+            if kinds is not None:
+                self._spec["view"]["kind"] = kinds[0][0]
             self._spec["layout"] = {"rows": rows, "cols": cols, "shareX": sharex, "shareY": sharey}
             panels = []
             for row in range(rows):
@@ -606,6 +692,7 @@ class Figure:
                     panel = {"id": "main" if row == col == 0 else f"panel-{row}-{col}", "row": row, "col": col, "title": ""}
                     if row or col:
                         panel["view"] = copy.deepcopy(self._spec["view"])
+                        panel["view"]["kind"] = kinds[row][col] if kinds is not None else "2d"
                     panels.append(panel)
             self._spec["panels"] = panels
 
@@ -634,6 +721,8 @@ class Figure:
                 self._panel_spec(panel_id)["view"] = view
         if any(view.get(axis + "Scale") == "time" or axis + "Format" in view for view in validated.values() for axis in "xy"):
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], PRESENTATION_PROTOCOL_VERSION)
+        if any("boxAspect" in view or "equalAspect" in view for view in validated.values()):
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
 
     def _share_view(self, views: dict[str, dict[str, Any]], source_id: str) -> None:
         layout = self._spec.get("layout", {})
@@ -700,11 +789,17 @@ class Figure:
             return array.tobytes(order="C")
 
     def _publish(self, change: dict[str, Any] | None = None) -> None:
+        import logging
         with self._lock:
             self._last_change = change
             try:
                 for listener in tuple(self._listeners):
-                    listener()
+                    try:
+                        listener()
+                    except Exception as error:
+                        # Data is already committed. A failed observer must not
+                        # turn successful acceptance into an ambiguous failure.
+                        logging.getLogger(__name__).warning("Vesora change listener failed: %s", error, exc_info=True)
             finally:
                 self._last_change = None
 
@@ -726,6 +821,90 @@ class Figure:
         with self._lock:
             snapshot = self.snapshot()
             return snapshot, [self._data_bytes(item["id"], item["version"]) for item in snapshot["sources"]], copy.deepcopy(self._streams)
+
+    @staticmethod
+    def _slice_arrays(arrays: dict[str, NumericData], axis: str, index: int) -> dict[str, NumericData]:
+        if axis not in ("x", "y"):
+            raise ValueError("Slice axis must be 'x' or 'y'")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < arrays[axis].size:
+            raise ValueError("Slice index must identify an existing grid coordinate")
+        z = arrays["z"]
+        width, size, raw = arrays["x"].size, z.dtype.itemsize, z.tobytes()
+        coordinate = arrays["y" if axis == "x" else "x"]
+        payload = (b"".join(raw[(row * width + index) * size:(row * width + index + 1) * size] for row in range(arrays["y"].size))
+                   if axis == "x" else raw[index * width * size:(index + 1) * width * size])
+        return {"x": coordinate, "y": NumericData(z.dtype, (coordinate.size,), payload)}
+
+    def _prepare_surface_slices(self, layer: dict[str, Any], arrays: dict[str, NumericData], changed: set[str]) -> list[tuple[dict[str, Any], dict[str, NumericData]]]:
+        relations = [item for item in self._spec.get("slices", []) if item["sourceLayerId"] == layer["id"]]
+        if not relations:
+            return []
+        if changed & {"x", "y"} or arrays["z"].shape != self._layer_arrays(layer)["z"].shape:
+            raise ValueError("Remove bound slices before changing surface coordinates or grid shape")
+        prepared = []
+        for relation in relations:
+            target = Layer(self, relation["targetLayerId"])._spec()
+            values = self._slice_arrays(arrays, relation["axis"], relation["index"])
+            self._validate_layer_candidate(target, values, self._spec.get("categories", {}))
+            prepared.append((target, values))
+        return prepared
+
+    def _add_slice(self, surface: Layer, axis: str, index: int, style: dict[str, Any], panel_id: str) -> SurfaceSlice:
+        validated = _style(style)
+        if validated.keys() & {"shading", "wireframe"}:
+            raise ValueError("Surface slice styles are line styles")
+        with self._lock:
+            self._ensure_open()
+            if not isinstance(surface, Layer) or surface.figure is not self or surface._spec()["kind"] != "surface":
+                raise ValueError("A slice must reference a surface in this figure")
+            if self._panel_view(panel_id)["kind"] != "2d":
+                raise ValueError("Surface slices require a 2D target panel")
+            arrays = self._slice_arrays(self._layer_arrays(surface._spec()), axis, index)
+            layer_id = _id("layer")
+            layer: dict[str, Any] = {"id": layer_id, "kind": "line", "data": {}, "style": validated, "visible": True}
+            if panel_id != "main":
+                layer["panelId"] = panel_id
+            self._validate_layer_candidate(layer, arrays, self._spec.get("categories", {}))
+            self._commit_layer_arrays(layer, arrays, set(arrays), self._spec.get("categories", {}))
+            self._spec["layers"].append(layer)
+            self._spec.setdefault("slices", []).append({"sourceLayerId": surface.id, "targetLayerId": layer_id, "axis": axis, "index": index})
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
+        self._publish()
+        return SurfaceSlice(self, layer_id)
+
+    def append_data_batch(self, updates: Any) -> Figure:
+        """Accept a complete multi-layer append atomically; browser rendering is asynchronous.
+
+        Each item is ``(layer, {"x": ..., "y": ...})``. Every existing channel
+        is required. A failed validation leaves every layer and stream unchanged.
+        """
+        if not isinstance(updates, (list, tuple)):
+            raise TypeError("Append updates must be a list or tuple of (layer, channels) pairs")
+        with self._lock:
+            self._ensure_open()
+            seen: set[str] = set()
+            prepared = []
+            for update in updates:
+                if not isinstance(update, (list, tuple)) or len(update) != 2:
+                    raise TypeError("Each append update must be a (layer, channels) pair")
+                layer, channels = update
+                if not isinstance(layer, Layer) or layer.figure is not self or layer.id in seen:
+                    raise ValueError("Append each layer of this figure at most once")
+                if not isinstance(channels, dict):
+                    raise TypeError("Append channels must be a dictionary")
+                seen.add(layer.id)
+                draft = layer._prepare_append(channels)
+                if draft is not None:
+                    prepared.append(draft)
+            if not prepared:
+                return self
+            for writes, change, last_x in prepared:
+                self._sources.update(writes)
+                self._streams[change["layerId"]] = copy.deepcopy(change["state"])
+                self._stream_last_x[change["layerId"]] = last_x
+            changes = [change for _, change, _ in prepared]
+            self._publish(changes[0] if len(changes) == 1 else {"kind": "append-batch", "updates": changes})
+        return self
 
     def link_selection(self, *, scatter: Any, histogram: Layer) -> SelectionLink:
         """Link two numeric scatter panels and one aligned count histogram.
@@ -904,6 +1083,8 @@ class Figure:
                         raise ValueError("Stacked bars require zero baselines")
 
     def _validate_layer_candidate(self, layer: dict[str, Any], arrays: dict[str, NumericData], categories: dict[str, list[str]]) -> None:
+        if layer["kind"] != "surface" and layer["style"].keys() & {"shading", "wireframe"}:
+            raise ValueError("shading and wireframe are supported only on surfaces")
         if layer["kind"] == "bar":
             value_axis = "y" if layer["options"]["orientation"] == "vertical" else "x"
             positions = list(arrays["x" if value_axis == "y" else "y"])
@@ -932,6 +1113,8 @@ class Figure:
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], STATISTICS_PROTOCOL_VERSION)
         if layer["kind"] == "band" or "colorbarLabel" in layer["style"]:
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
+        if layer["kind"] == "line3d" or layer["kind"] == "surface" and ("color" in arrays or layer["style"].keys() & {"shading", "wireframe"}):
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
 
     def _set_categories(self, panel_id: str, axis: str, labels: Any) -> None:
         if axis not in ("x", "y"):
@@ -1038,19 +1221,23 @@ class Figure:
         if "color" in options and not isinstance(options["color"], str):
             data_options["color"] = options.pop("color")
         style = _style(options)
-        dimension = "3d" if kind in ("surface", "scatter3d") else "2d"
+        dimension = "3d" if kind in ("surface", "scatter3d", "line3d") else "2d"
+        if kind != "surface" and style.keys() & {"shading", "wireframe"}:
+            raise ValueError("shading and wireframe are surface-only styles")
         if kind == "band":
             if style.keys() - _BAND_STYLES:
                 raise TypeError("Band styles only accept color, opacity and label")
             style.setdefault("opacity", 0.18)
         with self._lock:
             self._ensure_open()
-            self._panel_view(panel_id)
-            if dimension == "3d" and (self._spec.get("layout") or self._spec.get("annotations") or self._spec.get("barModes")):
-                raise ValueError("Subplots, annotations and bar modes support 2D figures only")
-            if dimension == "3d" and any(self._spec["view"].get(axis + "Scale") == "time" for axis in "xy"):
+            panel_view = self._panel_view(panel_id)
+            if self._spec.get("layout") and panel_view["kind"] != dimension:
+                raise ValueError("Layer dimensionality must match its declared 2D or 3D panel")
+            if dimension == "3d" and not self._spec.get("layout") and (self._spec.get("annotations") or self._spec.get("barModes")):
+                raise ValueError("Annotations and bar modes support 2D figures only")
+            if dimension == "3d" and any(panel_view.get(axis + "Scale") == "time" for axis in "xy"):
                 raise ValueError("Time scales support 2D figures only")
-            if (self._spec["layers"] or self._spec.get("bookmarks")) and self._spec["view"]["kind"] != dimension:
+            if not self._spec.get("layout") and (self._spec["layers"] or self._spec.get("bookmarks")) and panel_view["kind"] != dimension:
                 raise ValueError("2D and 3D layers or bookmarks require separate figures")
             categories = copy.deepcopy(self._spec.get("categories", {}))
             categorical: dict[str, bool] = {}
@@ -1068,7 +1255,7 @@ class Figure:
             if categorical:
                 layer["categorical"] = categorical
             self._validate_layer_candidate(layer, arrays, categories)
-            self._spec["view"]["kind"] = dimension
+            panel_view["kind"] = dimension
             self._commit_layer_arrays(layer, arrays, set(arrays), categories)
             self._spec["layers"].append(layer)
         self._publish()
@@ -1205,6 +1392,12 @@ class Figure:
     def scatter3d(self, x: Any, y: Any, z: Any, **style: Any) -> Layer:
         return self._add("scatter3d", (x, y, z), style)
 
+    def plot3d(self, x: Any, y: Any, z: Any, **style: Any) -> Layer:
+        return self._add("line3d", (x, y, z), style)
+
+    def slice(self, surface: Layer, *, axis: str, index: int, **style: Any) -> SurfaceSlice:
+        return self._add_slice(surface, axis, index, style, "main")
+
     def heatmap(self, *args: Any, **style: Any) -> Layer:
         return self._add("heatmap", args, style)
 
@@ -1213,6 +1406,48 @@ class Figure:
 
     def set_axes(self, **options: Any) -> Figure:
         self._set_panel_axes("main", options)
+        return self
+
+    def set_equal_aspect(self, enabled: bool = True, *, panel_id: str = "main") -> Figure:
+        """Use equal data-unit scale on all three axes of a 3D panel."""
+        self._set_panel_axes(panel_id, {"equal_aspect": enabled})
+        return self
+
+    def fit_to_data(self, *, panel_id: str = "main") -> Figure:
+        """Restore automatic domains and centered camera distance, retaining its angles."""
+        with self._lock:
+            self._ensure_open()
+            views = self._views()
+            if panel_id not in views:
+                raise ValueError(f"Unknown panel: {panel_id}")
+            view = views[panel_id]
+            for axis in "xyz":
+                view.pop(axis + "Domain", None)
+            view["camera"]["distance"] = 3
+            view["pan3d"] = [0, 0]
+            self._share_view(views, panel_id)
+            self._commit_views(views)
+        self._publish()
+        return self
+
+    def focus_selection(self, bounds: dict[str, Any], *, panel_id: str = "main") -> Figure:
+        """Focus a 3D panel on explicit x/y/z bounds in one validated transaction."""
+        if not isinstance(bounds, dict) or not {"x", "y", "z"} <= bounds.keys():
+            raise ValueError("Focus bounds must contain x, y and z domains")
+        with self._lock:
+            self._ensure_open()
+            views = self._views()
+            if panel_id not in views:
+                raise ValueError(f"Unknown panel: {panel_id}")
+            view = views[panel_id]
+            if view["kind"] != "3d":
+                raise ValueError("Focus selection requires a 3D panel")
+            for axis in "xyz":
+                view[axis + "Domain"] = _domain(bounds[axis], axis + "Domain", view[axis + "Scale"])
+            view["camera"]["distance"] = 3
+            view["pan3d"] = [0, 0]
+            self._commit_views(views)
+        self._publish()
         return self
 
     def set_theme(self, theme: Any) -> Figure:
@@ -1248,6 +1483,8 @@ class Figure:
     def _set_panel_axes(self, panel_id: str, options: dict[str, Any]) -> None:
         aliases = {f"{a}{s}": f"{a}{v}" for a in "xyz" for s, v in (("scale", "Scale"), ("lim", "Domain"), ("label", "Label"))}
         aliases.update({axis + "format": axis + "Format" for axis in "xy"})
+        aliases["box_aspect"] = "boxAspect"
+        aliases["equal_aspect"] = "equalAspect"
         unknown = options.keys() - aliases.keys()
         if unknown:
             raise TypeError(f"Unknown axis option(s): {', '.join(sorted(unknown))}")
@@ -1289,7 +1526,7 @@ class Figure:
             self._ensure_open()
             entry = {"name": name, "view": _view(self._spec["view"], self._spec["view"]["kind"])}
             if "layout" in self._spec:
-                entry["panelViews"] = {panel_id: _view(view, "2d") for panel_id, view in self._views().items() if panel_id != "main"}
+                entry["panelViews"] = {panel_id: _view(view, view["kind"]) for panel_id, view in self._views().items() if panel_id != "main"}
             if note:
                 entry["note"] = note
             bookmarks = self._spec.setdefault("bookmarks", [])
@@ -1334,11 +1571,13 @@ class Figure:
     def to_html(self) -> str:
         """Return a standalone interactive HTML document, without starting a host."""
         from .html import make_html
+        from datetime import datetime, timezone
         with self._lock:
             self._ensure_open()
+            captured_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             snapshot = self.snapshot()
             buffers = [(source["id"], self._data_bytes(source["id"], source["version"])) for source in snapshot["sources"]]
-        return make_html(snapshot, buffers)
+        return make_html(snapshot, buffers, captured_at=captured_at)
 
     def save_html(self, path: str | Path) -> Path:
         """Write a standalone interactive HTML document to disk."""
@@ -1359,6 +1598,13 @@ class Figure:
         import warnings
         if event == "viewchange":
             self._accept_view(payload)
+        if event == "slicechange":
+            if not isinstance(payload, dict) or payload.get("mode") != "live":
+                return
+            target = payload.get("targetLayerId")
+            if not any(item["targetLayerId"] == target for item in self._spec.get("slices", [])):
+                return
+            SurfaceSlice(self, target).set_index(payload.get("index"))
         if event == "selection" and isinstance(payload, dict) and payload.get("kind") == "linked":
             if not self._accept_selection(payload):
                 return
@@ -1430,7 +1676,7 @@ class Figure:
         """Retain browser interaction state without echoing another update to it."""
         if not isinstance(payload, dict):
             raise ValueError("viewchange payload must be an object")
-        allowed = {"kind", "camera", "pan3d"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")} | {axis + "Format" for axis in "xy"}
+        allowed = {"kind", "camera", "pan3d", "boxAspect", "equalAspect"} | {f"{axis}{field}" for axis in "xyz" for field in ("Scale", "Domain", "Label")} | {axis + "Format" for axis in "xy"}
         with self._lock:
             views = self._views()
             source_id = payload.get("panelId", "main")

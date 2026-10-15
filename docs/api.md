@@ -1,6 +1,6 @@
 # API and usage
 
-Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. A figure contains either 2D or 3D layers; mixing them in one figure raises an error. v0.8 adds bounded numeric line/scatter streaming, runtime diagnostics and recovery, retaining the interval bands, shared-x inspection and explicit PNG dimensions from v0.7. The [React adapter](../packages/react/README.md) exposes matching features. Python installation dependencies are unchanged.
+Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. Each panel contains either 2D or 3D layers. In v0.9, `subplots({rows, cols, kinds})` creates mixed figures with fixed cell types; shared axes are rejected for mixed layouts. The [PRISM guide](prism.md) covers surface scalar colors, exact slices, true `plot3d`, scientific camera controls, frozen inspection, atomic Python batches and the shared viewer. Existing protocols 1–6, interval bands and numeric 2D streaming remain available.
 
 ## Append live data
 
@@ -43,7 +43,7 @@ fig.save_html("revenue.html")
 
 Time coordinates are numeric UTC epoch milliseconds; locale and timezone affect labels, not observation identity or geometry. Calendar ticks use UTC boundaries and adapt to the visible interval. Use `kind: 'number' | 'percent' | 'currency' | 'date'`; percentage values are fractions, and currency requires a three-letter code. Optional `options` contains supported JSON-safe Intl settings. Date formatting defaults to `en-US` and `UTC`; explicit Intl date options override automatic tick formatting. Time axes are for numeric 2D data; existing statistical and categorical restrictions remain enforced.
 
-Use `setTheme(...)` / `set_theme(...)` to change a theme. Panel handles also provide axis formatting. Base theme/time/format features promote snapshots to protocol 5; role font sizes require protocol 6. The current reader accepts protocols 1–6. Invalid options fail before changing the current valid scene. Declarative formats survive offline HTML, while application callbacks remain in the host.
+Use `setTheme(...)` / `set_theme(...)` to change a theme. Panel handles also provide axis formatting. Base theme/time/format features promote snapshots to protocol 5; role font sizes require protocol 6. The current reader accepts protocols 1–7. Invalid options fail before changing the current valid scene. Declarative formats survive offline HTML, while application callbacks remain in the host.
 
 JavaScript `fig.on(...)` callbacks use `FigureEventMap`. Hover includes original source indices when a point is identifiable, plus local/client pointer positions; `null` clears a previous hover. Click carries the same hit information. Density hover identifies a bin rather than an individual record. Consumer callback exceptions are reported to the console and isolated from rendering and readiness. The returned unsubscribe function removes the subscription.
 
@@ -168,7 +168,7 @@ Shared axes use the union of valid data extents from visible layers in the linke
 
 Existing `fig.plot`, `fig.scatter`, `fig.heatmap`, `fig.set_axes` and `fig.setView` address the top-left panel. They still participate in configured sharing. `fig.set_title` / `fig.setTitle` changes the whole-figure title. `fig.panel(0, 0)` also works for an ordinary single-panel figure.
 
-Grid shape is fixed at creation. This version has no panel spans, nested layouts, dynamic panel insertion or 3D panels. One explicit selection link can highlight two numeric scatter layers and compare a count histogram in three distinct panels; see [linked observations](#follow-observations-across-views). Existing single-panel 3D figures remain supported.
+Grid shape and each cell's 2D/3D kind are fixed at creation. Mixed panels use protocol 7 and reject `shareX`/`shareY`; see [scientific panels and slices](prism.md#pair-a-surface-with-an-exact-row-or-column). Panel spans, nested layouts and dynamic insertion remain unavailable. One explicit selection link can highlight two numeric scatter layers and compare a count histogram in three distinct 2D panels; see [linked observations](#follow-observations-across-views).
 
 Grid cells have a minimum size of 360 × 260 CSS pixels, plus space for a figure title. A smaller mount area scrolls without rearranging the grid. PNG export includes the complete drawing area, including portions outside the visible scroll area.
 
@@ -207,7 +207,7 @@ Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. T
 
 Supported Python inputs include lists, tuples, `array.array`, and supported numeric buffers. When installed, NumPy `ndarray` inputs are accepted through the buffer protocol. This uses the same data adapter and visualization engine.
 
-For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.8.0/vesora-0.8.0-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
+For an optional source installation, run `python -m pip install -e ".[numpy]"`. For a locally built wheel, run `python -m pip install "./dist/release-v0.9.0-rc.1/vesora-0.9.0rc1-py3-none-any.whl[numpy]"`. Float32/Float64 and supported integer buffers map to the shared data descriptors. NumPy grids must satisfy `z.shape == (len(y), len(x))`.
 
 This example supplies Float32 buffers using the Python standard library:
 

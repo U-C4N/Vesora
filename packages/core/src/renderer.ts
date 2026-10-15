@@ -1,22 +1,49 @@
-import type {BackendCapabilities} from './types';
+import type {BackendCapabilities,CameraPreset,ViewSpec,Bounds,Domain} from './types';
 
 export interface Geometry {
   id: string; positions: Float32Array; colors: Float32Array;
   primitive: 'points' | 'lines' | 'triangles'; size?: number;
+  indices?: Uint32Array; normals?: Float32Array; wireframeIndices?: Uint32Array;
+  lineDirections?: Float32Array; lineSides?: Float32Array; width?: number;
+  /** Source row per point, segment start per line triangle, source cell triangle per surface triangle. */
+  sourceIndices?: Uint32Array;
+}
+export function geometryByteLength(g:Geometry):number{return g.positions.byteLength+g.colors.byteLength+(g.indices?.byteLength??0)+(g.normals?.byteLength??0)+(g.wireframeIndices?.byteLength??0)+(g.lineDirections?.byteLength??0)+(g.lineSides?.byteLength??0);}
+export function geometryVertexCount(g:Geometry):number{return g.indices?.length??g.positions.length/3;}
+/** Inverse axis stretch keeps normals perpendicular after scientific aspect scaling. */
+export function normalAspectScale(boxAspect:readonly number[]=[1,1,1]):[number,number,number]{const minimum=Math.min(...boxAspect);return boxAspect.map(value=>minimum/value) as [number,number,number];}
+export function scientificAspect(view:ViewSpec,bounds:Bounds,z:Domain):[number,number,number]|undefined{
+  if(!view.equalAspect)return view.boxAspect;
+  const logSpans=(['x','y','z'] as const).map(axis=>{
+    const domain=axis==='z'?z:bounds[axis],span=view[`${axis}Scale`]==='log'?Math.log(domain[1])-Math.log(domain[0]):domain[1]-domain[0];
+    if(Number.isFinite(span)&&span>0)return Math.log(span);
+    const magnitude=Math.max(Math.abs(domain[0]),Math.abs(domain[1]));
+    return Math.log(magnitude)+Math.log(domain[1]/magnitude-domain[0]/magnitude);
+  });
+  const largest=Math.max(...logSpans);
+  // Keep ratios representable by the float32 shader even for extreme domains.
+  return logSpans.map(span=>Math.max(1e-30,Math.exp(span-largest))) as [number,number,number];
 }
 export interface PlotRect {left:number; top:number; width:number; height:number}
 export const identity = new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
-export function cameraMatrix(azimuth: number, elevation: number, distance: number, aspect: number, pan: [number,number] = [0,0]): Float32Array {
+export function cameraPreset(preset:CameraPreset):ViewSpec['camera']{
+  const poses:Record<CameraPreset,[number,number]>={isometric:[35,25],xy:[-90,90],xz:[-90,0],yz:[0,0]};
+  if(!Object.hasOwn(poses,preset))throw new Error('Unknown camera preset');
+  return {azimuth:poses[preset][0],elevation:poses[preset][1],distance:3};
+}
+export function cameraMatrix(azimuth: number, elevation: number, distance: number, aspect: number, pan: [number,number] = [0,0],boxAspect: [number,number,number] = [1,1,1]): Float32Array {
   const a=azimuth*Math.PI/180,e=elevation*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a),ce=Math.cos(e),se=Math.sin(e),s=1.9/distance;
   // Scientific coordinates: x/y span the horizontal plane and z points upward.
-  return new Float32Array([-sa*s/aspect,-ca*se*s,-ca*ce*.3,0,ca*s/aspect,-sa*se*s,-sa*ce*.3,0,0,ce*s,-se*.3,0,pan[0],pan[1],0,1]);
+  const scale=Math.max(...boxAspect),[x,y,z]=boxAspect.map(v=>v/scale);
+  return new Float32Array([-sa*s/aspect*x,-ca*se*s*x,-ca*ce*.3*x,0,ca*s/aspect*y,-sa*se*s*y,-sa*ce*.3*y,0,0,ce*s*z,-se*.3*z,0,pan[0],pan[1],0,1]);
 }
 export class WebGLRenderer {
   readonly capabilities: BackendCapabilities = {name:'WebGL2',supports3d:true,rasterExport:true,vectorExport:false};
+  readonly stats={uploadedBytes:0,uploadCalls:0,partialUploadCalls:0,bufferAllocations:0,bufferDeletes:0};
   readonly canvas: HTMLCanvasElement;
   readonly gl: WebGL2RenderingContext;
   private program: WebGLProgram;
-  private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array}>();
+  private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array;extra:Map<string,{buffer:WebGLBuffer;data:Float32Array|Uint32Array}>}>();
   private lost: (event: Event)=>void;
   private restored: ()=>void;
   private disposed=false;
@@ -48,11 +75,18 @@ export class WebGLRenderer {
   private createProgram():WebGLProgram {
     const gl=this.gl;
     const vertex=`#version 300 es
-      in vec3 aPosition; in vec4 aColor; uniform mat4 uMatrix; uniform float uSize;
-      out vec4 vColor; void main(){gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=uSize;vColor=aColor;}`;
+      in vec3 aPosition; in vec4 aColor; in vec3 aNormal; in vec3 aLineDirection; in float aLineSide;
+      uniform mat4 uMatrix; uniform vec3 uNormalScale; uniform float uSize; uniform vec2 uViewport; uniform float uWidth; uniform bool uLine;
+      out vec4 vColor; out vec3 vNormal; void main(){
+        gl_Position=uMatrix*vec4(aPosition,1.0);
+        if(uLine){vec2 delta=(uMatrix*vec4(aLineDirection,0.0)).xy*uViewport;
+          float len=length(delta);if(len>0.0)gl_Position.xy+=vec2(-delta.y,delta.x)/len*aLineSide*uWidth/uViewport;}
+        gl_PointSize=uSize;vColor=aColor;vNormal=aNormal*uNormalScale;}`;
     const fragment=`#version 300 es
-      precision highp float; in vec4 vColor; uniform bool uRound; out vec4 outColor;
-      void main(){if(uRound && length(gl_PointCoord-vec2(.5))>.5) discard; outColor=vColor;}`;
+      precision highp float; in vec4 vColor; in vec3 vNormal; uniform bool uRound; uniform bool uLit; uniform bool uWire; out vec4 outColor;
+      void main(){if(uRound && length(gl_PointCoord-vec2(.5))>.5) discard;
+        float light=uLit ? .3+.7*abs(dot(normalize(vNormal),normalize(vec3(.3,-.4,.85)))) : 1.0;
+        outColor=vec4(vColor.rgb*(uWire ? .35 : light),vColor.a);}`;
     const compile=(kind:number,source:string)=>{
       const shader=gl.createShader(kind)!;gl.shaderSource(shader,source);gl.compileShader(shader);
       if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS)){const error=gl.getShaderInfoLog(shader);gl.deleteShader(shader);throw new Error(error??'Shader compilation failed');}return shader;
@@ -62,6 +96,19 @@ export class WebGLRenderer {
     gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS)){const message=gl.getProgramInfoLog(program)??'Shader link failed';gl.deleteProgram(program);throw new Error(message);}
     return program;
+  }
+  private createBuffer():WebGLBuffer{const buffer=this.gl.createBuffer();if(!buffer)throw new Error('GPU buffer allocation failed');this.stats.bufferAllocations++;return buffer;}
+  private deleteBuffer(buffer:WebGLBuffer):void{this.gl.deleteBuffer(buffer);this.stats.bufferDeletes++;}
+  private uploadBuffer(target:number,data:Float32Array|Uint32Array,previous?:Float32Array|Uint32Array):void{
+    // A change in topology or capacity requires a full allocation. For a stable
+    // attribute layout, upload only the changed span, including interior edits.
+    if(previous?.constructor===data.constructor&&previous.length===data.length){
+      let first=0;while(first<data.length&&data[first]===previous[first])first++;
+      if(first===data.length)return;
+      let end=data.length;while(end>first&&data[end-1]===previous[end-1])end--;
+      if(end-first<data.length*.75){const changed=data.subarray(first,end);this.gl.bufferSubData(target,first*data.BYTES_PER_ELEMENT,changed);this.stats.uploadedBytes+=changed.byteLength;this.stats.uploadCalls++;this.stats.partialUploadCalls++;return;}
+    }
+    this.gl.bufferData(target,data,this.gl.DYNAMIC_DRAW);this.stats.uploadedBytes+=data.byteLength;this.stats.uploadCalls++;
   }
   /** Clear once for the whole figure; resources survive between panel draws. */
   validateRasterSize(width:number,height:number):void {
@@ -106,39 +153,57 @@ export class WebGLRenderer {
     }else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     gl.disable(gl.SCISSOR_TEST);gl.viewport(0,0,w,h);gl.clearColor(background[0],background[1],background[2],background[3]);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   }
-  drawPanel(items:Geometry[],rect:PlotRect,matrix:Float32Array=identity,threeD=false):void {
+  drawPanel(items:Geometry[],rect:PlotRect,matrix:Float32Array=identity,threeD=false,boxAspect?:[number,number,number]):void {
     const gl=this.gl,height=this.frameHeight,dpr=this.frameDpr;
     gl.viewport(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     gl.enable(gl.SCISSOR_TEST);gl.scissor(Math.round(rect.left*dpr),Math.round((height-rect.top-rect.height)*dpr),Math.round(rect.width*dpr),Math.round(rect.height*dpr));
     if(threeD) gl.enable(gl.DEPTH_TEST);else gl.disable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(this.program);gl.uniformMatrix4fv(gl.getUniformLocation(this.program,'uMatrix'),false,matrix);
+    gl.uniform3fv(gl.getUniformLocation(this.program,'uNormalScale'),normalAspectScale(boxAspect));
+    gl.uniform2f(gl.getUniformLocation(this.program,'uViewport'),rect.width*dpr,rect.height*dpr);
     for(const item of items){
       this.frameItems.add(item.id);let buffer=this.buffers.get(item.id);
       if(!buffer){
-        const vao=gl.createVertexArray()!,p=gl.createBuffer()!,c=gl.createBuffer()!;
-        buffer={vao,p,c,positions:new Float32Array(0),colors:new Float32Array(0)};this.buffers.set(item.id,buffer);
+        const vao=gl.createVertexArray()!,p=this.createBuffer(),c=this.createBuffer();
+        buffer={vao,p,c,positions:new Float32Array(0),colors:new Float32Array(0),extra:new Map()};this.buffers.set(item.id,buffer);
         gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,p);
         const position=gl.getAttribLocation(this.program,'aPosition');gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,3,gl.FLOAT,false,0,0);
         gl.bindBuffer(gl.ARRAY_BUFFER,c);const color=gl.getAttribLocation(this.program,'aColor');gl.enableVertexAttribArray(color);gl.vertexAttribPointer(color,4,gl.FLOAT,false,0,0);
       }
       gl.bindVertexArray(buffer.vao);
-      if(buffer.positions!==item.positions){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.p);gl.bufferData(gl.ARRAY_BUFFER,item.positions,gl.DYNAMIC_DRAW);buffer.positions=item.positions;}
-      if(buffer.colors!==item.colors){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.c);gl.bufferData(gl.ARRAY_BUFFER,item.colors,gl.DYNAMIC_DRAW);buffer.colors=item.colors;}
+      if(buffer.positions!==item.positions){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.p);this.uploadBuffer(gl.ARRAY_BUFFER,item.positions,buffer.positions);buffer.positions=item.positions;}
+      if(buffer.colors!==item.colors){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.c);this.uploadBuffer(gl.ARRAY_BUFFER,item.colors,buffer.colors);buffer.colors=item.colors;}
+      const upload=(key:string,data:Float32Array|Uint32Array,target:number)=>{
+        let entry=buffer!.extra.get(key);if(!entry){entry={buffer:this.createBuffer(),data};buffer!.extra.set(key,entry);gl.bindBuffer(target,entry.buffer);this.uploadBuffer(target,data);}
+        else{gl.bindBuffer(target,entry.buffer);if(entry.data!==data){this.uploadBuffer(target,data,entry.data);entry.data=data;}}return entry;
+      };
+      for(const [name,data,size]of [['aNormal',item.normals,3],['aLineDirection',item.lineDirections,3],['aLineSide',item.lineSides,1]] as const){
+        const location=gl.getAttribLocation(this.program,name);if(data){upload(name,data,gl.ARRAY_BUFFER);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,0,0);}else{gl.disableVertexAttribArray(location);if(size===1)gl.vertexAttrib1f(location,0);else gl.vertexAttrib3f(location,0,0,1);}
+      }
+      const liveExtras=new Set(['aNormal','aLineDirection','aLineSide'].filter(name=>name==='aNormal'?!!item.normals:name==='aLineDirection'?!!item.lineDirections:!!item.lineSides));if(item.indices)liveExtras.add('indices');if(item.wireframeIndices)liveExtras.add('wire');
+      for(const [key,entry]of buffer.extra)if(!liveExtras.has(key)){this.deleteBuffer(entry.buffer);buffer.extra.delete(key);}
       gl.uniform1f(gl.getUniformLocation(this.program,'uSize'),(item.size??5)*dpr);
       gl.uniform1i(gl.getUniformLocation(this.program,'uRound'),item.primitive==='points'?1:0);
-      gl.drawArrays(item.primitive==='points'?gl.POINTS:item.primitive==='lines'?gl.LINES:gl.TRIANGLES,0,item.positions.length/3);
+      gl.uniform1i(gl.getUniformLocation(this.program,'uLine'),item.lineDirections?1:0);gl.uniform1f(gl.getUniformLocation(this.program,'uWidth'),(item.width??1.5)*dpr);
+      gl.uniform1i(gl.getUniformLocation(this.program,'uLit'),item.normals?1:0);gl.uniform1i(gl.getUniformLocation(this.program,'uWire'),0);
+      const mode=item.primitive==='points'?gl.POINTS:item.primitive==='lines'?gl.LINES:gl.TRIANGLES;
+      if(item.indices){upload('indices',item.indices,gl.ELEMENT_ARRAY_BUFFER);gl.drawElements(mode,item.indices.length,gl.UNSIGNED_INT,0);}else gl.drawArrays(mode,0,item.positions.length/3);
+      // Unbiased filled depth preserves the same coplanar tie rule as CPU picking.
+      // Only the matching surface edges may pass equal depth; later layers use LESS.
+      if(item.wireframeIndices){upload('wire',item.wireframeIndices,gl.ELEMENT_ARRAY_BUFFER);gl.uniform1i(gl.getUniformLocation(this.program,'uWire'),1);gl.uniform1i(gl.getUniformLocation(this.program,'uLit'),0);gl.depthFunc(gl.LEQUAL);gl.drawElements(gl.LINES,item.wireframeIndices.length,gl.UNSIGNED_INT,0);gl.depthFunc(gl.LESS);}
     }
   }
   endFrame():void {
     const gl=this.gl;
-    for(const [id,b] of this.buffers)if(!this.frameItems.has(id)){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);this.buffers.delete(id);}
+    for(const [id,b] of this.buffers)if(!this.frameItems.has(id)){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);this.buffers.delete(id);}
     gl.bindVertexArray(null);gl.disable(gl.SCISSOR_TEST);
-    if(gl.isContextLost())throw new Error('WebGL context lost. Remount the figure to restore GPU resources.');
+    if(gl.isContextLost())throw new Error('WebGL context lost. Waiting for the browser to restore GPU resources.');
     const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error(`WebGL frame failed (${error}).`);
   }
-  draw(items:Geometry[],rect:PlotRect,width:number,height:number,dpr:number,matrix:Float32Array=identity,threeD=false):void {
-    this.beginFrame(width,height,dpr);this.drawPanel(items,rect,matrix,threeD);this.endFrame();
+  draw(items:Geometry[],rect:PlotRect,width:number,height:number,dpr:number,matrix:Float32Array=identity,threeD=false,boxAspect?:[number,number,number]):void {
+    this.beginFrame(width,height,dpr);this.drawPanel(items,rect,matrix,threeD,boxAspect);this.endFrame();
   }
   rasterCanvas():HTMLCanvasElement {
     if(!this.sharedGL)return this.canvas;
@@ -158,7 +223,7 @@ export class WebGLRenderer {
   }
   dispose():void {
     if(this.disposed)return;this.disposed=true;
-    const gl=this.gl;for(const b of this.buffers.values()){gl.deleteBuffer(b.p);gl.deleteBuffer(b.c);gl.deleteVertexArray(b.vao);}
+    const gl=this.gl;for(const b of this.buffers.values()){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);}
     this.buffers.clear();if(gl.getParameter(gl.CURRENT_PROGRAM)===this.program)gl.useProgram(null);gl.deleteProgram(this.program);this.canvas.removeEventListener('webglcontextlost',this.lost);this.canvas.removeEventListener('webglcontextrestored',this.restored);
     if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.colorTarget)gl.deleteTexture(this.colorTarget);if(this.depthTarget)gl.deleteRenderbuffer(this.depthTarget);
     if(this.resolveFramebuffer)gl.deleteFramebuffer(this.resolveFramebuffer);if(this.multisampleColor)gl.deleteRenderbuffer(this.multisampleColor);

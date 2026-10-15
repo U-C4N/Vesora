@@ -20,7 +20,9 @@ Open the URL Vite prints. To build the standalone application:
 npm run build:example
 ```
 
-The output is `examples/react-saas/dist`. Charts require WebGL2. The package is a source-checkout example for the v0.8 developer preview; npm registry publication is a separate step.
+The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for the `0.9.0-rc.1` candidate; npm registry publication is a separate step.
+
+For the PRISM viewer, open the Vite URL with `?demo=workbench`. Three bounded signals keep arriving while **Freeze view** holds the displayed snapshot. **Return to live** catches up; the viewer's PNG/HTML buttons export the displayed frame. The application owns the figure. See the [PRISM guide](../../docs/prism.md).
 
 ## Run live training telemetry
 
@@ -28,7 +30,7 @@ Open the same Vite URL with `?demo=streaming`. The [streaming example](src/Strea
 
 The chart uses `useRef<VesoraChartHandle<Sample>>(null)`, `streaming={{maxPoints: 2000}}` and `await chart.current.appendRows(rows)`. Keep the `data` array reference stable during appends: a new reference replaces the retained dataset. Theme changes and legend controls preserve the retained rows. Streaming supports numeric/time line and scatter charts without bands. The source contains the complete typed row definition and producer lifecycle, including StrictMode cleanup.
 
-PNG exports capture the displayed figure at the requested dimensions. HTML exports embed the retained window and matching viewer; they do not restart the live producer. These curves are illustrative synthetic values, not measured model results or a throughput benchmark.
+The `VesoraChart` export methods default to accepted data; pass `{source: 'displayed'}` to capture its inspection frame. The PRISM workbench viewer's buttons explicitly use displayed data. HTML embeds the retained window and matching viewer; it does not restart the live producer. These curves are illustrative synthetic values, not measured model results or a throughput benchmark.
 
 ## Explore the signals
 

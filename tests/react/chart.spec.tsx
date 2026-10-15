@@ -41,7 +41,7 @@ vi.mock('@vesora/core', () => {
     });
     ready = vi.fn(() => state.delayed ? new Promise<void>((resolve, reject) => this.waiters.push({resolve, reject})) : Promise.resolve());
     getStreamingState(id: string) {const value = this.layers.find(layer => layer.id === id)?.stream; return value && {...value};}
-    appendDataBatch = vi.fn(async (updates: {layer: FakeLayer; data: {x: number[]; y: Float64Array}}[]) => {
+    appendDataBatch = vi.fn(async (updates: {layer: FakeLayer; data: {x: number[]; y: Float64Array}}[], options?: {waitFor?: 'accepted'|'rendered'}) => {
       for (const {layer, data} of updates) if (data.x.some((x, index) => x <= (index ? data.x[index - 1] : (layer.x as number[]).at(-1) ?? -Infinity))) throw new Error('Streaming x values must be increasing.');
       for (const {layer, data} of updates) {
         const stream = layer.stream!;
@@ -49,7 +49,7 @@ vi.mock('@vesora/core', () => {
         layer.y = [...layer.y as number[], ...data.y].slice(-stream.maxPoints);
         stream.nextSequence += data.x.length; stream.retained = (layer.x as number[]).length; stream.evicted = stream.nextSequence - stream.retained; stream.revision++;
       }
-      await this.ready();
+      if(options?.waitFor!=='accepted')await this.ready();
     });
     close = vi.fn(() => {this.closed = true; this.element?.remove();});
     plot(x: unknown, y: unknown, style: unknown) {if (Array.isArray(x) && typeof x[0] === 'string') this.setCategories('x', x); const layer = new FakeLayer(x, y, style); this.layers.push(layer); this.spec.layers.push(layer.spec); return layer;}
@@ -204,7 +204,7 @@ describe('declarative React chart integration', () => {
     expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
   });
 
-  it('waits for the current render before exporting and rejects export after unmount', async () => {
+  it('preserves accepted export defaults, accepts displayed sources and rejects after unmount', async () => {
     const reference = createRef<VesoraChartHandle>();
     await render(<VesoraChart {...base} ref={reference} />);
     expect(await reference.current!.exportHTML()).toContain('chart source rows');
@@ -212,6 +212,7 @@ describe('declarative React chart integration', () => {
     const options = {width: 800, height: 400, scale: 2};
     await reference.current!.exportPNG(options);
     expect(current().savefig).toHaveBeenLastCalledWith(options);
+    await reference.current!.exportPNG({source:'displayed',...options});expect(current().savefig).toHaveBeenLastCalledWith({source:'displayed',...options});
     const handle = reference.current!;
     await render(null);
     await expect(handle.exportHTML()).rejects.toThrow('not mounted');
@@ -314,6 +315,32 @@ describe('declarative React chart integration', () => {
     expect(fig.layers[0].x).toEqual([2, 3, 4]);
   });
 
+  it('keeps frozen callbacks bound to displayed rows while accepted appends advance',async()=>{
+    const reference=createRef<VesoraChartHandle<Row>>(),clicked=vi.fn();
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints:2}} onClick={clicked}/>);
+    const fig=current();
+    const displayedStreams=Object.fromEntries(fig.layers.map((layer:any)=>[layer.id,{...layer.stream}]));
+    let mode='live';
+    fig.getInspectionState=()=>({mode,displayedStreams});
+    fig.freezeInspection=()=>{mode='frozen';const state=fig.getInspectionState();fig.emit('inspectionchange',state);return state;};
+    fig.getDisplayedStreamingState=(layerId:string)=>displayedStreams[layerId];
+    fig.resetInspectionView=vi.fn();
+    await act(async()=>{fig.emit('frame',{displayedStreams});reference.current!.freezeInspection();});
+    const append=[{id:'three',time:3,revenue:30,expense:9},{id:'four',time:4,revenue:40,expense:12}];
+    state.delayed=true;
+    await act(async()=>{await reference.current!.appendRows(append,{waitFor:'accepted'});});
+    expect(fig.appendDataBatch).toHaveBeenLastCalledWith(expect.any(Array),{waitFor:'accepted'});
+    expect(fig.layers[0].x).toEqual([3,4]);
+    await act(async()=>{fig.emit('click',{kind:'point',layerId:fig.layers[0].id,index:0,streamId:fig.layers[0].stream.streamId,sequence:0,x:1,y:10});});
+    expect(clicked.mock.lastCall![0].row).toBe(rows[0]);
+    reference.current!.resetView();expect(fig.resetInspectionView).toHaveBeenCalledWith('main');
+    state.delayed=false;
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints:2}} onClick={clicked} title="New title"/>);
+    expect(fig.ready).toHaveBeenLastCalledWith({target:'displayed'});
+    await act(async()=>{fig.emit('frame',{displayedStreams:Object.fromEntries(fig.layers.map((layer:any)=>[layer.id,{...layer.stream}]))});fig.emit('click',{kind:'point',layerId:fig.layers[0].id,index:0,streamId:fig.layers[0].stream.streamId,sequence:0,x:1,y:10});});
+    expect(clicked.mock.lastCall![0].row).toBeUndefined();
+  });
+
   it('resets the streaming epoch on an explicit data replacement and rejects stale rows in callbacks', async () => {
     const reference = createRef<VesoraChartHandle<Row>>(), clicked = vi.fn();
     await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints: 2}} onClick={clicked} />);
@@ -332,6 +359,65 @@ describe('declarative React chart integration', () => {
     expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('empty');
     await act(async () => {await reference.current!.appendRows(replacement);});
     expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+  });
+
+  it('owns static rows, removed series and formats with the displayed frozen frame', async () => {
+    const reference=createRef<VesoraChartHandle<Row>>(),clicked=vi.fn(),xHovered=vi.fn();
+    await render(<VesoraChart {...base} ref={reference} onClick={clicked} onXHover={xHovered} hoverMode="x" yAxis={{format:'currency',currency:'USD',locale:'en-US'}}/>);
+    const fig=current(),originalLayer=fig.layers[0].id;
+    let mode='live';
+    const inspection=()=>({mode,displayedStreams:{}});
+    const frame=()=>{fig.emit('framepending',inspection());fig.emit('frame',inspection());};
+    fig.getInspectionState=inspection;
+    fig.freezeInspection=()=>{mode='frozen';fig.emit('inspectionchange',inspection());return inspection();};
+    fig.resumeLive=async()=>{mode='live';fig.emit('inspectionchange',inspection());};
+    await act(async()=>{frame();reference.current!.freezeInspection();});
+    const replacement=[{id:'new',time:100,revenue:999,expense:.25}];
+    await render(<VesoraChart {...base} data={replacement} series={[{key:'expense',label:'New expense'}]} ref={reference} onClick={clicked} onXHover={xHovered} hoverMode="x" yAxis={{format:'percent'}}/>);
+    await act(async()=>{frame();fig.emit('click',{kind:'point',layerId:originalLayer,index:0,x:1,y:10});fig.emit('xhover',{cursorX:1,items:[{layerId:originalLayer,index:0,x:1,y:10}]});});
+    expect(clicked.mock.lastCall![0]).toMatchObject({row:rows[0],series:{key:'revenue',label:'Revenue'},formattedX:'1',formattedY:'$10.00'});
+    expect(clicked.mock.lastCall![0].row).toBe(rows[0]);
+    expect(xHovered.mock.lastCall![0].items[0]).toMatchObject({row:rows[0],series:{key:'revenue'},formattedY:'$10.00'});
+    expect(container.textContent).toContain('2 rows and 2 series');
+    expect([...container.querySelectorAll('button')].map(button=>[button.textContent,button.disabled])).toEqual([['Revenue',true],['Expense',true]]);
+    await act(async()=>{await reference.current!.resumeLive();frame();fig.emit('click',{kind:'point',layerId:fig.layers[1].id,index:0,x:100,y:.25});});
+    expect(clicked.mock.lastCall![0]).toMatchObject({row:replacement[0],series:{key:'expense',label:'New expense'},formattedY:'25%'});
+  });
+
+  it.each([{replacement:[]},{replacement:[{id:'invalid',time:3,revenue:null,expense:NaN}]}])('keeps a frozen static frame visible when accepted data becomes empty: $replacement',async({replacement})=>{
+    const reference=createRef<VesoraChartHandle<Row>>();
+    await render(<VesoraChart {...base} ref={reference}/>);
+    const fig=current();let mode='live';
+    const inspection=()=>({mode,displayedStreams:{}}),frame=()=>{fig.emit('framepending',inspection());fig.emit('frame',inspection());};
+    fig.getInspectionState=inspection;fig.freezeInspection=()=>{mode='frozen';fig.emit('inspectionchange',inspection());return inspection();};
+    fig.resumeLive=async()=>{mode='live';fig.emit('inspectionchange',inspection());};
+    await act(async()=>{frame();reference.current!.freezeInspection();});
+    await render(<VesoraChart {...base} data={replacement as Row[]} ref={reference}/>);
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+    expect((container.querySelector('[data-vesora-host]') as HTMLElement).style.visibility).toBe('visible');
+    expect(container.textContent).toContain('2 rows and 2 series');
+    await act(async()=>{await reference.current!.resumeLive();});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+    await act(async()=>{frame();});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('empty');
+  });
+
+  it('keeps a frozen streaming frame visible when accepted NaNs evict every finite row',async()=>{
+    const reference=createRef<VesoraChartHandle<Row>>();
+    await render(<VesoraChart {...base} ref={reference} streaming={{maxPoints:2}}/>);
+    const fig=current();let mode='live';
+    let displayedStreams=Object.fromEntries(fig.layers.map((layer:any)=>[layer.id,{...layer.stream}]));
+    const inspection=()=>({mode,displayedStreams});
+    fig.getInspectionState=inspection;fig.freezeInspection=()=>{mode='frozen';fig.emit('inspectionchange',inspection());return inspection();};
+    fig.resumeLive=async()=>{mode='live';fig.emit('inspectionchange',inspection());};
+    await act(async()=>{fig.emit('framepending',inspection());fig.emit('frame',inspection());reference.current!.freezeInspection();});
+    await act(async()=>{await reference.current!.appendRows([{id:'three',time:3,revenue:null,expense:NaN},{id:'four',time:4,revenue:null,expense:NaN}],{waitFor:'accepted'});});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+    expect((container.querySelector('[data-vesora-host]') as HTMLElement).style.visibility).toBe('visible');
+    await act(async()=>{await reference.current!.resumeLive();});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('ready');
+    await act(async()=>{displayedStreams=Object.fromEntries(fig.layers.map((layer:any)=>[layer.id,{...layer.stream}]));fig.emit('framepending',inspection());fig.emit('frame',inspection());});
+    expect(container.querySelector('[data-vesora-chart]')?.getAttribute('data-vesora-state')).toBe('empty');
   });
 
   it('keeps callbacks bound to committed rows when a declarative replacement fails validation', async () => {

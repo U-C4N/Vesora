@@ -66,7 +66,7 @@ export function chunkEntry(descriptor: DataDescriptor, chunks: readonly NumericA
     || chunks.reduce((n, chunk) => n + chunk.length, 0) !== descriptor.shape[0]) throw new RangeError('Chunks do not match their data descriptor');
   const owned = Object.freeze([...chunks]);
   let materialized: NumericArray | undefined;
-  return {descriptor, chunks: owned, get values() {
+  return {descriptor, chunks: owned, get materializedByteLength(){return owned.length>1?(materialized?.byteLength??0):0;}, get values() {
     if (!materialized) {
       if (owned.length === 1) materialized = owned[0];
       else {
@@ -79,13 +79,32 @@ export function chunkEntry(descriptor: DataDescriptor, chunks: readonly NumericA
   }};
 }
 
-/** Copy a partial first chunk so evicted buffers cannot keep a large batch alive. */
+export interface NumericReader {readonly length:number;get(index:number):number}
+/** Cursor-local indexed reads avoid concatenating a retained window for planning/geometry. */
+export function numericReader(input:NumericArray|DataEntry):NumericReader {
+  if(ArrayBuffer.isView(input)){const values=input as NumericArray;return {length:values.length,get:index=>values[index]};}
+  const entry=input as DataEntry,chunks=entry.chunks;
+  if(!chunks)return numericReader(entry.values);
+  const starts=new Uint32Array(chunks.length+1);
+  for(let i=0;i<chunks.length;i++)starts[i+1]=starts[i]+chunks[i].length;
+  let cursor=0;
+  return {length:entry.descriptor.shape[0],get(index:number){
+    if(index<0||index>=starts[starts.length-1])return NaN;
+    if(index<starts[cursor]||index>=starts[cursor+1]){
+      if(index>=starts[cursor+1]&&index<starts[cursor+2])cursor++;
+      else{let lo=0,hi=chunks.length;while(lo+1<hi){const mid=(lo+hi)>>>1;if(starts[mid]<=index)lo=mid;else hi=mid;}cursor=lo;}
+    }
+    return chunks[cursor][index-starts[cursor]];
+  }};
+}
+
+/** Owned stream blocks are bounded; a view preserves worker identity at eviction. */
 export function retainChunks(chunks: readonly NumericArray[], maxPoints: number): NumericArray[] {
   let skip = Math.max(0, chunks.reduce((n, chunk) => n + chunk.length, 0) - maxPoints);
   const retained: NumericArray[] = [];
   for (const chunk of chunks) {
     if (skip >= chunk.length) {skip -= chunk.length; continue;}
-    retained.push(skip ? chunk.slice(skip) as NumericArray : chunk); skip = 0;
+    retained.push(skip ? (maxPoints<=4096?chunk.slice(skip):chunk.subarray(skip)) as NumericArray : chunk); skip = 0;
   }
   return retained;
 }

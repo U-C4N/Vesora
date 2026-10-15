@@ -85,8 +85,8 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
         : message.type === 'linked' ? linkedSteps(message.link, message.layers, captured, message.baseline)
           : message.type === 'band' ? bandSteps(captured.get(message.xId)!.values, captured.get(message.lowerId)!.values, captured.get(message.upperId)!.values, message.query)
           : message.type === 'selected-scatter' ? maskedScatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.mask, message.query)
-            : message.kind === 'line' ? lineSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.query,ascending(captured.get(message.xId)!))
-              : scatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.query);
+            : message.kind === 'line' ? lineSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query,ascending(captured.get(message.xId)!))
+              : scatterSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query);
       function* progress():Generator<void,PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>{let last=Date.now();while(true){const step=steps.next();if(step.done)return step.value;if(Date.now()-last>=250){scope.postMessage({type:'progress',requestId});last=Date.now();}yield;}}
       const result = await runSteps<PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>(progress(), () => task.cancelled || disposed);
       if (task.cancelled || disposed) return;

@@ -1,3 +1,4 @@
+import {releaseIdentity} from './release-identity.mjs';
 // Build downloadable release assets after npm run build and the release checks.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,10 +11,15 @@ import { figure, subplots, toHTML } from '../packages/core/dist/index.js';
 import { examples } from '../examples/web/scenarios.js';
 import { comparisonExamples } from '../examples/web/comparison-scenarios.js';
 import { linkedExamples } from '../examples/web/linked-scenarios.js';
+import {prismDemoNames,prismReleaseScenes} from './prism-release-scenes.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const pkg = JSON.parse(await readFile(resolve(root, 'packages/core/package.json'), 'utf8'));
-const version = pkg.version;
+const version = pkg.version, identity=releaseIdentity(version), candidate=process.argv.includes('--candidate');
+const commit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+const dirty=!!execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+const tags=execFileSync('git',['tag','--points-at','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim().split(/\r?\n/);
+if(!candidate){assert.equal(dirty,false,'Release builds require a clean commit; --candidate creates local unpublishable review archives');assert.ok(tags.includes(identity.tag),'Release build requires matching canonical tag');}
 const reactPackage = JSON.parse(await readFile(resolve(root, 'packages/react/package.json'), 'utf8'));
 assert.equal(reactPackage.version, version, 'Core and React release versions must match');
 assert.equal(pkg.license, 'MIT');
@@ -23,7 +29,7 @@ const localPython = resolve(root, process.platform === 'win32' ? '.venv/Scripts/
 const python = process.env.VESORA_PYTHON ?? process.env.PYTHON ?? (existsSync(localPython) ? localPython : 'python');
 const env = { ...process.env, PYTHONPATH: resolve(root, 'python') };
 const pythonVersion = execFileSync(python, ['-c', 'import vesora; print(vesora.__version__)'], { cwd: root, env, encoding: 'utf8', windowsHide: true }).trim();
-assert.equal(pythonVersion, version, 'Python and JavaScript versions must match');
+assert.equal(pythonVersion, identity.python, 'Python and JavaScript versions must match');
 await mkdir(output, { recursive: true });
 execFileSync(python, ['-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation', '.', '--wheel-dir', output], { cwd: root, env, stdio: 'inherit', windowsHide: true });
 // npm_execpath is supplied by npm run; invoking its JS entry avoids Windows shell quoting.
@@ -95,11 +101,10 @@ try{
   for(let start=0;start<2000;start+=100){const x=Array.from({length:100},(_,i)=>start+i);await streamingFigure.appendDataBatch(layers.map((layer,j)=>({layer,data:{x,y:x.map(t=>(j+1)*.15+3*Math.exp(-t/2000)+.08*Math.sin(t*.07+j))}})));}
   await writeFile(resolve(output,'vesora-streaming-demo.html'),toHTML(streamingFigure),'utf8');
 }finally{streamingFigure.close();}
-const files = [`vesora-${version}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html', 'vesora-quality-demo.html','vesora-streaming-demo.html'];
+for(const [name,html]of await prismReleaseScenes())await writeFile(resolve(output,name),html,'utf8');
+const files = [`vesora-${identity.python}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html', 'vesora-quality-demo.html','vesora-streaming-demo.html',...prismDemoNames];
 const hash=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
-const commit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
-const dirty=!!execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
-const manifest={version,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:[1,2,3,4,5,6],runtime:{index:await hash(resolve(root,'packages/core/dist/index.js')),worker:await hash(resolve(root,'packages/core/dist/worker.js'))},files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
+const manifest={version,pythonVersion:identity.python,tag:tags.includes(identity.tag)?identity.tag:null,candidate,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:[1,2,3,4,5,6,7],transportVersions:[2,3],runtime:Object.fromEntries(await Promise.all(['index','worker','viewer','labs'].map(async name=>[name,await hash(resolve(root,`packages/core/dist/${name}.js`))]))),files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
 await writeFile(resolve(output,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n','utf8');files.push('release-manifest.json');
 const sums = [];
 for (const name of files) {

@@ -1,7 +1,12 @@
 import {Figure} from './figure';
 import {DataRegistry} from './data';
+import {SnapshotStore,ownFrameEntry} from './snapshot-store';
+import type {SnapshotLease} from './snapshot-store';
+import {streamError} from './streaming';
+import type {DataEntry,InspectionState,StreamState} from './types';
 import {validateExportPNGOptions,validateExportRaster} from './export-options';
 import {buildXInspectionIndex,nearestWithinRun} from './inspection';
+import {pick3D,picking3DStats} from './picking3d';
 import type {XInspectionIndex} from './inspection';
 import type {BandResult,ExportPNGOptions,XHoverEvent,ReadyOptions,Snapshot,NumericArray} from './types';
 import {QueryScheduler} from './scheduler';
@@ -20,7 +25,7 @@ import {buildGeometry,gridEdges} from './geometry';
 import {prepareBars} from './statistics';
 import type {PreparedStatistics,StatMark} from './statistics';
 import {buildStatisticsGeometry} from './statistics-geometry';
-import {WebGLRenderer,cameraMatrix,identity} from './renderer';
+import {WebGLRenderer,cameraMatrix,cameraPreset,scientificAspect,geometryByteLength,geometryVertexCount,identity} from './renderer';
 import type {Geometry,PlotRect} from './renderer';
 import type {Bounds,Domain,LayerSpec,PointPlan,LineResult,Query,RepresentationInfo,Selection,ViewSpec} from './types';
 
@@ -43,6 +48,8 @@ export class FigureView {
   private scheduler:QueryScheduler;
   private observer:ResizeObserver;
   private width=800;private height=520;private dpr=1;
+  private renderingStacked=false;
+  private displayedLayout?:{stacked:boolean;width:number;height:number};
   private panels:PanelFrame[]=[];
   private plans=new Map<string,PointPlan|LineResult|BandResult>();
   private geometries=new Map<string,{key:string;geometry:Geometry}>();
@@ -61,9 +68,19 @@ export class FigureView {
   private generation=0;private completed=0;private raf=0;private disposed=false;
   private requestedRevision=0;private committedRevision=0;private frameRevision=0;private rendering=false;
   private renderingFigure?:Figure;private committedFigure?:Figure;
+  private frozenFigure?:Figure;private frozenLease?:SnapshotLease;private snapshotSerial=0;
+  private snapshotId?:string;private frameCopies=new WeakMap<DataEntry,DataEntry>();
+  private committedAt='';
+  private deferredInvalidation=false;
+  private snapshotStore:SnapshotStore;
+  private ownsSnapshotStore:boolean;
+  private retiredSnapshots=new Set<SnapshotLease>();
   private overlaySource?:Figure;
   private lastFrameMs=0;private frameStarted=0;private completedFrames=0;
   private committedGeometryBytes=0;
+  private frameCopiedBytes=0;private exportCopiedBytes=0;
+  private geometryBuilds=0;private geometryBuildMs=0;private lastPlanningMs=0;private lastDrawMs=0;
+  private axesGeometry?:{color:string;geometry:Geometry};
   private hoverRaf=0;private pendingHover?:[number,number];private selectionSequence=0;
   private failure?:Error;
   private waiters:Array<{revision:number;resolve:()=>void;reject:(error:Error)=>void}>=[];
@@ -72,6 +89,7 @@ export class FigureView {
   private box?:[number,number,number,number];
   private tooltip?:{x:number;y:number;text:string};
   private hoverHit?:HoverEvent;
+  private selectedHit?:HoverEvent;
   private xHover?:XHoverEvent;
   private xPinned=false;
   private inspection=new Map<string,{key:string;index:XInspectionIndex}>();
@@ -85,31 +103,34 @@ export class FigureView {
   /** A frame and its inspection callbacks must read the same immutable source versions. */
   private get source():Figure{return this.overlaySource??this.renderingFigure??this.committedFigure??this.figure;}
   private get displayedSource():Figure{return this.committedFigure??this.figure;}
-  private captureFigure():Figure{
-    const captured=Object.create(this.figure) as Figure,registry=new DataRegistry();
-    for(const [id,entry]of this.figure.registry.entries())registry.store.set(id,entry);
-    Object.defineProperties(captured,{spec:{value:structuredClone(this.figure.spec)},registry:{value:registry},presentation:{value:{...this.figure.presentation}},streams:{value:new Map([...this.figure.streams].map(([id,state])=>[id,{...state}]))},pendingLink:{value:structuredClone(this.figure.selectionRequest())}});
+  private get interactionFigure():Figure{return this.frozenFigure??this.figure;}
+  private captureFigure(source=this.frozenFigure??this.figure,registry?:DataRegistry):Figure{
+    const captured=Object.create(source) as Figure,owned=registry??new DataRegistry();
+    if(!registry)for(const [id,entry]of source.registry.entries())owned.store.set(id,this.renderTarget||source===this.frozenFigure?entry:ownFrameEntry(entry,this.frameCopies,bytes=>{this.frameCopiedBytes+=bytes;}));
+    Object.defineProperties(captured,{spec:{value:structuredClone(source.spec),writable:true},registry:{value:owned},presentation:{value:{...source.presentation}},streams:{value:new Map([...source.streams].map(([id,state])=>[id,{...state}]))},pendingLink:{value:structuredClone(source.selectionRequest()),writable:true},acceptedRevision:{value:source.acceptedRevision,writable:true},view:{value:undefined},changed:{value:()=>this.scheduleInspection()}});
     return captured;
   }
   private get theme():ThemeTokens{return this.source.spec.theme??LIGHT_THEME as ThemeTokens;}
   private get fonts(){const t=this.theme;return {title:t.titleFontSize??t.fontSize+4,label:t.labelFontSize??t.fontSize+1,tick:t.tickFontSize??t.fontSize,legend:t.legendFontSize??t.fontSize};}
-  constructor(private figure:Figure,container:HTMLElement,private renderTarget?:RenderTarget,sharedGL?:WebGL2RenderingContext){
+  constructor(private figure:Figure,container:HTMLElement,private renderTarget?:RenderTarget,sharedGL?:WebGL2RenderingContext,private responsivePanels=false,snapshotStore?:SnapshotStore){
+    this.snapshotStore=snapshotStore??new SnapshotStore(figure.runtime.maxSnapshotBytes);
+    this.ownsSnapshotStore=!snapshotStore;
     this.scheduler=new QueryScheduler(figure.runtime);
     this.root=document.createElement('div');this.root.className='vesora-figure';this.root.style.cssText='position:relative;width:100%;overflow:auto;background:white;color:#0f172a;font-family:system-ui,sans-serif;';
-    this.root.style.height=`${renderTarget?.height??figure.spec.height}px`;this.root.setAttribute('role','img');this.root.setAttribute('aria-label',figure.spec.title||'Scientific visualization');
+    this.root.style.height=`${renderTarget?.height??figure.spec.height}px`;this.root.setAttribute('role','figure');this.root.setAttribute('aria-label',figure.spec.title||'Scientific visualization');
     this.stage=document.createElement('div');this.stage.style.cssText='position:relative;';
     const canvas=document.createElement('canvas');canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;';
     this.overlay=document.createElement('canvas');this.overlay.style.cssText='position:absolute;inset:0;width:100%;height:100%;touch-action:none;';
-    this.overlay.tabIndex=0;this.overlay.setAttribute('aria-label','Plot controls: drag to pan, wheel to zoom, Shift-drag to select, double-click to reset');
+    this.overlay.tabIndex=0;this.overlay.setAttribute('role','group');this.overlay.setAttribute('aria-label','Plot controls: drag to pan, wheel to zoom, Shift-drag to select, double-click to reset');
     this.stage.append(canvas,this.overlay);this.root.append(this.stage);
     const controls=document.createElement('div');controls.dataset.vesoraSelection='';controls.style.cssText='position:absolute;right:18px;top:34px;z-index:1;display:flex;gap:12px;align-items:center;font:12px system-ui;';
     this.selectionStatus=document.createElement('span');this.selectionStatus.className='vesora-selection-summary';this.selectionStatus.setAttribute('role','status');this.selectionStatus.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);';
     this.clearSelectionButton=document.createElement('button');this.clearSelectionButton.className='vesora-clear-selection';this.clearSelectionButton.type='button';this.clearSelectionButton.textContent='Clear selection';this.clearSelectionButton.disabled=true;
-    this.clearSelectionButton.addEventListener('click',()=>{const link=this.figure.selectionRequest();if(link)this.figure.clearLinkedSelection(link.id);});
+    this.clearSelectionButton.addEventListener('click',()=>{const source=this.interactionFigure,link=source.selectionRequest();if(link)source.clearLinkedSelection(link.id);});
     controls.append(this.selectionStatus,this.clearSelectionButton);this.root.append(controls);container.appendChild(this.root);
     controls.hidden=!figure.spec.selectionLink;controls.style.display=figure.spec.selectionLink?'flex':'none';
     try{this.renderer=new WebGLRenderer(canvas,message=>this.fail(new Error(message)),sharedGL,()=>{this.geometries.clear();this.failure=undefined;this.schedule();});}catch(error){this.root.remove();this.scheduler.dispose();throw error;}
-    this.observer=new ResizeObserver(()=>this.schedule());this.observer.observe(this.root);
+    this.observer=new ResizeObserver(()=>this.frozenFigure?this.scheduleInspection():this.schedule());this.observer.observe(this.root);
     this.listen('wheel',this.wheel as EventListener,{passive:false});
     this.listen('pointerdown',this.pointerDown as EventListener);this.listen('pointermove',this.pointerMove as EventListener);this.listen('pointerup',this.pointerUp as EventListener);
     this.listen('pointercancel',(()=>{this.clearInteraction();this.drawOverlay();}) as EventListener);
@@ -117,13 +138,15 @@ export class FigureView {
     this.listen('keydown',this.keyDown as EventListener);
     this.listen('dblclick',((event:MouseEvent)=>{
       const panel=this.panelAt(...this.location(event));if(!panel)return;
-      this.figure.restorePanelView(panel.id,{...this.figure.panelView(panel.id),xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]});
+      this.interactionFigure.restorePanelView(panel.id,{...this.interactionFigure.panelView(panel.id),xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]});
     }) as EventListener);
   }
   /** A replacement snapshot owns a new source identity space, even if ids and
    * versions happen to match a previous producer's data. */
   invalidateData():void{
     if(this.disposed)return;
+    if(this.frozenFigure){this.deferredInvalidation=true;return;}
+    this.deferredInvalidation=false;
     this.generation++;this.failure=undefined;
     for(const key of this.statisticsRequests)this.scheduler.cancel(key);
     for(const source of this.sources)this.scheduler.release(source);
@@ -139,6 +162,7 @@ export class FigureView {
   }
   private listen(name:string,callback:EventListener,options?:AddEventListenerOptions):void{this.overlay.addEventListener(name,callback,options);this.cleanup.push(()=>this.overlay.removeEventListener(name,callback,options));}
   schedule(streaming=false):void{
+    if(this.frozenFigure)return;
     if(this.disposed)return;this.clearXHover();this.prepareFont();this.requestedRevision++;if(!streaming||!this.rendering)this.generation++;this.failure=undefined;
     const link=this.figure.selectionRequest(),controls=this.clearSelectionButton.parentElement!;
     this.scheduler.cancel('__linked');
@@ -147,10 +171,78 @@ export class FigureView {
     if(link){this.selectionStatus.textContent='Updating selection…';this.root.setAttribute('aria-busy','true');this.root.dispatchEvent(new Event('vesora-selection-pending',{bubbles:true}));}
     this.queueFrame();
   }
+  private scheduleInspection():void{
+    if(this.disposed)return;
+    this.requestedRevision++;this.generation++;this.failure=undefined;this.clearHover();this.queueFrame();
+  }
+  getInspectionState():InspectionState{
+    return {mode:this.frozenFigure?'frozen':'live',acceptedRevision:this.figure.acceptedRevision,displayedRevision:this.committedFigure?.acceptedRevision??0,frameId:this.completedFrames,snapshotId:this.snapshotId,capturedAt:this.frozenLease?.capturedAt,snapshotBytes:this.snapshotStore.bytes,maxSnapshotBytes:this.snapshotStore.maximum,displayedStreams:Object.fromEntries([...this.displayedSource.streams].map(([id,state])=>[id,{...state}]))};
+  }
+  getDisplayedStreamingState(layerId:string):StreamState|undefined{return this.displayedSource.getStreamingState(layerId);}
+  freezeInspection():InspectionState{
+    if(this.disposed)throw new Error('Figure view disposed');
+    if(this.frozenFigure)return this.getInspectionState();
+    if(!this.committedFigure)throw streamError('NOT_READY','A completed displayed frame is required before freezing inspection');
+    const lease=this.snapshotStore.capture(this.committedFigure.snapshot(),this.committedFigure.registry);
+    try{this.frozenFigure=this.captureFigure(this.committedFigure,lease.registry);}catch(error){lease.release();throw error;}
+    this.frozenLease=lease;this.snapshotId=`snapshot-${++this.snapshotSerial}`;this.generation++;
+    if(this.raf){cancelAnimationFrame(this.raf);this.raf=0;}
+    this.requestedRevision=this.committedRevision;this.frameRevision=this.committedRevision;this.completed=this.generation;
+    // Private inspection edits replace entries/spec in frozenFigure. Keep a
+    // separate completed-frame map until its replacement actually commits.
+    this.committedFigure=this.captureFigure(this.frozenFigure);
+    for(const waiter of this.waiters.splice(0))waiter.reject(streamError('PRESENTATION_FROZEN','Live rendering was interrupted after data acceptance; inspection is frozen'));
+    const state=this.getInspectionState();this.figure.emit('inspectionchange',state);return state;
+  }
+  async resumeLive():Promise<void>{
+    if(this.disposed)throw new Error('Figure view disposed');
+    if(!this.frozenFigure)return this.ready();
+    // The committed source remains owned until the resumed frame replaces it.
+    const lease=this.frozenLease;if(lease)this.retiredSnapshots.add(lease);this.frozenFigure=undefined;this.frozenLease=undefined;this.snapshotId=undefined;
+    if(this.deferredInvalidation)this.invalidateData();
+    this.schedule();const ready=this.ready();this.figure.emit('inspectionchange',this.getInspectionState());
+    await ready;
+  }
+  getInspectionView(panelId='main'):ViewSpec{return structuredClone(this.interactionFigure.panelView(panelId));}
+  getInspectionSnapshot():Snapshot{return this.displayedSource.snapshot();}
+  getInspectionSelection():HoverEvent|undefined{return this.selectedHit?structuredClone(this.selectedHit):undefined;}
+  setInspectionSlice(targetLayerId:string,index:number):void{this.interactionFigure.setSliceIndex(targetLayerId,index);this.figure.emit('slicechange',{targetLayerId,index,mode:this.frozenFigure?'frozen':'live',frameId:this.completedFrames,snapshotId:this.snapshotId});}
+  setInspectionView(panelId:string,patch:Partial<ViewSpec>):void{this.interactionFigure.setPanelView(panelId,patch);this.emitInspectionViewChange(panelId);}
+  resetInspectionView(panelId?:string):void{
+    for(const panel of this.interactionFigure.panelEntries())if(panelId===undefined||panel.id===panelId)this.interactionFigure.restorePanelView(panel.id,{...panel.view,xDomain:undefined,yDomain:undefined,zDomain:undefined,camera:{azimuth:35,elevation:25,distance:3},pan3d:[0,0]});
+    this.emitInspectionViewChange(panelId??'main');
+  }
+  focusInspectionSelection(panelId='main'):void{
+    const hit=this.selectedHit,panel=this.panels.find(panel=>panel.id===panelId);
+    if(!hit||!panel||(hit.panelId??'main')!==panelId||panel.view.kind!=='3d')throw streamError('NO_SELECTION','Select a 3D sample or surface before focusing');
+    const domains:Partial<ViewSpec>={camera:{...panel.view.camera,distance:3},pan3d:[0,0]};
+    for(const axis of ['x','y','z'] as const){const value=hit[axis];if(typeof value!=='number'||!Number.isFinite(value))throw new Error('Selected coordinate is not finite');const domain=axis==='z'?panel.zDomain:panel.bounds[axis],scale=panel.view[`${axis}Scale`],t=normalize(value,domain,scale);domains[`${axis}Domain`]=[denormalize(t-.1,domain,scale),denormalize(t+.1,domain,scale)];}
+    this.setInspectionView(panelId,domains);
+  }
+  private emitInspectionViewChange(panelId:string):void{
+    if(this.frozenFigure){const view=this.frozenFigure.panelView(panelId);this.figure.emit('viewchange',{...structuredClone(view),xDomain:view.xDomain??null,yDomain:view.yDomain??null,zDomain:view.zDomain??null,panelId,mode:'frozen',snapshotId:this.snapshotId,frameId:this.completedFrames} as never);}
+    else this.figure.emitViewChange(panelId);
+  }
+  captureExport(source:'accepted'|'displayed'='accepted'):SnapshotLease{
+    if(source!=='accepted'&&source!=='displayed')throw new TypeError('Export source must be accepted or displayed');
+    if(source==='displayed'&&!this.committedFigure)throw streamError('NOT_READY','No completed frame is available to export');
+    const figure=source==='displayed'?this.displayedSource:this.figure;
+    const lease=this.snapshotStore.capture(figure.snapshot(),figure.registry);
+    if(source==='displayed'){
+      lease.snapshot.figure.protocolVersion=Math.max(7,lease.snapshot.figure.protocolVersion);
+      const displayed=this.displayedLayout,spec=lease.snapshot.figure;
+      if(displayed){spec.width=displayed.width;spec.height=displayed.height;
+        if(displayed.stacked&&spec.layout){const originalCols=spec.layout.cols;spec.layout={...spec.layout,rows:spec.layout.rows*originalCols,cols:1};for(const panel of spec.panels??[]){panel.row=panel.row*originalCols+panel.col;panel.col=0;}}
+      }
+      lease.snapshot.figure.inspection={capturedAt:this.frozenLease?.capturedAt??this.committedAt,frameId:this.completedFrames,snapshotId:this.snapshotId,...(this.selectedHit?{selection:structuredClone(this.selectedHit)}:{})};
+    }
+    return lease;
+  }
   private queueFrame():void{
     if(this.disposed||this.rendering||this.raf)return;
     this.raf=requestAnimationFrame(()=>{
       this.raf=0;if(this.disposed)return;this.rendering=true;this.frameRevision=this.requestedRevision;this.frameStarted=performance.now();this.renderingFigure=this.captureFigure();
+      this.figure.emit('framepending',{...this.getInspectionState(),displayedRevision:this.renderingFigure.acceptedRevision,displayedStreams:Object.fromEntries([...this.renderingFigure.streams].map(([id,state])=>[id,{...state}]))});
       void this.render(this.generation).finally(()=>{
         this.rendering=false;this.renderingFigure=undefined;
         if(!this.disposed&&this.requestedRevision>this.frameRevision){this.generation++;this.failure=undefined;this.queueFrame();}
@@ -158,6 +250,8 @@ export class FigureView {
     });
   }
   ready(options:ReadyOptions={}):Promise<void>{
+    if(options.target!==undefined&&!['live','displayed'].includes(options.target))return Promise.reject(new TypeError('Ready target must be live or displayed'));
+    if(this.frozenFigure&&options.target!=='displayed')return Promise.reject(streamError('PRESENTATION_FROZEN','Live presentation is frozen; use ready({target: displayed}) or resumeLive()'));
     if(options.timeoutMs!==undefined&&(!Number.isFinite(options.timeoutMs)||options.timeoutMs<=0))return Promise.reject(new RangeError('ready timeoutMs must be positive'));
     if(options.signal?.aborted)return Promise.reject(new DOMException('Ready wait aborted','AbortError'));
     const revision=this.requestedRevision;
@@ -169,10 +263,10 @@ export class FigureView {
       const waiter={revision,resolve:()=>finish(),reject:(error:Error)=>finish(error)};
       options.signal?.addEventListener('abort',abort,{once:true});
       if(options.timeoutMs!==undefined)timer=setTimeout(()=>finish(new DOMException('Ready wait timed out','TimeoutError')),options.timeoutMs);
-      void (async()=>{let pending;do{pending=this.fontReady;await pending;}while(pending!==this.fontReady);if(settled)return;if(this.disposed)return finish(new Error('Figure view disposed'));if(this.failure)return finish(this.failure);if(this.committedRevision>=revision&&this.completed===this.generation)return finish();this.waiters.push(waiter);})();
+      void (async()=>{let pending;do{pending=this.fontReady;await pending;}while(pending!==this.fontReady);if(settled)return;if(this.disposed)return finish(new Error('Figure view disposed'));if(this.frozenFigure&&options.target!=='displayed')return finish(streamError('PRESENTATION_FROZEN','Live presentation is frozen after data acceptance'));if(this.failure)return finish(this.failure);if(this.committedRevision>=revision&&this.completed===this.generation)return finish();this.waiters.push(waiter);})();
     });
   }
-  diagnostics(){const sourceBytes=[...this.figure.registry.entries()].reduce((sum,[,entry])=>sum+entry.descriptor.byteLength,0),geometryBytes=this.committedGeometryBytes;return {backend:'WebGL2',contextLost:this.renderer.gl.isContextLost(),sourceBytes,geometryBytes,estimatedGPUBytes:geometryBytes,pendingExports:this.exportReservations.size,lastFrameMs:this.lastFrameMs,completedFrames:this.completedFrames,requestedRevision:this.requestedRevision,committedRevision:this.committedRevision,...this.scheduler.stats};}
+  diagnostics(){const sourceBytes=[...this.figure.registry.entries()].reduce((sum,[,entry])=>sum+entry.descriptor.byteLength,0),geometryBytes=this.committedGeometryBytes;return {backend:'WebGL2',frameCopiedBytes:this.frameCopiedBytes,exportCopiedBytes:this.exportCopiedBytes,snapshotCopiedBytes:this.snapshotStore.copiedBytes,materializedSourceBytes:[...this.figure.registry.entries()].reduce((n,[,entry])=>n+(entry.materializedByteLength??0),0),picking:{...picking3DStats},contextLost:this.renderer.gl.isContextLost(),sourceBytes,geometryBytes,estimatedGPUBytes:geometryBytes,pendingExports:this.exportReservations.size,lastFrameMs:this.lastFrameMs,planningMs:this.lastPlanningMs,drawMs:this.lastDrawMs,geometryBuilds:this.geometryBuilds,geometryBuildMs:this.geometryBuildMs,completedFrames:this.completedFrames,requestedRevision:this.requestedRevision,committedRevision:this.committedRevision,...this.scheduler.stats,...this.renderer.stats,...this.getInspectionState()};}
   private prepareFont():void{
     const theme=this.figure.spec.theme??LIGHT_THEME,key=`${theme.fontSize}px ${theme.fontFamily}`;if(key===this.fontKey)return;this.fontKey=key;
     if(!document.fonts)return;
@@ -247,19 +341,24 @@ export class FigureView {
     return padded.every(Number.isFinite)&&padded[0]<padded[1]&&(scale!=='log'||padded[0]>0)?padded:domain;
   }
   private layout(statistics:Map<string,PreparedStatistics>,resolvedPlans?:Map<string,PointPlan|LineResult|BandResult>):PanelFrame[]{
-    const spec=this.source.spec,grid=spec.layout,rows=grid?.rows??1,cols=grid?.cols??1,f=this.fonts;
+    const spec=this.source.spec,grid=spec.layout,f=this.fonts,availableWidth=Math.max(200,Math.round(this.root.clientWidth||spec.width));
+    const stacked=!!grid&&this.responsivePanels&&!this.renderTarget&&availableWidth<grid.cols*360;
+    const rows=stacked?grid!.rows*grid!.cols:grid?.rows??1,cols=stacked?1:grid?.cols??1;
+    this.renderingStacked=stacked;
     this.root.style.height=`${this.renderTarget?.height??spec.height}px`;this.root.style.background=this.theme.background;this.root.style.color=this.theme.foreground;this.root.style.fontFamily=this.theme.fontFamily;this.root.style.fontSize=`${this.theme.fontSize}px`;
     this.clearSelectionButton.style.cssText=`color:${this.theme.foreground};background:${this.theme.background};border:1px solid ${this.theme.axis};font:inherit;`;
-    this.width=this.renderTarget?.width??Math.max(grid?cols*360:200,Math.round(this.root.clientWidth||spec.width));
+    this.width=this.renderTarget?.width??Math.max(grid&&!this.responsivePanels?cols*360:200,availableWidth);
     const header=spec.selectionLink?(spec.title?f.title+54:44):grid&&spec.title?f.title+24:0;
     this.height=this.renderTarget?.height??(grid?Math.max(spec.height,header+rows*260):spec.height);
+    if(this.responsivePanels&&!this.renderTarget)this.root.style.height=`${this.height}px`;
     this.dpr=this.renderTarget?.scale??Math.min(2,window.devicePixelRatio||1);
     this.stage.style.width=`${this.width}px`;this.stage.style.height=`${this.height}px`;
     const measure=this.overlay.getContext('2d')!;
     const panels=this.source.panelEntries().map(entry=>{
       const view=structuredClone(entry.view),layers=structuredClone(this.source.panelLayers(entry.id).filter(l=>l.visible));
       if(spec.theme)for(const layer of layers)if(!layer.style.color)layer.style.color=this.theme.palette[spec.layers.findIndex(item=>item.id===layer.id)%this.theme.palette.length];
-      const cell:PlotRect={left:entry.col*this.width/cols,top:header+entry.row*(this.height-header)/rows,width:this.width/cols,height:(this.height-header)/rows};
+      const column=stacked?0:entry.col,row=stacked?entry.row*grid!.cols+entry.col:entry.row;
+      const cell:PlotRect={left:column*this.width/cols,top:header+row*(this.height-header)/rows,width:this.width/cols,height:(this.height-header)/rows};
       const link=spec.selectionLink;if(link)for(const layer of layers)if(layer.id===link.histogram)layer.style.label='All observations';
       const linked=link&&layers.some(l=>link.scatter.includes(l.id)||link.histogram===l.id);
       const density=(l:LayerSpec)=>l.kind==='scatter'&&(resolvedPlans?.has(l.id)?resolvedPlans.get(l.id)?.kind==='density':l.style.representation==='density'||l.style.representation!=='points'&&(this.previous.has(l.id)?this.previous.get(l.id)==='density':this.source.registry.get(l.data.x).values.length>256));
@@ -276,7 +375,7 @@ export class FigureView {
       if(possibleColor){
         let domain=possibleColor.style.colorDomain;
         if(!domain&&!possibleDensity)domain=extent(this.source.registry.get(possibleColor.data.color??possibleColor.data.z).values);
-        const labels=domain?ticks(domain,'linear',5).map(v=>formatTick(v,domain[1]-domain[0])):[String(this.source.registry.get(possibleColor.data.x).values.length)];
+        const labels=domain?ticks(domain,'linear',5).map(v=>formatTick(v,domain[1]-domain[0])):[String(this.source.registry.get(possibleColor.data.x).descriptor.shape[0])];
         right=42+Math.max(...labels.map(t=>measure.measureText(t).width))+(possibleColor.style.colorbarLabel||possibleDensity||view.zLabel?f.label+10:0);
       }
       for(let pass=0;pass<3;pass++){
@@ -387,17 +486,19 @@ export class FigureView {
             info={layerId:layer.id,...this.panelMetadata(panel.id),kind:layer.kind==='heatmap'?'grid':layer.kind==='surface'?'surface':'points',total:count,visible:count,rendered:count,exact:true,method:layer.kind==='surface'?'regular-grid triangulation':layer.kind==='heatmap'?'scalar grid':'raw points'};
           }
           if(this.disposed||generation!==this.generation)throw new DOMException('Superseded','AbortError');
+          const geometryStarted=performance.now();
           const geometry=cache?.key===key?cache.geometry:prepared
             ?buildStatisticsGeometry(prepared,bounds,view,rect.width,rect.height,baseStyle)
             :buildGeometry({...layer,style:baseStyle},this.source.registry,bounds,zDomain,view,rect.width,rect.height,plan);
+          if(cache?.geometry!==geometry){this.geometryBuilds++;this.geometryBuildMs+=performance.now()-geometryStarted;}
           if(geometry.primitive==='points'){
             info.rendered=geometry.positions.length/3;info.visible=info.rendered;
             if(layer.data.color)info.method+='; non-finite scalar colors omitted';
           }else if(layer.kind==='surface'){
-            info.rendered=geometry.positions.length/9;info.method='regular-grid triangles; invalid vertices omitted';
-            const xs=this.source.registry.get(layer.data.x).values,ys=this.source.registry.get(layer.data.y).values,zs=this.source.registry.get(layer.data.z).values;
-            let valid=0;for(let i=0;i<zs.length;i++)if(Number.isFinite(normalize(xs[i%xs.length],bounds.x,view.xScale))&&Number.isFinite(normalize(ys[Math.floor(i/xs.length)],bounds.y,view.yScale))&&Number.isFinite(normalize(zs[i],zDomain,view.zScale)))valid++;
-            info.visible=valid;
+            info.rendered=geometryVertexCount(geometry)/3;info.method='indexed regular-grid triangles; invalid coordinates/scalars omitted';
+            info.visible=geometry.positions.length/3;info.valid=info.visible;info.omitted=info.total-info.visible;
+            const shape=this.source.registry.get(layer.data.z).descriptor.shape;
+            info.totalTriangles=2*(shape[0]-1)*(shape[1]-1);info.omittedTriangles=info.totalTriangles-info.rendered;
           }else if(layer.kind==='heatmap'){info.rendered=geometry.positions.length/18;info.visible=info.rendered;}
           const selected:Geometry[]=[];
           if(active&&linked&&link){
@@ -432,24 +533,39 @@ export class FigureView {
       // Representation is resolved from visible data. Reclaim the gutter when
       // sparse zooms use points; reserve it before committing a density frame.
       if(panels.some(panel=>panel.reservedColor!==!!panel.colorLayer||panel.reservedDensity!==!!panel.colorDensity))return await this.render(generation,nextPlans);
-      const geometryBytes=panelResults.reduce((total,result)=>total+result.items.reduce((sum,item)=>sum+item.positions.byteLength+item.colors.byteLength,0),0);
+      const geometryBytes=panelResults.reduce((total,result)=>total+result.items.reduce((sum,item)=>sum+geometryByteLength(item),0),0);
       if(this.figure.runtime.maxGeometryBytes!==undefined&&geometryBytes>this.figure.runtime.maxGeometryBytes)throw new RangeError('Figure exceeds its geometry memory budget');
       // Neither canvas changes until every panel's current query succeeds.
       const live=new Set(nextGeometry.keys());for(const id of this.inspection.keys())if(!live.has(id))this.inspection.delete(id);for(const id of this.hoverIndices.keys())if(!live.has(id))this.hoverIndices.delete(id);
       for(const key of this.geometries.keys())if(!live.has(key)){this.scheduler.cancel(key);this.previous.delete(key);}
       const sources=new Set(Array.from(this.source.registry.entries(),([source])=>source));
       for(const source of this.extents.keys())if(source.startsWith('band:')?![...live].some(id=>source===`band:${id}:x`||source===`band:${id}:y`):!sources.has(source)){this.extents.delete(source);if(!source.startsWith('band:'))this.scheduler.release(source);}
+      this.lastPlanningMs=performance.now()-this.frameStarted;const drawStarted=performance.now();
       this.renderer.beginFrame(this.width,this.height,this.dpr,parseColor(this.theme.background));
       for(const {panel,items} of panelResults){
-        const {view,rect}=panel,matrix=view.kind==='3d'?cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,rect.width/rect.height,view.pan3d??[0,0]):identity;
-        this.renderer.drawPanel(items,rect,matrix,view.kind==='3d');
+        const {view,rect}=panel,matrix=view.kind==='3d'?cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,rect.width/rect.height,view.pan3d??[0,0],scientificAspect(view,panel.bounds,panel.zDomain)):identity;
+        this.renderer.drawPanel(items,rect,matrix,view.kind==='3d',scientificAspect(view,panel.bounds,panel.zDomain));
       }
       this.renderer.endFrame();
+      this.lastDrawMs=performance.now()-drawStarted;
       this.panels=panels;this.geometries=nextGeometry;this.plans=nextPlans;this.statistics=nextStatistics;this.infos=panelResults.flatMap(result=>result.infos);
       this.linkedResult=linked;this.linkedSpec=link;this.selectedPlans=nextSelectedPlans;
       for(const [id,plan] of nextPlans)if(plan.kind==='points'||plan.kind==='density')this.previous.set(id,plan.kind);
+      const previousFigure=this.committedFigure;
       this.committedFigure=this.renderingFigure;this.committedRevision=this.frameRevision;this.lastFrameMs=performance.now()-this.frameStarted;this.completedFrames++;this.committedGeometryBytes=geometryBytes;
+      this.displayedLayout={stacked:this.renderingStacked,width:this.width,height:this.height};
+      // The completed frame must carry the predicate that produced its pixels.
+      if(link)this.committedFigure!.commitLinkedSelection(link);
+      this.committedAt=new Date().toISOString();
+      if(this.selectedHit){
+        const layer=this.committedFigure!.spec.layers.find(layer=>layer.id===this.selectedHit!.layerId),previous=previousFigure?.spec.layers.find(layer=>layer.id===this.selectedHit!.layerId);
+        if(!layer||!previous||Object.entries(layer.data).some(([key,id])=>previous.data[key]!==id||!previousFigure!.registry.has(id)||previousFigure!.registry.get(id)!==this.committedFigure!.registry.get(id)))this.selectedHit=undefined;
+      }
+      if(!previousFigure&&this.committedFigure?.spec.inspection?.selection)this.selectedHit=structuredClone(this.committedFigure.spec.inspection.selection);
+      for(const lease of this.retiredSnapshots)lease.release();this.retiredSnapshots.clear();
       this.drawOverlay();this.completed=generation;
+      // Establish frame ownership before hover/selection callbacks reference it.
+      this.figure.emit('frame',this.getInspectionState());
       // Any hover created while planning belonged to the previously displayed rows.
       const hoverPosition=this.lastHover;
       this.clearHover();if(hoverPosition&&!this.drag)this.hover(...hoverPosition);else this.drawOverlay();
@@ -459,7 +575,7 @@ export class FigureView {
       if(link&&linked){
         const origin=link.selection?.originLayerId??link.scatter[0],layer=spec.layers.find(layer=>layer.id===origin)!;
         const event:LinkedSelection={kind:'linked',linkId:link.id,generation:link.generation,sequence:link.sequence,layerId:origin,...this.panelMetadata(layer.panelId??'main'),active:!!link.selection,count:linked.count,total:linked.total,fraction:linked.total?linked.count/linked.total:0,indices:Array.from(linked.preview),truncated:linked.truncated,...(link.selection?{bounds:structuredClone(link.selection.bounds)}:{})};
-        this.figure.commitLinkedSelection(link,event);
+        this.interactionFigure.commitLinkedSelection(link,{...event,mode:this.frozenFigure?'frozen':'live',frameId:this.completedFrames,snapshotId:this.snapshotId,sourceRevision:this.committedFigure!.acceptedRevision});
       }
       this.figure.emit('representation',this.inspect());
       // A representation listener may synchronously invalidate this frame.
@@ -468,7 +584,8 @@ export class FigureView {
   }
   private fail(error:Error):void{this.failure=error;this.completed=this.generation;this.figure.emit('error',{message:error.message});this.drawOverlay(error.message);for(const waiter of this.waiters.splice(0))waiter.reject(error);}
   private axes3d():Geometry{
-    return {id:'__axes3d',primitive:'lines',positions:new Float32Array([-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1]),colors:Float32Array.from(Array.from({length:6},()=>parseColor(this.theme.muted)).flat())};
+    if(this.axesGeometry?.color!==this.theme.muted)this.axesGeometry={color:this.theme.muted,geometry:{id:'__axes3d',primitive:'lines',positions:new Float32Array([-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1]),colors:Float32Array.from(Array.from({length:6},()=>parseColor(this.theme.muted)).flat())}};
+    return this.axesGeometry.geometry;
   }
   private ctx():CanvasRenderingContext2D{
     const w=Math.round(this.width*this.dpr),h=Math.round(this.height*this.dpr);
@@ -531,7 +648,7 @@ export class FigureView {
       ctx.save();ctx.translate(cell.left+f.label+1,r.top+r.height/2);ctx.rotate(-Math.PI/2);ctx.fillText(this.fitText(ctx,view.yLabel,r.height),0,0);ctx.restore();
       this.drawAnnotations(ctx,panel);
     }else{
-      const m=cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,r.width/r.height,view.pan3d??[0,0]);
+      const m=cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,r.width/r.height,view.pan3d??[0,0],scientificAspect(view,panel.bounds,panel.zDomain));
       const pos=(x:number,y:number,z:number)=>[r.left+((m[0]*x+m[4]*y+m[8]*z+m[12])+1)/2*r.width,r.top+(1-(m[1]*x+m[5]*y+m[9]*z+m[13]))/2*r.height];
       for(const [axis,end,domain]of [['x',[1,-1,-1],bounds.x],['y',[-1,1,-1],bounds.y],['z',[-1,-1,1],zDomain]] as const){
         const p=pos(end[0],end[1],end[2]);ctx.textAlign='center';ctx.fillText(view[`${axis}Label`]||axis,p[0],p[1]-12);
@@ -616,11 +733,21 @@ export class FigureView {
       const index=this.sourceInspection(layer,panel),at=nearestWithinRun(index,cursorX);
       if(at!==null)items.push({layerId:layer.id,index:at,x:index.x[at],y:this.displayedSource.registry.get(layer.data.y).values[at],...this.streamIdentity(layer.id,at)});
     }
-    this.xHover={cursorX,pointerPosition:{...this.pointerPosition},...this.panelMetadata(panel.id,this.displayedSource),items};
+    this.xHover={cursorX,frameId:this.completedFrames,snapshotId:this.snapshotId,dataRevision:this.displayedSource.acceptedRevision,pointerPosition:{...this.pointerPosition},...this.panelMetadata(panel.id,this.displayedSource),items};
     this.figure.emit('xhover',this.xHover);this.drawOverlay();
   }
   private keyDown=(event:KeyboardEvent):void=>{
     if(event.key==='Escape'){this.clearHover();this.drawOverlay();return;}
+    const panel3d=this.panels.find(panel=>panel.view.kind==='3d'&&(!this.lastHover||this.panelAt(...this.lastHover)?.id===panel.id));
+    if(panel3d&&['1','2','3','0','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-','Home'].includes(event.key)){
+      event.preventDefault();const view=this.interactionFigure.panelView(panel3d.id),camera={...view.camera};
+      if(event.key==='Home')this.resetInspectionView(panel3d.id);
+      else{if(['0','1','2','3'].includes(event.key))Object.assign(camera,cameraPreset(({0:'isometric',1:'xy',2:'xz',3:'yz'} as const)[event.key as '0'|'1'|'2'|'3']));
+      else if(event.key==='ArrowLeft'||event.key==='ArrowRight')camera.azimuth+=event.key==='ArrowLeft'?-5:5;
+      else if(event.key==='ArrowUp'||event.key==='ArrowDown')camera.elevation=Math.max(-90,Math.min(90,camera.elevation+(event.key==='ArrowUp'?5:-5)));
+      else camera.distance=Math.max(1,Math.min(20,camera.distance*(event.key==='+'?.9:1.1)));
+      this.setInspectionView(panel3d.id,{camera});}return;
+    }
     if(this.displayedSource.spec.hoverMode!=='x'||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)||!this.committedFigure)return;
     const panel=this.panels.find(p=>p.id===(this.xHover?.panelId??'main'))??this.panels[0],layer=panel?.layers.find(l=>l.kind==='line');if(!layer)return;
     const index=this.sourceInspection(layer,panel),xs=index.x,dir=event.key==='ArrowLeft'||event.key==='End'?-1:1;
@@ -647,7 +774,7 @@ export class FigureView {
     lines.forEach((line,i)=>ctx.fillText(this.fitText(ctx,line,width-20),left+10,top+this.fonts.tick+7+i*lineHeight));
   }
   private streamIdentity(layerId:string,index?:number,source=this.displayedSource):{streamId?:string;sequence?:number;revision?:number}{const state=source.getStreamingState(layerId);return state?{streamId:state.streamId,revision:state.revision,...(index===undefined?{}:{sequence:state.nextSequence-state.retained+index})}:{};}
-  private emitHit(payload:Omit<HoverEvent,'pointerPosition'>):void{const event={...payload,...this.streamIdentity(payload.layerId as string,payload.index as number|undefined),pointerPosition:{...this.pointerPosition}} as HoverEvent;this.hoverHit=event;this.figure.emit('hover',event);}
+  private emitHit(payload:Omit<HoverEvent,'pointerPosition'>):void{const layer=this.displayedSource.spec.layers.find(layer=>layer.id===payload.layerId);const event={...payload,...this.streamIdentity(payload.layerId as string,payload.index as number|undefined),frameId:this.completedFrames,snapshotId:this.snapshotId,dataRevision:this.displayedSource.acceptedRevision,sourceRevision:layer?.data.x?this.displayedSource.registry.get(layer.data.x).descriptor.version:undefined,pointerPosition:{...this.pointerPosition}} as unknown as HoverEvent;this.hoverHit=event;this.figure.emit('hover',event);}
   private axisLabel(axis:'x'|'y',value:number,panel:PanelFrame,span?:number):string{const format=panel.view[`${axis}Format`];return panel.view[`${axis}Scale`]==='time'&&(!format||format.kind==='date')?formatTimeTick(value,span??(panel.bounds[axis][1]-panel.bounds[axis][0]),format):formatValue(value,format,span);}
   /** Browser gestures stay inside calendar limits; explicit API validation remains strict. */
   private gestureDomain(domain:Domain,axis:'x'|'y',view:ViewSpec):Domain|undefined{
@@ -659,13 +786,13 @@ export class FigureView {
   private panelAt(x:number,y:number):PanelFrame|undefined{return this.panels.find(({rect:r})=>x>=r.left&&x<=r.left+r.width&&y>=r.top&&y<=r.top+r.height);}
   private wheel=(event:WheelEvent):void=>{
     const [x,y]=this.location(event),panel=this.panelAt(x,y);if(!panel)return;event.preventDefault();
-    const view=this.figure.panelView(panel.id),factor=Math.exp(Math.max(-1,Math.min(1,event.deltaY*.001))),r=panel.rect;
-    if(view.kind==='3d'){this.figure.setPanelView(panel.id,{camera:{...view.camera,distance:Math.max(1,Math.min(20,view.camera.distance*factor))}});}
+    const view=this.interactionFigure.panelView(panel.id),factor=Math.exp(Math.max(-1,Math.min(1,event.deltaY*.001))),r=panel.rect;
+    if(view.kind==='3d'){this.interactionFigure.setPanelView(panel.id,{camera:{...view.camera,distance:Math.max(1,Math.min(20,view.camera.distance*factor))}});}
     else {const tx=(x-r.left)/r.width,ty=1-(y-r.top)/r.height;
       const zoom=(d:Domain,t:number,scale:ScaleKind):Domain=>[denormalize(t+(0-t)*factor,d,scale),denormalize(t+(1-t)*factor,d,scale)];
       const xd=this.gestureDomain(zoom(panel.bounds.x,tx,view.xScale),'x',view),yd=this.gestureDomain(zoom(panel.bounds.y,ty,view.yScale),'y',view);
-      if(xd&&yd)this.figure.setPanelView(panel.id,{xDomain:xd,yDomain:yd});
-    }this.figure.emitViewChange(panel.id);
+      if(xd&&yd)this.interactionFigure.setPanelView(panel.id,{xDomain:xd,yDomain:yd});
+    }this.emitInspectionViewChange(panel.id);
   };
   private pointerDown=(event:PointerEvent):void=>{
     const [x,y]=this.location(event),panel=this.panelAt(x,y);if(!panel||event.button!==0)return;
@@ -679,23 +806,23 @@ export class FigureView {
     if(Math.hypot(x-d.x,y-d.y)>=4)d.moved=true;
     const r=d.rect;
     if(d.select){this.box=[d.x,d.y,Math.max(r.left,Math.min(r.left+r.width,x)),Math.max(r.top,Math.min(r.top+r.height,y))];this.drawOverlay();return;}
-    const view=this.figure.panelView(d.panelId);
+    const view=this.interactionFigure.panelView(d.panelId);
     if(view.kind==='3d'){
-      if(d.pan){const pan=view.pan3d??[0,0];this.figure.setPanelView(d.panelId,{pan3d:[pan[0]+(x-d.lastX)/r.width*2,pan[1]-(y-d.lastY)/r.height*2]});}
-      else this.figure.setPanelView(d.panelId,{camera:{...view.camera,azimuth:view.camera.azimuth+(x-d.lastX)*.5,elevation:Math.max(-89,Math.min(89,view.camera.elevation+(y-d.lastY)*.5))}});
+      if(d.pan){const pan=view.pan3d??[0,0];this.interactionFigure.setPanelView(d.panelId,{pan3d:[pan[0]+(x-d.lastX)/r.width*2,pan[1]-(y-d.lastY)/r.height*2]});}
+      else this.interactionFigure.setPanelView(d.panelId,{camera:{...view.camera,azimuth:view.camera.azimuth+(x-d.lastX)*.5,elevation:Math.max(-89,Math.min(89,view.camera.elevation+(y-d.lastY)*.5))}});
       d.lastX=x;d.lastY=y;
     }else{
       const dx=(d.x-x)/r.width,dy=(y-d.y)/r.height;
       const shifted=(domain:Domain,t:number,scale:ScaleKind):Domain=>[denormalize(t,domain,scale),denormalize(1+t,domain,scale)];
       const xd=this.gestureDomain(shifted(d.bounds.x,dx,view.xScale),'x',view),yd=this.gestureDomain(shifted(d.bounds.y,dy,view.yScale),'y',view);
-      if(xd&&yd)this.figure.setPanelView(d.panelId,{xDomain:xd,yDomain:yd});
+      if(xd&&yd)this.interactionFigure.setPanelView(d.panelId,{xDomain:xd,yDomain:yd});
     }
   };
   private pointerUp=(event:PointerEvent):void=>{
     const d=this.drag;if(!d)return;const panel=this.panels.find(panel=>panel.id===d.panelId);
     if(d.select&&this.box&&panel)this.select(this.box,panel);
     const [x,y]=this.location(event),clicked=!d.select&&!d.moved&&Math.hypot(x-d.x,y-d.y)<4;this.drag=undefined;this.box=undefined;if(this.overlay.hasPointerCapture(event.pointerId))this.overlay.releasePointerCapture(event.pointerId);
-    if(clicked){this.hover(x,y,true);if(this.hoverHit)this.figure.emit('click',this.hoverHit);if(this.displayedSource.spec.hoverMode==='x'&&panel){this.inspectX(this.pointToData(x,y,panel)[0],panel);this.xPinned=event.pointerType==='touch';}}this.drawOverlay();this.figure.emitViewChange(d.panelId);
+    if(clicked){this.hover(x,y,true);if(this.hoverHit){this.selectedHit=structuredClone(this.hoverHit);this.figure.emit('click',this.hoverHit);}if(this.displayedSource.spec.hoverMode==='x'&&panel){this.inspectX(this.pointToData(x,y,panel)[0],panel);this.xPinned=event.pointerType==='touch';}}this.drawOverlay();this.emitInspectionViewChange(d.panelId);
   };
   private pointToData(x:number,y:number,panel:PanelFrame):[number,number]{const {rect:r,bounds,view}=panel;return [denormalize((x-r.left)/r.width,bounds.x,view.xScale),denormalize(1-(y-r.top)/r.height,bounds.y,view.yScale)];}
   private statisticsInfo(prepared:PreparedStatistics,panel:PanelFrame):PanelInfo{
@@ -762,8 +889,16 @@ export class FigureView {
   }
   private hover(x:number,y:number,forceNearest=false):void{
     this.lastHover=[x,y];
-    const hadHit=this.hoverHit!==undefined;this.tooltip=undefined;this.hoverHit=undefined;const panel=this.panelAt(x,y);if(!panel||panel.view.kind==='3d'||!this.committedFigure||this.failure){if(hadHit)this.figure.emit('hover',null);this.drawOverlay(this.failure?.message);return;}
+    const hadHit=this.hoverHit!==undefined;this.tooltip=undefined;this.hoverHit=undefined;const panel=this.panelAt(x,y);if(!panel||!this.committedFigure||this.failure){if(hadHit)this.figure.emit('hover',null);this.drawOverlay(this.failure?.message);return;}
     const source=this.displayedSource;
+    if(panel.view.kind==='3d'){
+      const view=panel.view,matrix=cameraMatrix(view.camera.azimuth,view.camera.elevation,view.camera.distance,panel.rect.width/panel.rect.height,view.pan3d??[0,0],scientificAspect(view,panel.bounds,panel.zDomain));
+      const items=panel.layers.flatMap(layer=>{const geometry=this.geometries.get(layer.id)?.geometry;return geometry?[{layer,geometry}]:[];});
+      const hit=pick3D(items,source.registry,matrix,panel.rect,x,y,{bounds:panel.bounds,zDomain:panel.zDomain,view});
+      if(hit){this.emitHit({...hit});this.tooltip={x,y,text:`${hit.interpolated?'Interpolated':'Source sample'} · x=${formatValue(hit.x)} y=${formatValue(hit.y)} z=${formatValue(hit.z)}${hit.value===undefined?'':` · scalar=${formatValue(hit.value)}`}`};}
+      else if(hadHit)this.figure.emit('hover',null);
+      this.drawOverlay();return;
+    }
     if(source.spec.hoverMode==='x'&&!forceNearest){if(!this.xPinned)this.inspectX(this.pointToData(x,y,panel)[0],panel);return;}
     const {rect:r,view,bounds}=panel,metadata=this.panelMetadata(panel.id,source);
     for(const layer of [...panel.layers].reverse()){
@@ -800,7 +935,7 @@ export class FigureView {
     const sequence=++this.selectionSequence,revision=this.committedRevision,source=this.displayedSource;
     const a=this.pointToData(box[0],box[1],panel),b=this.pointToData(box[2],box[3],panel);const bounds:Bounds={x:[Math.min(a[0],b[0]),Math.max(a[0],b[0])],y:[Math.min(a[1],b[1]),Math.max(a[1],b[1])]};
     for(const layer of panel.layers){
-      if(source.spec.selectionLink?.scatter.includes(layer.id)){if(this.figure.spec.selectionLink?.id===source.spec.selectionLink.id&&this.figure.spec.selectionLink.scatter.includes(layer.id))this.figure.selectLinked(layer.id,bounds);continue;}
+      if(source.spec.selectionLink?.scatter.includes(layer.id)){const target=this.interactionFigure;if(target.spec.selectionLink?.id===source.spec.selectionLink.id&&target.spec.selectionLink.scatter.includes(layer.id))target.selectLinked(layer.id,bounds,!!this.frozenFigure);continue;}
       const prepared=this.statistics.get(layer.id);
       if(prepared){
         const selected=new Set<number>();
@@ -823,13 +958,14 @@ export class FigureView {
   }
   async exportPNG(options:ExportPNGOptions={}):Promise<Blob>{
     const validated=validateExportPNGOptions(options),reservation=this.reserveExport();
+    let lease:SnapshotLease|undefined;
     try{
-      const captured=this.captureFigure(),snapshot=captured.snapshot(),buffers=new Map<string,NumericArray>();
-      for(const source of snapshot.sources)buffers.set(source.id,captured.registry.get(source.id).values);
+      lease=this.captureExport(validated.source);const snapshot=lease.snapshot,buffers=new Map<string,DataEntry>();
+      for(const source of snapshot.sources)buffers.set(source.id,lease.registry.get(source.id));
       return await this.queueSnapshotPNG(snapshot,buffers,validated,reservation.signal);
-    }finally{this.exportReservations.delete(reservation);}
+    }finally{lease?.release();this.exportReservations.delete(reservation);}
   }
-  async exportSnapshotPNG(input:Snapshot,inputBuffers:Map<string,ArrayBuffer>,options:ExportPNGOptions={}):Promise<Blob>{
+  async exportSnapshotPNG(input:Snapshot,inputBuffers:ReadonlyMap<string,ArrayBuffer|NumericArray|DataEntry>,options:ExportPNGOptions={}):Promise<Blob>{
     const validated=validateExportPNGOptions(options),reservation=this.reserveExport();
     try{return await this.queueSnapshotPNG(input,inputBuffers,validated,reservation.signal);}
     finally{this.exportReservations.delete(reservation);}
@@ -839,26 +975,39 @@ export class FigureView {
     if(this.exportReservations.size>=8)throw Object.assign(new Error('At most 8 PNG exports may be pending per figure view'),{code:'EXPORT_BACKPRESSURE'});
     const reservation=new AbortController();this.exportReservations.add(reservation);return reservation;
   }
-  private async queueSnapshotPNG(input:Snapshot,inputBuffers:ReadonlyMap<string,ArrayBuffer|NumericArray>,validated:ExportPNGOptions,signal:AbortSignal):Promise<Blob>{
-    const target={width:validated.width??this.width,height:validated.height??this.height,scale:validated.scale??this.dpr};
+  private async queueSnapshotPNG(input:Snapshot,inputBuffers:ReadonlyMap<string,ArrayBuffer|NumericArray|DataEntry>,validated:ExportPNGOptions,signal:AbortSignal):Promise<Blob>{
+    const target={width:validated.width??(validated.source==='displayed'?input.figure.width:this.width),height:validated.height??(validated.source==='displayed'?input.figure.height:this.height),scale:validated.scale??this.dpr};
     const raster=validateExportRaster(target.width,target.height,target.scale);
     this.renderer.validateRasterSize(raster.width,raster.height);
     // Capture an owned snapshot before queueing, so refresh/resize/close cannot mix generations.
+    const copyBytes=[...inputBuffers.values()].reduce((n,buffer)=>n+('descriptor' in buffer?buffer.descriptor.byteLength:buffer.byteLength),0);
+    const link=input.figure.selectionLink,linkedMembers=new Set(link?[...link.scatter,link.histogram]:[]);
+    const linkedSources=new Set(input.figure.layers.filter(layer=>linkedMembers.has(layer.id)).flatMap(layer=>Object.values(layer.data)));
+    // Import validation isolates linked sources. Account for those additional
+    // owned copies before allocating either the queue buffers or the importer.
+    const linkedBytes=input.sources.reduce((n,source)=>n+(linkedSources.has(source.id)?source.byteLength:0),0);
+    const releaseCopy=this.snapshotStore.reserve(copyBytes+linkedBytes);
+    try {
     const snapshot=structuredClone(input),buffers=new Map<string,ArrayBuffer>();
-    for(const [id,buffer]of inputBuffers)buffers.set(id,ArrayBuffer.isView(buffer)?buffer.buffer.slice(buffer.byteOffset,buffer.byteOffset+buffer.byteLength) as ArrayBuffer:buffer.slice(0));
+    for(const [id,buffer]of inputBuffers){
+      if('descriptor' in buffer){const bytes=new Uint8Array(buffer.descriptor.byteLength);let offset=0;for(const chunk of buffer.chunks??[buffer.values]){bytes.set(new Uint8Array(chunk.buffer,chunk.byteOffset,chunk.byteLength),offset);offset+=chunk.byteLength;}buffers.set(id,bytes.buffer);}
+      else buffers.set(id,ArrayBuffer.isView(buffer)?buffer.buffer.slice(buffer.byteOffset,buffer.byteOffset+buffer.byteLength) as ArrayBuffer:buffer.slice(0));
+    }
+    this.exportCopiedBytes+=copyBytes;
     snapshot.figure.width=target.width;snapshot.figure.height=target.height;
     const run=async()=>{
       if(this.disposed||signal.aborted)throw new Error('Figure view disposed during PNG export');
       const host=document.createElement('div');host.style.cssText=`position:absolute;left:-100000px;top:0;width:${target.width}px;height:${target.height}px;pointer-events:none;`;
       host.setAttribute('aria-hidden','true');document.body.appendChild(host);
       const copy=new Figure();let view:FigureView|undefined;
-      try{copy.applySnapshot(snapshot,buffers);view=new FigureView(copy,host,target,this.renderer.gl);view.schedule();await view.ready({signal});return await view.capturePNG();}
+      try{copy.applySnapshot(snapshot,buffers);this.exportCopiedBytes+=linkedBytes;view=new FigureView(copy,host,target,this.renderer.gl);view.schedule();await view.ready({signal});return await view.capturePNG();}
       finally{view?.dispose();copy.close();host.remove();}
     };
     const result=this.exportQueue.then(run,run);this.exportQueue=result.catch(()=>{});
     let cancel!:()=>void;
     const cancelled=new Promise<never>((_,reject)=>{cancel=()=>{buffers.clear();reject(new Error('Figure view disposed during PNG export'));};signal.addEventListener('abort',cancel,{once:true});});
     try{return await Promise.race([result,cancelled]);}finally{signal.removeEventListener('abort',cancel);}
+    } finally {releaseCopy();}
   }
   private async capturePNG():Promise<Blob>{
     const canvas=document.createElement('canvas');canvas.width=this.renderer.canvas.width;canvas.height=this.renderer.canvas.height;
@@ -872,6 +1021,10 @@ export class FigureView {
     for(const cleanup of this.cleanup)cleanup();this.root.remove();this.plans.clear();this.geometries.clear();this.extents.clear();this.statistics.clear();this.barCache.clear();this.statisticsRequests.clear();this.sources.clear();this.panels=[];
     this.linkedResult=undefined;this.linkedSpec=undefined;this.selectedPlans.clear();
     this.renderingFigure=undefined;this.committedFigure=undefined;this.hoverIndices.clear();
+    this.frozenFigure=undefined;this.frozenLease?.release();this.frozenLease=undefined;
+    for(const lease of this.retiredSnapshots)lease.release();this.retiredSnapshots.clear();
+    // Pins and application export leases belong to the Figure, across mounts.
+    if(this.ownsSnapshotStore)this.snapshotStore.dispose();
     for(const waiter of this.waiters.splice(0))waiter.reject(new Error('Figure view disposed'));
   }
 }
