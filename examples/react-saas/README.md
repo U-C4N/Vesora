@@ -20,7 +20,7 @@ Open the URL Vite prints. To build the standalone application:
 npm run build:example
 ```
 
-The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for the `0.9.0-rc.6` candidate; npm registry publication is a separate step.
+The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for the `0.9.0-rc.7` candidate; npm registry publication is a separate step.
 
 For the PRISM viewer, open the Vite URL with `?demo=workbench`. Three bounded signals keep arriving while **Freeze view** holds the displayed snapshot. **Return to live** catches up; the viewer's PNG/HTML buttons export the displayed frame. The application owns the figure. See the [PRISM guide](../../docs/prism.md).
 

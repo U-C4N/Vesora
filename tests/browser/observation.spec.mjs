@@ -70,4 +70,3 @@ test('Python observation HTML opens offline in the shared viewer with declared s
   await expect(page.getByRole('heading',{name:'Observed temperature',exact:true})).toBeVisible();
   expect(errors).toEqual([]);expect(requests).toEqual([]);
 });
-
