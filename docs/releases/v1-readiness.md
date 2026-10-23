@@ -1,6 +1,6 @@
 # Work remaining before v1
 
-PRISM is still a release candidate; the current review package is [RC7](v0.9.0-rc.7.md), whose acceptance evidence is independent of RC6. This list separates unfinished v0.9 acceptance work from decisions for v1; it does not turn missing release evidence into deferred optional work.
+PRISM is still a release candidate; the current review package is [RC8](v0.9.0-rc.8.md), whose acceptance evidence is independent of RC6. This list separates unfinished v0.9 acceptance work from decisions for v1; it does not turn missing release evidence into deferred optional work.
 
 | Item | Current state | Completion or decision required |
 | --- | --- | --- |
@@ -12,4 +12,4 @@ PRISM is still a release candidate; the current review package is [RC7](v0.9.0-r
 | Revisit automatic adaptive surface detail | Not shipped; the manual sampling helper is not automatic LOD | Design interaction-time approximation with an explicit approximate-state indicator and exact resting/export semantics, then run its acceptance tests before distribution |
 | Resolve host coverage gaps | Windows Chromium, Qt and real Jupyter are the declared gate hosts; Firefox/WebKit are smoke targets | Record the final exact version matrix. Jupyter reconnect during the long soak remains untested. Decide support scope explicitly; do not infer Safari/iOS or other desktop support from automation |
 
-The accepted [v1 strategy](../plans/v1-strategy-2026-10-23.tr.md) prioritizes a shared observation model, performance, and Studio/Embed after the RC acceptance work. The [C1 contract](../plans/observation-contract-v1.md) is implemented in the RC7 review candidate together with [Studio/Embed](../observation.md); it is not a stable published API and does not complete RC7 acceptance. Hybrid SVG/PDF is planned in O1, after the shared semantics and frontend foundations. Volume rendering, arbitrary mesh/plane slicing, a general WebGPU rewrite, persistent recording and external history providers remain later decisions. Planned features do not substitute for completing v0.9.
+The accepted [v1 strategy](../plans/v1-strategy-2026-10-23.tr.md) prioritizes a shared observation model, performance, and Studio/Embed after the RC acceptance work. The [C1 contract](../plans/observation-contract-v1.md) is implemented in the RC8 review candidate together with [Studio/Embed](../observation.md); it is not a stable published API and does not complete RC8 acceptance. Hybrid SVG/PDF is planned in O1, after the shared semantics and frontend foundations. Volume rendering, arbitrary mesh/plane slicing, a general WebGPU rewrite, persistent recording and external history providers remain later decisions. Planned features do not substitute for completing v0.9.

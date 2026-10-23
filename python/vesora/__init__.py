@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from .figure import Figure, Layer, Panel, Annotation, SelectionLink, SurfaceSlice, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION, SCENE3D_PROTOCOL_VERSION, OBSERVATION_PROTOCOL_VERSION
 
-__version__ = "0.9.0rc7"
+__version__ = "0.9.0rc8"
 __all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "SurfaceSlice", "figure", "subplots", "plot", "plot3d", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
 _last_figure: Figure | None = None
 

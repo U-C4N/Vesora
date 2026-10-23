@@ -1,6 +1,6 @@
 # Observation metadata and Studio/Embed
 
-Implemented in the `0.9.0-rc.7` review candidate. The fixed `0.9.0-rc.6` archives do not contain these additions. See the [candidate notes](releases/v0.9.0-rc.7.md) for publication status and the [wire contract](plans/observation-contract-v1.md) for validation bounds and compatibility rules.
+Implemented in the `0.9.0-rc.8` review candidate. The fixed `0.9.0-rc.6` archives do not contain these additions. See the [candidate notes](releases/v0.9.0-rc.8.md) for publication status and the [wire contract](plans/observation-contract-v1.md) for validation bounds and compatibility rules.
 
 ## Declare the meaning of a channel
 

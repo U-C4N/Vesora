@@ -12,12 +12,14 @@
   <a href="#denge-membrane">Denge Membrane</a> ·
   <a href="docs/observation.md">Observations</a> ·
   <a href="docs/api.md">API</a> ·
-  <a href="docs/releases/v0.9.0-rc.7.md">Release notes</a>
+  <a href="docs/releases/v0.9.0-rc.8.md">Release notes</a>
 </p>
 
 Vesora brings research figures and application charts into one WebGL2 engine. Python notebooks, Qt desktop windows, browser applications and standalone HTML use the same scene format and renderer. React adds chart components and a viewer you can embed in your own product.
 
-**Current candidate: `0.9.0-rc.7` · Python `0.9.0rc7`.** This is a release candidate prepared for review, not a stable release or a claim of npm/PyPI publication. Final archive acceptance, including uninterrupted endurance, real screen-reader use and the five-person pilot, remains required. See the [candidate status](docs/releases/v0.9.0-rc.7.md).
+**Current candidate: `0.9.0-rc.8` · Python `0.9.0rc8`.** This is a release candidate prepared for review, not a stable release or a claim of npm/PyPI publication. Final archive acceptance, including uninterrupted endurance, real screen-reader use and the five-person pilot, remains required. See the [candidate status](docs/releases/v0.9.0-rc.8.md).
+
+The RC7 draft is retained after its Next.js 16.4.0 consumer-test dependency triggered a security failure. RC8 updates that test dependency to patched Next.js 16.4.2; its archive acceptance is tracked separately from RC7. Next.js is a development test dependency, not part of the shipped Vesora runtime.
 
 ## What you can build
 
@@ -60,8 +62,8 @@ For the scientific gallery, run `npm run demo` and open [the local PRISM gallery
 With the candidate assets downloaded or built locally, install the archives into your application or Python environment:
 
 ```sh
-npm install ./vesora-core-0.9.0-rc.7.tgz ./vesora-react-0.9.0-rc.7.tgz react react-dom
-python -m pip install ./vesora-0.9.0rc7-py3-none-any.whl
+npm install ./vesora-core-0.9.0-rc.8.tgz ./vesora-react-0.9.0-rc.8.tgz react react-dom
+python -m pip install ./vesora-0.9.0rc8-py3-none-any.whl
 ```
 
 Python requires **3.10+**. The wheel includes the renderer and desktop assets; the `notebook` extra adds the Jupyter widget dependency. React **18.3 and 19** are supported peer ranges. Use React components inside a client boundary in frameworks such as Next.js.
@@ -73,7 +75,7 @@ python -m pip install "setuptools>=77" wheel
 npm run package:release -- --candidate
 ```
 
-Files are written to `dist/release-v0.9.0-rc.7/`. These local review archives are not published packages. Preserve fixed release directories; see the [release procedure](docs/releases/v0.9.0.md) before producing release evidence.
+Files are written to `dist/release-v0.9.0-rc.8/`. These local review archives are not published packages. Preserve fixed release directories; see the [release procedure](docs/releases/v0.9.0.md) before producing release evidence.
 
 ## JavaScript: a figure with meaning
 
@@ -250,7 +252,7 @@ The new browser entry defers the standalone HTML template; the React example als
 | Embed, direct ESM | 1,715,262 → 495,008 B (**−71.1%**) | 1,396.9 → 498.7 ms |
 | React Workbench, production | 1,890,325 → 631,481 B (**−66.6%**) | 1,078.1 → 957.7 ms |
 
-These are five paired runs per experience on one Windows machine, using Chrome/ANGLE SwiftShader, a fresh browser context with network cache disabled, local uncompressed HTTP and the same CSP. The browser process was reused. Readiness is an application-level completion measure, not physical screen presentation or a general device/network guarantee. The results belong to recorded development builds, not final RC7 archive certification.
+These are five paired runs per experience on one Windows machine, using Chrome/ANGLE SwiftShader, a fresh browser context with network cache disabled, local uncompressed HTTP and the same CSP. The browser process was reused. Readiness is an application-level completion measure, not physical screen presentation or a general device/network guarantee. The results belong to recorded development builds, not final RC8 archive certification.
 
 Repeated narrow scatter queries can also reuse an exact source-version index with an 8 MiB budget. Cold construction has a cost; broad queries and ineligible data still scan. See the [measurement method and results](docs/benchmarks/v0.9.0.md#development-startup-and-bundle-comparison-2026-10-23) and [planner behavior](docs/observation.md#repeated-scatter-queries).
 
@@ -273,11 +275,11 @@ Experimental 3D streaming and manual sampling tools live under `@vesora/core/lab
 | [React package](packages/react/README.md) | Chart cards, data updates, streaming and application integration |
 | [Streaming guide](docs/streaming.md) | Retention, append acknowledgements, freeze and recovery |
 | [Architecture](docs/architecture.md) | Scene protocol, workers, caches, hosts and packaging |
-| [RC7 release notes](docs/releases/v0.9.0-rc.7.md) | Candidate changes and remaining acceptance |
+| [RC8 release notes](docs/releases/v0.9.0-rc.8.md) | Candidate changes and remaining acceptance |
 | [Development guide](docs/development.md) | Setup, host checks and contribution workflow |
 
 Run `npm run check` for the build, type checks and core/React/release-contract suites. Use `npm run test:parity`, `npm run test:examples`, `npm run test:browser` and `python -m pytest` for the additional suites described in the development guide. Automated checks do not substitute for real-host or human acceptance.
 
-Historical RC6 results remain tied to their original archives; they do not certify RC7. [Report a bug or discuss a feature](https://github.com/U-C4N/Vesora/issues) with a minimal example and the relevant browser or host details.
+Historical RC6 results remain tied to their original archives; they do not certify RC8. [Report a bug or discuss a feature](https://github.com/U-C4N/Vesora/issues) with a minimal example and the relevant browser or host details.
 
 Vesora is available under the [MIT license](LICENSE).
