@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import './style.css';
 import {VesoraChart} from '@vesora/react';
 import type {ChartAxis, ChartInteraction, VesoraChartHandle} from '@vesora/react';
 import type {ThemeInput} from '@vesora/core';

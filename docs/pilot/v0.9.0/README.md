@@ -20,6 +20,8 @@ Süreyi ölçün, ancak bu pilot için yeni bir süre sınırı veya ek başarı
    node scripts/run-pilot-v09.mjs dist/release-v0.9.0-rc.6
    ```
 
+   Normal `URL` katılımcı oturumudur. Ayrı `Screen-reader URL` yalnız erişilebilirlik denetçisi içindir; bilimsel örnek ve iki bağımsız canlı viewer içerir. Katılımcıya bu ek kontrol sayfasını vermeyin.
+
    Başlatıcı manifesti ve bütün arşiv/demoların SHA-256 değerlerini doğrular; core paketinin sürümünü ve `index`, `worker`, `viewer`, `labs` dosyalarını ayrıca karşılaştırır. Bu doğrulama teknik yayın kapılarının geçtiği anlamına gelmez: önceki adaylarda performans, Jupyter gecikmesi ve bilimsel etiket hataları bulundu; asıl pilot için düzeltmelerden sonra sabitlenen aday kullanılmalıdır. Terminaldeki `http://127.0.0.1:.../` adresini katılımcının tarayıcısında açın. Sunucu yalnız bu makineden erişilir; oturum sonunda `Ctrl+C` ile kapatın. Sabit port gerekirse `--port 4179`, sunucuyu açmadan kurulum kaydı üretmek için `--prepare-only` ekleyin.
 2. Bu kurulum sentetik yüzey, bağımsız skaler alan ve iki bağlı kesit örneğini açar. Üretici saniyede bir yüzey yüksekliğini ve iki kesiti atomik günceller; bağımsız skaler alan sabittir. Görüntü dondurulurken kaynak güncellemeleri devam eder. Sayfa kapatıldığında üretici durur. Dondurma ve dışa aktarma ürünün mevcut viewer arayüzünü kullanır. Katılımcı sayfası görev sırasını veya düğmelerin yerini anlatmaz. Kendi verisini kullanacak katılımcı için kullanma/paylaşma izni olan protokol 7 yüzey ve kesitlerini ayrıca hazırlayabilirsiniz; canlı üreticiyi, veri kaynağını ve kurulum farkını kaydedin.
 3. Terminalde verilen `artifacts/v09/pilot/.../results.md` dosyasını gözlemci kaydı olarak kullanın. Sürüm, commit, manifest/arşiv SHA-256 ve sentetik örnek kimliği otomatik doldurulur; katılımcı sonuçları ve karar `pending` kalır. Aynı dizindeki `participant-tasks.tr.md`, görev metninin değiştirilmemiş kopyasıdır; katılımcıya yalnız bunu verin. `provenance.json` belge/kaynak hash'lerini içerir; `fixture/` örnek kaynaklarını da saklayın. Motor/viewer arşivden gelir, bilimsel örnek ayrı kaydedilmiş depo kaynağıdır. Çalışma dizinini sınanmış arşiv diye kaydetmeyin. Sürümün belgelerini hazır bırakın; kurulum sorunlarını görev başlamadan giderin. Gözlem, başlangıç verisi teslim edildiğinde başlar.
@@ -42,6 +44,8 @@ Yardım istediğinde önce normalde nasıl ilerleyeceğini sorun; ardından veri
 Kaynak örneğin kimliği ve değerleri eşleşmelidir. Yüzey hücresi/üçgeni üzerinde interpolasyon seçildiyse bunu açıkça kaydedin ve sayısal toleransı testten önce belirleyin. Sonuçları gördükten sonra toleransı değiştirmeyin. Ortam, görev süresi, yardım, hatalar, dosyalar ve hash'ler birlikte saklanır.
 
 ## Karar ve isteğe bağlı araştırma
+
+Başlatıcı `results.md` yanında boş `human-evidence.json` hazırlar. Aynı gerçek gözlemleri bu dosyaya ve oturum içindeki hash'li kanıtlara bağlayın; [insan kanıtı giriş rehberi](human-evidence.tr.md) alanları ve salt okunur doğrulama komutunu açıklar. Doğrulayıcı aday kimliğini, beş kaydı, 4/5 ölçütünü, dondurma gözlemlerini ve dosya hash'lerini kontrol eder; insan gözlemi yapmaz ve `release-gates.json` dosyasını değiştirmez.
 
 Her sorun için görevi, gözlenen davranışı, beklenen sonucu ve yeniden üretme adımlarını kaydedin. Düzeltme yapılırsa yeni sürüm/hash ile yeniden sınayın; eski başarısız kaydı koruyun. Beş kaydı ve doğru dışa aktarma kanıtını release manifestine bağlamadan `betaPilot.status: passed` yazmayın.
 

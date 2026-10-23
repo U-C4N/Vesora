@@ -2,6 +2,9 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {mountViewer} from '../../packages/core/src/viewer';
 import type {Figure} from '../../packages/core/src/figure';
+import {toHTMLAsync} from '../../packages/core/src/html-export-async';
+
+vi.mock('../../packages/core/src/html-export-async',()=>({toHTMLAsync:vi.fn(async()=>'<html>observation</html>')}));
 
 function fixture(){
   let mounted=false;
@@ -19,6 +22,7 @@ function fixture(){
     on:(event:string,callback:(value:any)=>void)=>{if(!listeners.has(event))listeners.set(event,new Set());listeners.get(event)!.add(callback);return()=>listeners.get(event)!.delete(callback);},
     mount:vi.fn((host:HTMLElement)=>{mounted=true;host.append(document.createElement('canvas'));}),unmount:vi.fn(()=>{mounted=false;}),close:vi.fn(),
     setTheme:vi.fn(),setSize:vi.fn(),ready:vi.fn(()=>Promise.resolve()),restoreViews:vi.fn(),resetInspectionView:vi.fn(),
+    savefig:vi.fn(async()=>new Blob(['png'],{type:'image/png'})),
     updateVisibility:vi.fn((layer:any,visible:boolean)=>{layer.visible=visible;emit('frame',state);}),
     freezeInspection:vi.fn(()=>{state.mode='frozen';emit('inspectionchange',state);return {...state};}),resumeLive:vi.fn(async()=>{state.mode='live';emit('inspectionchange',state);}),
     setCameraPreset:vi.fn(),getInspectionSnapshot:()=>({figure:value.spec,sources:[]}),getInspectionView:()=>view,
@@ -27,8 +31,57 @@ function fixture(){
   };
   return {figure:value as unknown as Figure,mock:value};
 }
-afterEach(()=>document.body.replaceChildren());
+afterEach(()=>{document.body.replaceChildren();vi.unstubAllGlobals();vi.restoreAllMocks();});
 describe('borrowed scientific viewer',()=>{
+  it('changes Studio/Embed chrome without remounting or changing frozen data, camera or scene colors',()=>{
+    const {figure,mock}=fixture(),viewer=mountViewer(figure,document.body,{themeTokens:{accent:'#123456'}});
+    figure.freezeInspection();mock.setTheme.mockClear();
+    const layer=viewer.element.querySelector<HTMLButtonElement>('.vv-layer')!;
+    // A hidden focused toolbar control moves focus to the viewer itself.
+    const resume=[...viewer.element.querySelectorAll('button')].find(button=>button.textContent==='Return to live')!;resume.focus();
+    viewer.updateOptions({mode:'embed',chrome:{toolbar:false},themeTokens:{accent:'#abcdef'}});
+    expect(viewer.element.dataset.mode).toBe('embed');expect(viewer.element.dataset.inspector).toBe('hidden');
+    expect(viewer.element.querySelector<HTMLElement>('.vv-sidebar')!.hidden).toBe(true);expect(viewer.element.querySelector<HTMLElement>('.vv-help')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(viewer.element);expect(viewer.element.style.getPropertyValue('--vv-accent')).toBe('#abcdef');
+    expect(figure.getInspectionState().mode).toBe('frozen');expect(mock.mount).toHaveBeenCalledOnce();expect(mock.unmount).not.toHaveBeenCalled();expect(mock.setTheme).not.toHaveBeenCalled();expect(mock.restoreViews).not.toHaveBeenCalled();
+    viewer.updateOptions({mode:'studio',chrome:undefined,themeTokens:undefined});
+    expect(viewer.element.dataset.inspector).toBe('visible');expect(viewer.element.querySelector('.vv-layer')).toBe(layer);expect(viewer.element.style.getPropertyValue('--vv-accent')).toBe('');
+    viewer.dispose();expect(mock.close).not.toHaveBeenCalled();
+  });
+  it('validates presentation updates atomically and isolates caller-owned chrome objects',()=>{
+    const {figure}=fixture(),chrome={inspector:true},viewer=mountViewer(figure,document.body,{mode:'embed',chrome});
+    chrome.inspector=false;expect(viewer.element.querySelector<HTMLElement>('.vv-sidebar')!.hidden).toBe(false);
+    expect(()=>viewer.updateOptions({mode:'studio',themeTokens:{accent:123 as unknown as string}})).toThrow('color token');
+    expect(viewer.element.dataset.mode).toBe('embed');
+    expect(()=>viewer.updateOptions({exportSource:'future' as 'accepted'})).toThrow('export source');
+    expect(viewer.element.querySelector<HTMLSelectElement>('[aria-label="Export source"]')!.value).toBe('displayed');viewer.dispose();
+  });
+  it('uses the explicit export choice without resuming frozen inspection and adds records only to HTML',async()=>{
+    vi.stubGlobal('URL',{createObjectURL:vi.fn(()=>'blob:viewer-test'),revokeObjectURL:vi.fn()});
+    vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(()=>{});
+    const {figure,mock}=fixture(),viewer=mountViewer(figure,document.body,{observation:true});figure.freezeInspection();
+    const source=viewer.element.querySelector<HTMLSelectElement>('[aria-label="Export source"]')!;
+    source.value='accepted';source.dispatchEvent(new Event('change'));
+    expect(viewer.element.querySelector('.vv-export-options')!.textContent).toContain('may differ from a frozen view');
+    // An unrelated React-style presentation update must not reset the user's export choice.
+    viewer.updateOptions({chrome:{status:false}});expect(source.value).toBe('accepted');
+    const button=(label:string)=>[...viewer.element.querySelectorAll('button')].find(button=>button.textContent===label)!;
+    button('Export PNG').click();await vi.waitFor(()=>expect(button('Export PNG').disabled).toBe(false));
+    expect(mock.savefig).toHaveBeenCalledWith({source:'accepted'});expect(mock.resumeLive).not.toHaveBeenCalled();
+    button('Export HTML').click();expect(toHTMLAsync).toHaveBeenLastCalledWith(figure,{source:'accepted',observation:true});
+    expect(figure.getInspectionState().mode).toBe('frozen');viewer.dispose();
+  });
+  it('renders declared channel meaning and imported records from the frozen scene rather than newer live metadata',()=>{
+    const {figure,mock}=fixture();
+    const frozen={...mock.spec,layers:[{...mock.spec.layers[0],data:{x:'time',y:'temperature'}}],semantics:{schemaVersion:1 as const,sources:{time:{name:'Elapsed time',unit:'s'},temperature:{name:'<img src=x onerror=alert(1)>',quantity:'temperature',unit:'K',origin:{datasetId:'experiment-17'},transforms:[{execution:'external' as const,name:'calibration',version:'2'}]}}},observation:{schemaVersion:1 as const,source:'accepted' as const,capturedAt:'2026-10-23T10:00:00.000Z',sourceVersions:[{id:'time',version:2},{id:'temperature',version:3}],streams:[],representation:{status:'not-evaluated' as const}}};
+    Object.assign(mock.spec,structuredClone(frozen));mock.getInspectionSnapshot=()=>({figure:frozen,sources:[]});
+    const viewer=mountViewer(figure,document.body,{preserveTheme:true});figure.freezeInspection();
+    Object.assign(mock.spec,{semantics:{schemaVersion:1,sources:{temperature:{unit:'C'}}},observation:undefined});mock.emit('frame',mock.getInspectionState());
+    const meaning=viewer.element.querySelector('.vv-semantics')!,record=viewer.element.querySelector('.vv-record-body')!;
+    expect(meaning.textContent).toContain('Elapsed time');expect(meaning.textContent).toContain('K');expect(meaning.textContent).toContain('calibration · 2');expect(meaning.querySelector('img')).toBeNull();
+    expect(record.textContent).toContain('accepted');expect(record.textContent).toContain('temperature · 3');expect(record.textContent).toContain('Not evaluated for this capture');
+    void figure.resumeLive();expect(viewer.element.querySelector('.vv-record-body')!.textContent).toContain('No observation record');expect(viewer.element.querySelector('.vv-semantics')!.textContent).not.toContain('calibration');viewer.dispose();
+  });
   it('allows freezing a completed frame even when its data revision is zero',()=>{
     const {figure,mock}=fixture();
     const state=mock.getInspectionState();mock.getInspectionState=()=>({...state,displayedRevision:0,frameId:1});

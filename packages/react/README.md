@@ -2,13 +2,13 @@
 
 Declarative React + TypeScript charts for SaaS dashboards. `VesoraChart` supports line, bar and scatter charts, independent responsive cards, light/dark themes, date/currency/percent formatting, custom React tooltips, an accessible interactive legend, and loading/empty/error states.
 
-**v0.9.0-rc.6 candidate:** build from the Vesora checkout. Creating packages does not publish them to npm. With the generated release tarballs available locally:
+**v0.9.0-rc.8 candidate:** build from the Vesora checkout. Creating packages does not publish them to npm. With the generated release tarballs available locally:
 
 ```bash
-npm install react react-dom ./vesora-core-0.9.0-rc.6.tgz ./vesora-react-0.9.0-rc.6.tgz
+npm install react react-dom ./vesora-core-0.9.0-rc.8.tgz ./vesora-react-0.9.0-rc.8.tgz
 ```
 
-After this candidate is published, select it explicitly with `npm install @vesora/core@0.9.0-rc.6 @vesora/react@0.9.0-rc.6 react react-dom`; the candidate channel is `next`, not `latest`. Until publication, use the local archives above. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).
+After this candidate is published, select it explicitly with `npm install @vesora/core@0.9.0-rc.8 @vesora/react@0.9.0-rc.8 react react-dom`; the candidate channel is `next`, not `latest`. Until publication, use the local archives above. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).
 
 For scientific panels, import `VesoraViewer` from `@vesora/react/viewer` and pass an application-owned `Figure`. It borrows the figure, supplies Obsidian controls and unmounts without closing application data. See the [PRISM ownership and inspection guide](../../docs/prism.md). `VesoraChart` remains the simple chart entry point. Its `exportPNG` and `exportHTML` default to accepted data; `{source:'displayed'}` captures the inspected frame.
 
@@ -150,6 +150,8 @@ function ExportableCard() {
 Exports wait for rendering. `await chart.current!.exportPNG({width: 1000, height: 600, scale: 2})` returns a 2000 × 1200 PNG. Width/height are a pair of logical safe integers at least 200 × 180; scale is positive and finite. Omitted dimensions use the mounted size, and omitted scale uses its effective DPR. The 32-million-pixel and GPU limits apply. Export reflows at the requested size without changing the live chart and excludes transient tooltip/crosshair state.
 
 HTML contains every chart source value, including hidden series and band bounds, and the matching Vesora runtime. It preserves declarative themes/formats, hover mode and the current view, but does not include React tooltip content, event callbacks, API connections or the surrounding application. Label this clearly when providing an export action to users. PNG is available when only an image is needed. Exports are rejected while loading or in an error state.
+
+In the development build, the adapter imports `@vesora/core/runtime`; the standalone HTML template is downloaded on the first `exportHTML()` call. The existing Promise API is unchanged. The export captures its scene and data before loading that template, and the resulting document remains self-contained. If application code also imports the synchronous `toHTML` API from `@vesora/core`, its template becomes an eager dependency again. Use `@vesora/core/runtime` with `toHTMLAsync` for direct engine integration when startup size matters. Fixed RC6 archives predate this split.
 
 For integration checks, the root exposes `data-vesora-state="ready|loading|empty|error"` and `data-vesora-rendering="true|false"`. Wait for `ready` and rendering `false` before inspecting pixels.
 

@@ -53,3 +53,10 @@ The generator uses Python's standard library; NumPy is not required. Each scient
 | `lorenz.png` | Explicit Euler integration of the Lorenz equations, dt = 0.006, sigma = 10, rho = 28, beta = 8/3. Of 20,000 steps, the initial 1,000 are discarded; the remaining 19,000 are drawn as 3D points colored by z. This is an illustrative numerical trajectory. |
 
 The formulas and export settings are in [`scripts/render_readme.py`](../../scripts/render_readme.py).
+
+
+## Denge Membrane candidate
+
+`denge-membrane.png` is an actual 1440 px browser capture of the RC7 React example, cropped to its 2D component. The deterministic synthetic pair starts at 56/6 litres; the capture follows a 0.5-second step, selection of East and saving the current baseline. The pair therefore reads approximately 52.1/9.9 litres, with 21.1 litres remaining to its 31/31 equilibrium. It is an interface example, not an experiment with real fluid.
+
+Reproduce with `npm run build:example` and `npm run test:saas -- tests/saas/balance.spec.mjs`; the browser test writes `denge-2d-desktop.png` in its output directory. The source of the mark is the existing three-path `VesoraMark`, also present in `vesora-banner.svg`; this release does not introduce a replacement logo.

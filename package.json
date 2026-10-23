@@ -1,7 +1,7 @@
 {
   "name": "vesora-workspace",
   "private": true,
-  "version": "0.9.0-rc.6",
+  "version": "0.9.0-rc.8",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -32,7 +32,9 @@
     "test:consumers": "node scripts/verify-react-consumers.mjs",
     "publish:packages": "node scripts/publish-release.mjs",
     "test:release": "node scripts/verify-release.mjs",
-    "test:release-contracts": "node --test tests/scripts/release-validation.test.mjs tests/scripts/github-release.test.mjs",
+    "release:readiness": "node scripts/check-release-readiness.mjs",
+    "soak:status": "node scripts/check-soak-evidence.mjs",
+    "test:release-contracts": "node --test tests/scripts/release-validation.test.mjs tests/scripts/github-release.test.mjs tests/scripts/release-readiness.test.mjs tests/scripts/human-evidence.test.mjs tests/soak/sequential-contracts.test.mjs tests/soak/evidence-check.test.mjs",
     "init:release-gates": "node scripts/init-release-gates.mjs",
     "benchmark:streaming": "node scripts/benchmark-v09.mjs stream",
     "verify:published": "node scripts/verify-published.mjs",
@@ -45,7 +47,7 @@
     "@types/react-dom": "^19.3.0",
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.2",
-    "next": "^16.4.0",
+    "next": "16.4.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "typescript": "^5.9.3",

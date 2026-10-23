@@ -6,7 +6,7 @@ import {VesoraChart} from '../../packages/react/src/index';
 import type {VesoraChartHandle} from '../../packages/react/src/index';
 
 const state = vi.hoisted(() => ({figures: [] as any[], serial: 0, failMount: false, delayed: false}));
-vi.mock('@vesora/core', () => {
+vi.mock('@vesora/core/runtime', () => {
   const palette = {background: '#ffffff', foreground: '#334155', muted: '#475569', grid: '#eee', axis: '#ccc', tooltipBackground: '#111', tooltipForeground: '#fff', selection: '#f80', error: '#b00', fontFamily: 'system-ui', fontSize: 12, palette: ['#2563eb', '#dc2626']};
   class FakeLayer {
     id = `layer-${++state.serial}`;
@@ -66,7 +66,7 @@ vi.mock('@vesora/core', () => {
     formatValue: (value: number, format?: {kind: string; locale?: string; currency?: string; timeZone?: string}) => format?.kind === 'date'
       ? new Intl.DateTimeFormat(format.locale ?? 'en-US', {timeZone: format.timeZone ?? 'UTC'}).format(value)
       : new Intl.NumberFormat(format?.locale ?? 'en-US', {style: format?.kind === 'currency' ? 'currency' : format?.kind === 'percent' ? 'percent' : 'decimal', currency: format?.currency}).format(value),
-    toHTML: () => '<html>chart source rows</html>',
+    toHTMLAsync: async () => '<html>chart source rows</html>',
   };
 });
 

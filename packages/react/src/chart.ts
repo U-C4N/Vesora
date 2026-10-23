@@ -1,4 +1,4 @@
-import {figure as createFigure, resolveTheme, validateAxisFormat} from '@vesora/core';
+import {figure as createFigure, resolveTheme, validateAxisFormat} from '@vesora/core/runtime';
 import type {AxisFormat, Figure, Layer, LayerStyle, ViewSpec} from '@vesora/core';
 import {axisFormat, prepareData} from './data';
 import type {VesoraChartProps} from './types';

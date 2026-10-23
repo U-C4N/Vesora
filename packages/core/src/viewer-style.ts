@@ -1,6 +1,6 @@
 /** Every selector is rooted at the viewer; embedding never restyles the host page. */
 export const VIEWER_STYLE = `
-[data-vesora-viewer]{--vv-bg:#101215;--vv-panel:#171a1f;--vv-text:#edf0f4;--vv-muted:#a2abb8;--vv-line:#343b46;--vv-control:#637081;--vv-accent:#c5f36b;--vv-error:#ffb3a8;color-scheme:dark;box-sizing:border-box;display:block;position:relative;min-width:0;background:var(--vv-bg);color:var(--vv-text);border:1px solid var(--vv-line);border-radius:8px;overflow:hidden;font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+[data-vesora-viewer]{--vv-bg:#101215;--vv-panel:#171a1f;--vv-text:#edf0f4;--vv-muted:#a2abb8;--vv-line:#343b46;--vv-control:#637081;--vv-accent:#c5f36b;--vv-error:#ffb3a8;container:vesora-viewer / inline-size;color-scheme:dark;box-sizing:border-box;display:block;position:relative;min-width:0;background:var(--vv-bg);color:var(--vv-text);border:1px solid var(--vv-line);border-radius:8px;overflow:hidden;font:13px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
 [data-vesora-viewer][data-theme=light]{--vv-bg:#fbfcfd;--vv-panel:#f0f3f6;--vv-text:#18202a;--vv-muted:#4e5b6b;--vv-line:#c8d0da;--vv-control:#768392;--vv-accent:#426b0a;--vv-error:#a82424;color-scheme:light}
 [data-vesora-viewer] *,[data-vesora-viewer] *:before,[data-vesora-viewer] *:after{box-sizing:border-box}
 [data-vesora-viewer] [hidden]{display:none!important}
@@ -14,6 +14,8 @@ export const VIEWER_STYLE = `
 [data-vesora-viewer] .vv-title{font-size:14px;font-weight:650;margin:0 auto 0 0;min-width:100px;overflow-wrap:anywhere}
 [data-vesora-viewer] .vv-toolbar-actions{display:flex;flex-wrap:wrap;gap:6px}
 [data-vesora-viewer] .vv-body{display:grid;grid-template-columns:minmax(0,1fr) 230px;min-width:0}
+[data-vesora-viewer][data-inspector=hidden] .vv-body{grid-template-columns:minmax(0,1fr)}
+[data-vesora-viewer][data-mode=embed] .vv-toolbar{padding:8px}
 [data-vesora-viewer] .vv-plot{min-width:0;position:relative;overflow:hidden}
 [data-vesora-viewer] .vv-chart{width:100%;min-width:0}
 [data-vesora-viewer] .vv-chart canvas{display:block;max-width:100%}
@@ -36,7 +38,17 @@ export const VIEWER_STYLE = `
 [data-vesora-viewer] .vv-error p{margin:0 0 8px}
 [data-vesora-viewer] .vv-help{margin:0;padding:9px 12px;color:var(--vv-muted);font-size:12px;border-top:1px solid var(--vv-line)}
 [data-vesora-viewer] .vv-notice{margin:8px 0;color:var(--vv-muted);font-size:12px}
-@media(min-width:761px){[data-vesora-viewer] .vv-sidebar{contain:size;min-height:0;overflow-y:auto}}
-@media(max-width:760px){[data-vesora-viewer] .vv-body{grid-template-columns:minmax(0,1fr)}[data-vesora-viewer] .vv-sidebar{border-left:0;border-top:1px solid var(--vv-line)}[data-vesora-viewer] .vv-toolbar-actions{width:100%}[data-vesora-viewer] button{min-height:42px}[data-vesora-viewer] .vv-layers{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
+[data-vesora-viewer] .vv-export-options{flex:0 0 100%;min-width:0}
+[data-vesora-viewer] .vv-export-options .vv-field{max-width:320px}
+[data-vesora-viewer] .vv-checkbox{display:flex;align-items:center;gap:8px;margin-top:8px;overflow-wrap:anywhere}
+[data-vesora-viewer] .vv-checkbox input{flex:none;accent-color:var(--vv-accent)}
+[data-vesora-viewer] .vv-metadata .vv-field{margin-top:8px}
+[data-vesora-viewer] .vv-channel h3{font-size:12px;margin:12px 0 4px}
+[data-vesora-viewer] .vv-properties{margin:8px 0;display:grid;gap:2px;min-width:0;font-size:12px}
+[data-vesora-viewer] .vv-properties dt{color:var(--vv-muted);font-weight:500}
+[data-vesora-viewer] .vv-properties dd{margin:0 0 5px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+[data-vesora-viewer]:focus-visible{outline:2px solid var(--vv-accent);outline-offset:2px}
+@container vesora-viewer (min-width:761px){[data-vesora-viewer] .vv-sidebar{contain:size;min-height:0;overflow-y:auto}}
+@container vesora-viewer (max-width:760px){[data-vesora-viewer] .vv-body{grid-template-columns:minmax(0,1fr)}[data-vesora-viewer] .vv-sidebar{border-left:0;border-top:1px solid var(--vv-line)}[data-vesora-viewer] .vv-toolbar-actions{width:100%}[data-vesora-viewer] button{min-height:42px}[data-vesora-viewer] .vv-layers{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 @media(prefers-reduced-motion:reduce){[data-vesora-viewer] *,[data-vesora-viewer] *:before,[data-vesora-viewer] *:after{scroll-behavior:auto!important;transition:none!important}}
 `;

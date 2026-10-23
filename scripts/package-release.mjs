@@ -1,4 +1,5 @@
 import {releaseIdentity} from './release-identity.mjs';
+import {sceneProtocolVersions,runtimeEntryNames} from './release-validation.mjs';
 // Build downloadable release assets after npm run build and the release checks.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -104,7 +105,7 @@ try{
 for(const [name,html]of await prismReleaseScenes())await writeFile(resolve(output,name),html,'utf8');
 const files = [`vesora-${identity.python}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html', 'vesora-quality-demo.html','vesora-streaming-demo.html',...prismDemoNames];
 const hash=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
-const manifest={version,pythonVersion:identity.python,tag:tags.includes(identity.tag)?identity.tag:null,candidate,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:[1,2,3,4,5,6,7],transportVersions:[2,3],runtime:Object.fromEntries(await Promise.all(['index','worker','viewer','labs'].map(async name=>[name,await hash(resolve(root,`packages/core/dist/${name}.js`))]))),files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
+const manifest={version,pythonVersion:identity.python,tag:tags.includes(identity.tag)?identity.tag:null,candidate,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:sceneProtocolVersions,transportVersions:[2,3],runtime:Object.fromEntries(await Promise.all(runtimeEntryNames.map(async name=>[name,await hash(resolve(root,`packages/core/dist/${name}.js`))]))),files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
 await writeFile(resolve(output,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n','utf8');files.push('release-manifest.json');
 const sums = [];
 for (const name of files) {

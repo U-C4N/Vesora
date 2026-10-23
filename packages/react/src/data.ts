@@ -1,4 +1,4 @@
-import {formatValue as coreFormatValue} from '@vesora/core';
+import {formatValue as coreFormatValue} from '@vesora/core/runtime';
 import type {AxisFormat, AxisSeries} from '@vesora/core';
 import type {ChartAxis, ChartSeries} from './types';
 

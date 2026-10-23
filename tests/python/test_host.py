@@ -27,7 +27,7 @@ def unpack_transfer(message):
 @pytest.fixture
 def live_host(tmp_path, monkeypatch):
     # Transport tests use inert assets; the browser tests verify the real engine.
-    for name in ("index.js", "host.js", "viewer.html"):
+    for name in ("runtime.js", "html-template.js", "viewer.js", "host.js", "viewer.html"):
         (tmp_path / name).write_text("test asset", encoding="utf-8")
     monkeypatch.setattr(host_module, "ASSETS", tmp_path)
     fig = vs.Figure()

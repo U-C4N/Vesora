@@ -1,0 +1,19 @@
+{
+  "dtype": "float32",
+  "x": [0, 1, 2],
+  "y": [273.25, 274.5, 275.75],
+  "append": {"x": [3, 4], "y": [276.125, 277.5]},
+  "maxPoints": 3,
+  "channelSemantics": {
+    "x": {"name": "Elapsed time", "quantity": "time", "unit": "s", "dimension": "time"},
+    "y": {
+      "name": "Temperature İ 🌡 </script>&",
+      "quantity": "temperature",
+      "unit": "K",
+      "dimension": "temperature",
+      "origin": {"datasetId": "experiment-17", "field": "temperature", "reference": "https://example.invalid/inert-reference"},
+      "transforms": [{"execution": "external", "name": "sensor-calibration", "version": "2", "parameters": {"gain": 1.25, "enabled": true, "missing": null, "__proto__": "inert"}}]
+    }
+  },
+  "expected": {"x": [2, 3, 4], "y": [275.75, 276.125, 277.5], "sequenceStart": 2, "sequenceEndExclusive": 5, "revision": 1}
+}

@@ -1,5 +1,5 @@
 import {releaseIdentity} from './release-identity.mjs';
-import {loadRelease} from './release-validation.mjs';
+import {loadRelease,validateRuntimeHashes} from './release-validation.mjs';
 // Validate release archives as installed consumers, outside the checkout.
 // Usage: node scripts/verify-packages.mjs [release-directory]
 import assert from 'node:assert/strict';
@@ -228,11 +228,15 @@ async function verifyScienceHTML(browser, name, path, outputDirectory, {source =
   } finally {await context.close();}
 }
 
-// Serve only the installed package's four browser modules. No checkout source or
+// Serve only the installed package's manifest-bound browser modules. No checkout source or
 // dependency fallback can accidentally satisfy this consumer's imports.
 async function verifyFrozenConsumer(browser, npmDirectory, outputDirectory) {
   const assets = new Map([['/', Buffer.from('<!doctype html><html><body><div id="chart" style="width:1300px"></div></body></html>')]]);
-  for (const name of ['index', 'worker', 'viewer', 'labs']) assets.set(`/${name}.js`, await readFile(join(npmDirectory, 'node_modules/@vesora/core/dist', `${name}.js`)));
+  for(const name of validateRuntimeHashes(release.manifest.runtime)){
+    const bytes=await readFile(join(npmDirectory,'node_modules/@vesora/core/dist',`${name}.js`));
+    assert.equal(createHash('sha256').update(bytes).digest('hex'),release.manifest.runtime[name],`${name}: installed runtime differs from its release manifest`);
+    assets.set(`/${name}.js`,bytes);
+  }
   const server = createServer((request, response) => {
     const path = new URL(request.url, 'http://127.0.0.1').pathname, body = assets.get(path);
     response.writeHead(body ? 200 : 404, {
@@ -568,6 +572,95 @@ sampleSurfaceGrid([0, 1], [0, 1], [[1, 2], [3, 4]], {maxVertices: 4});
 `, 'utf8');
   run(process.execPath, [join(checkout, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022,DOM', typeScript], npmDirectory, 'Type-checking installed declarations with NodeNext resolution…');
 
+  // New contracts are selected from this archive's manifest, never the checkout
+  // version, so historical protocol-7/monolithic RC packages remain verifiable.
+  const features={observation:release.manifest.protocolVersions.includes(8),runtime:Object.hasOwn(release.manifest.runtime,'runtime'),balance:Object.hasOwn(release.manifest.runtime,'balance')};
+  const productContracts={features,scope:'Exact installed wheel/tarball; CPU import, owned export and declaration contracts',checks:[]};
+  const pythonObservationHTML=join(outputDirectory,'python-observation.html');
+  if(features.observation){
+    const observationScript=join(pythonDirectory,'verify-observation.py');
+    await writeFile(observationScript,String.raw`import json, re, sys, base64, struct
+from array import array
+import vesora as vs
+fig=vs.figure(title='Installed accepted observation')
+layer=fig.plot(array('d',[0.,1.]),array('d',[273.,274.]))
+declaration={'x':{'unit':'s'},'y':{'quantity':'temperature','unit':'K'}}
+layer.set_semantics(declaration)
+declaration['y']['unit']='changed caller object'
+assert layer.get_semantics()['y']['unit']=='K'
+html=fig.to_html(observation=True)
+payload=json.loads(re.search(r'<script id="vesora-payload"[^>]*>(.*?)</script>',html,re.S).group(1))
+snapshot=payload['snapshot'];record=snapshot['figure']['observation']
+assert snapshot['figure']['protocolVersion']==8
+assert record['source']=='accepted' and record['representation']=={'status':'not-evaluated'}
+assert record['sourceVersions']==[{'id':source['id'],'version':source['version']} for source in snapshot['sources']]
+y_id=snapshot['figure']['layers'][0]['data']['y']
+encoded=next(value['base64'] for value in payload['buffers'] if value['id']==y_id)
+assert struct.unpack('<2d',base64.b64decode(encoded))==(273.,274.)
+layer.set_data([9.],[99.]);layer.set_semantics({'y':{'unit':'mm'}})
+assert snapshot['figure']['semantics']['sources'][y_id]['unit']=='K'
+assert fig.get_observation() is None
+with open(sys.argv[1],'w',encoding='utf-8') as file:file.write(html)
+fig.close()
+print('Installed Python protocol-8 semantics, defensive metadata and accepted HTML bytes passed.')
+`,'utf8');
+    run(isolatedPython,['-I',observationScript,pythonObservationHTML],pythonDirectory,'Verifying installed Python observation contracts…');
+    productContracts.checks.push('python-observation');
+  }
+  if(features.observation||features.runtime||features.balance){
+    const productScript=join(npmDirectory,'verify-product.mjs');
+    await writeFile(productScript,`import assert from 'node:assert/strict';
+import {readFile,writeFile} from 'node:fs/promises';
+import * as core from '@vesora/core';
+const features=${JSON.stringify(features)};
+const runtime=features.runtime?await import('@vesora/core/runtime'):core;
+const payload=html=>JSON.parse(html.match(/<script id="vesora-payload"[^>]*>([\\s\\S]*?)<\\/script>/)[1]);
+if(features.runtime){
+  for(const name of ['Figure','Layer','Panel','DataRegistry','figure','subplots'])assert.equal(runtime[name],core[name],name+' must keep shared identity');
+  assert.equal(typeof runtime.downloadHTMLAsync,'function');
+}
+if(features.observation){
+  const fig=runtime.figure({title:'Captured before lazy import'}),line=fig.plot(new Float64Array([0,1]),new Float64Array([273,274]));
+  line.setSemantics({x:{unit:'s'},y:{quantity:'temperature',unit:'K'}});
+  const options={source:'accepted',observation:true};
+  const pending=features.runtime?runtime.toHTMLAsync(fig,options):Promise.resolve(core.toHTML(fig,options));
+  line.setData({x:[9],y:[99]});line.setSemantics({y:{unit:'mm'}});fig.spec.title='After capture';options.observation=false;
+  const html=await pending,value=payload(html),snapshot=value.snapshot,record=snapshot.figure.observation;
+  assert.equal(snapshot.figure.title,'Captured before lazy import');assert.equal(snapshot.figure.protocolVersion,8);
+  assert.equal(record.source,'accepted');assert.deepEqual(record.representation,{status:'not-evaluated'});
+  assert.deepEqual(record.sourceVersions,snapshot.sources.map(({id,version})=>({id,version})));
+  const yId=snapshot.figure.layers[0].data.y,bytes=Buffer.from(value.buffers.find(item=>item.id===yId).base64,'base64');
+  assert.deepEqual([bytes.readDoubleLE(0),bytes.readDoubleLE(8)],[273,274]);
+  assert.equal(snapshot.figure.semantics.sources[yId].unit,'K');assert.equal(fig.diagnostics().snapshotBytes,0);
+  await writeFile(${JSON.stringify(join(outputDirectory,'javascript-observation.html'))},html,'utf8');fig.close();
+  const fromPython=payload(await readFile(${JSON.stringify(pythonObservationHTML)},'utf8')),copy=runtime.figure();
+  const buffers=new Map(fromPython.buffers.map(({id,base64})=>{const bytes=Buffer.from(base64,'base64');return [id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)];}));
+  copy.applySnapshot(fromPython.snapshot,buffers);
+  assert.deepEqual(copy.getObservation(),fromPython.snapshot.figure.observation);
+  const observation=copy.getObservation();observation.sourceVersions.length=0;
+  assert.ok(copy.getObservation().sourceVersions.length>0);copy.close();
+}
+if(features.balance){
+  const {createBalance,stepBalance,transferBalance,inspectBalance}=await import('@vesora/core/balance');
+  const state=createBalance([{id:'a',label:'A',volume:70},{id:'b',label:'B',volume:20},{id:'c',label:'C',volume:10}]);
+  const passive=stepBalance(state,{from:'a',to:'b'},.5),manual=transferBalance(passive.state,'b','c',5);
+  for(const value of [passive.state,manual.state]){assert.equal(value.total,100);assert.ok(Math.abs(value.categories.reduce((sum,row)=>sum+row.volume,0)-100)<1e-10);assert.ok(value.categories.every(row=>row.volume>=0));}
+  assert.ok(passive.transferred>0);assert.ok(passive.state.energy<=state.energy+1e-12);
+  assert.equal(inspectBalance(state).length,3);assert.equal(state.categories[0].volume,70);
+}
+console.log('Installed product contracts passed: '+Object.entries(features).filter(([,enabled])=>enabled).map(([name])=>name).join(', '));
+`,'utf8');
+    run(process.execPath,[productScript],npmDirectory,'Verifying new installed runtime contracts…');
+    productContracts.checks.push(...Object.entries(features).filter(([,enabled])=>enabled).map(([name])=>`javascript-${name}`));
+    const productTypes=join(npmDirectory,'verify-product-types.ts');
+    await writeFile(productTypes,[features.runtime?`import {figure,toHTMLAsync,downloadHTMLAsync,type Figure} from '@vesora/core/runtime';
+const fig:Figure=figure();const html:Promise<string>=toHTMLAsync(fig,{observation:true});const download:Promise<void>=downloadHTMLAsync(fig,'capture.html',{source:'accepted'});void html;void download;`:'',features.observation?`import {figure as observedFigure,type ObservationRecord,type SourceSemantics} from '@vesora/core';
+const observed=observedFigure();const semantics:SourceSemantics={unit:'K'};observed.plot([0],[273]).setSemantics({y:semantics});const record:ObservationRecord|undefined=observed.getObservation();void record;`:'',features.balance?`import {createBalance,stepBalance,transferBalance,inspectBalance,type BalanceState,type BalanceTransition,type BalanceReading} from '@vesora/core/balance';
+const state:BalanceState=createBalance([{id:'a',label:'A',volume:1},{id:'b',label:'B',volume:2},{id:'c',label:'C',volume:3}]);const transition:BalanceTransition=stepBalance(state,{from:'a',to:'b'},1);const readings:BalanceReading[]=inspectBalance(transition.state);transferBalance(state,'b','c',1);void readings;`:''].join('\n'),'utf8');
+    run(process.execPath,[join(checkout,'node_modules/typescript/bin/tsc'),'--noEmit','--strict','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext','--lib','ES2022,DOM',productTypes],npmDirectory,'Type-checking new installed runtime declarations with NodeNext…');
+    productContracts.checks.push('new-entry-NodeNext-types');
+  }
+
   const installedChrome = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
   const executablePath = process.env.VESORA_CHROME ?? (existsSync(installedChrome) ? installedChrome : undefined);
   const browser = await chromium.launch({ executablePath, headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
@@ -590,7 +683,7 @@ sampleSurfaceGrid([0, 1], [0, 1], [[1, 2], [3, 4]], {maxVertices: 4});
     await browser.close();
   }
   const archiveHashes = Object.fromEntries(await Promise.all([wheel, tarball].map(async path => [path, createHash('sha256').update(await readFile(path)).digest('hex')])));
-  const result = { version: expectedVersion, commit:release.manifest.commit, manifestSha256:release.manifestSha256, wheel, tarball, archiveHashes, recordedAt: new Date().toISOString(), workspace, outputs };
+  const result = { version: expectedVersion, commit:release.manifest.commit, manifestSha256:release.manifestSha256, wheel, tarball, archiveHashes, recordedAt: new Date().toISOString(), workspace, productContracts, outputs };
   await writeFile(join(workspace, 'verification.json'), JSON.stringify(result, null, 2), 'utf8');
   await mkdir(join(checkout, 'artifacts', 'consumers'), { recursive: true });
   await writeFile(join(checkout, 'artifacts', 'consumers', 'packages.json'), JSON.stringify(result, null, 2), 'utf8');

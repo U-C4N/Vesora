@@ -11,7 +11,7 @@ npm ci --cache artifacts/npm-cache
 npm run check
 ```
 
-The build produces the core and React distributions and copies the same core into the Python asset directory. Complete this build before packaging Python. The core, worker, standalone HTML template, React adapter and bundled Python engine assets are versioned together. Both language APIs retain protocol `1` for legacy scenes and use protocol `2` for grids or annotations; statistics/categories use protocol `3`; linked observation selection uses protocol `4`; theme/time/format features use protocol `5`; bands, inspection and extended typography use protocol `6`. The reader accepts all six. Streaming metadata is separate runtime state. Generated distributions and Python engine files are not committed.
+The build produces the core and React distributions and copies the same core into the Python asset directory. Complete this build before packaging Python. The core, worker, standalone HTML template, React adapter and bundled Python engine assets are versioned together. Both language APIs retain protocol `1` for legacy scenes and use protocol `2` for grids or annotations; statistics/categories use protocol `3`; linked observation selection uses protocol `4`; theme/time/format features use protocol `5`; bands, inspection and extended typography use protocol `6`; mixed scientific panels, extended 3D scenes, slices and captured inspection use protocol `7`. The development reader accepts protocols `1`–`8`; protocol `8` adds channel semantics and opt-in observation records. Live streaming state remains separate runtime state; an observation can describe its retained sequence interval without reconnecting a producer. Fixed RC6 archives retain protocols `1`–`7`. See [observation and Studio/Embed](observation.md). Generated distributions and Python engine files are not committed.
 
 `npm run check` builds both packages, checks core/React/starter types, runs engine and React component tests, and production-builds the SaaS example. `npm run demo:react` starts its Vite development server. React tests verify lifecycle and props contracts; browser tests separately verify actual pixels and interactions.
 
@@ -67,7 +67,7 @@ npx playwright test --config playwright.jupyter.config.ts
 
 This configuration uses the fixture's own Jupyter server and kernel; it does not start the separate gallery harness server.
 
-The test creates a temporary JupyterLab workspace and kernel. Its sixteen cells cover six panel/statistics cells, three linked-workflow cells, two presentation cells, two protocol-6 chart-quality cells and three streaming cells, using actual widget integration throughout. Checks include data updates, bookmarks, native scatter brushing, exact cohort callbacks, all-panel highlights, themed PNG pixels, real date/currency labels, uncertainty bands, 800 × 500 logical-pixel PNG exports at scales 2 and 4, offline HTML, burst deltas, frozen streaming exports, widget redisplay and a 100-batch telemetry measurement. It is skipped during ordinary browser runs unless explicitly enabled. `VESORA_PYTHON` or `PYTHON` selects the Python executable; otherwise a local `.venv` is preferred. Qt and Jupyter test results depend on the available graphics environment and installed host packages; report their executed or skipped status separately from unit tests.
+The test creates a temporary JupyterLab workspace and kernel. Its twenty cells cover six panel/statistics cells, three linked-workflow cells, two presentation cells, two protocol-6 chart-quality cells, three streaming cells and four protocol-7 scientific cells, using actual widget integration throughout. Checks include data updates, bookmarks, native scatter brushing, exact cohort callbacks, all-panel highlights, themed PNG pixels, real date/currency labels, uncertainty bands, 800 × 500 logical-pixel PNG exports at scales 2 and 4, offline HTML, burst deltas, frozen streaming exports, widget redisplay and a 100-batch telemetry measurement. The scientific cells also exercise mixed panels, slices and two independent viewers through freeze, resume and cleanup. It is skipped during ordinary browser runs unless explicitly enabled. `VESORA_PYTHON` or `PYTHON` selects the Python executable; otherwise a local `.venv` is preferred. Qt and Jupyter test results depend on the available graphics environment and installed host packages; report their executed or skipped status separately from unit tests.
 
 ## Run a reproducible benchmark
 
@@ -125,6 +125,29 @@ The HTML browser tests open files directly through `file://` with networking dis
 Tag and publish only a commit whose tests pass. Build the uploaded artifacts from that exact commit, publish as a GitHub prerelease, then download the assets and compare them against `SHA256SUMS.txt`. Release-note validation claims must describe checks actually completed.
 
 Release packaging uses a checkout-local npm cache at `artifacts/npm-cache`; package verification uses its retained temporary workspace's `npm-cache`. This avoids requiring writes to a shared user cache. Set `VESORA_NPM_CACHE` to choose a different cache location. These paths use the same scripts on Windows and Unix; no global npm configuration is changed.
+
+### Inspect release readiness without running graphics
+
+```bash
+npm run release:readiness -- dist/release-v0.9.0-rc.6
+npm run release:readiness -- dist/release-v0.9.0-rc.6 --json
+```
+
+This read-only command verifies the selected archive's manifest, distributable checksums and each referenced reviewed report's hash and release identity. It lists all ten gates together, including valid evidence of failures and human checks that remain pending. It does not run tests, verify remote tags, authenticate participant observations, change gate records or publish. Use the archive directory explicitly when checking an earlier candidate from a newer checkout.
+
+Exit code `0` means every local gate has a matching passed report and the manifest has a publishable identity; `1` means intact evidence still has failed or pending gates; `2` means invalid or missing integrity/identity evidence. A local `0` does not replace the publisher's remote-tag and downloaded-package checks. A short soak or an empty human result form does not close its gate.
+
+### Inspect a supervised soak
+
+```bash
+npm run soak:status -- dist/release-v0.9.0-rc.6 artifacts/releases/v0.9.0-rc.6/soaks-2026-10-23-supervised-full --json
+```
+
+This separate read-only check distinguishes fresh progress from stale or incomplete evidence. It verifies completed report/log hashes, archive and harness identity, resource-clock records, referenced host exports and the native guard's release. A short run can be `passed` while `qualifiesTwoHourGate` remains false. `running` also never qualifies; final acceptance requires all three two-hour hosts and completed cleanup. The command does not rerun graphics, change release gates or publish.
+
+Exit code `0` means the inspected run is `running` or `passed`; `1` means `incomplete` or `failed`. Always read the JSON status and qualification field rather than interpreting a successful inspection as a successful release. Resource samples describe observed process memory; they neither establish a leak-free guarantee nor measure total GPU memory.
+
+Release readiness continues to show the previously recorded soak failure until a completed replacement run is reviewed and its report is bound to the gate. Preserve the old failed report as a prior attempt; do not place it in a new passed gate's `evidence` list, which requires passed reports. The human gates remain independent.
 
 ## Current limits
 
