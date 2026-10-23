@@ -2,7 +2,7 @@ import {DataRegistry,toNumericArray,validateDescriptor,describeData} from './dat
 import {validateDomain} from './scales';
 import {parseColor} from './color';
 import {FigureView} from './view';
-import {SnapshotStore} from './snapshot-store';
+import {captureObservation,SnapshotStore} from './snapshot-store';
 import type {SnapshotLease} from './snapshot-store';
 import type {AppendOptions,InspectionState} from './types';
 import {validateSelectionLink} from './linked';
@@ -11,6 +11,7 @@ import {validateBandData,validateBandStyle} from './band';
 import {validateExportPNGOptions} from './export-options';
 import {validateInspectionX} from './inspection';
 import {surfaceSliceValues} from './slices';
+import {cloneObservation,patchFigureSemantics,validateObservationMetadata} from './observation';
 import {cameraPreset} from './renderer';
 import {appendEntry,lastValue,streamEntry,streamError,validateStreamingOptions,validateStreamState} from './streaming';
 import type {DataEntry,DataDescriptor,StreamState,StreamingOptions,ReadyOptions,RuntimeOptions,SurfaceSliceSpec,CameraPreset} from './types';
@@ -20,7 +21,8 @@ import {axisCategories,categoryKey,encodeAxis,isStatistical,labels,statisticalOp
 import type {AxisSeries} from './semantics';
 import type {BarMode,BarSpecOptions,BoxplotSpecOptions,HistogramSpecOptions,StatisticalOptions} from './types';
 import type {FigureSpec,FigureOptions,LayerSpec,LayerKind,LayerStyle,NumericArray,ViewSpec,ViewBookmark,ViewState,Snapshot,RepresentationInfo,PanelEntry,AnnotationSpec,AnnotationStyle,AnnotationOptions,SubplotsOptions} from './types';
-import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION} from './types';
+import {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION,OBSERVATION_PROTOCOL_VERSION} from './types';
+import type {ChannelSemanticsPatch,FigureSemantics,ObservationRecord,SourceSemantics} from './types';
 
 let serial=0;
 const id=(prefix:string)=>`${prefix}-${++serial}`;
@@ -167,6 +169,11 @@ export class Layer {
   constructor(readonly figure:Figure,readonly id:string){}
   get spec():LayerSpec{const layer=this.figure.spec.layers.find(l=>l.id===this.id);if(!layer)throw new Error('Layer has been removed');return layer;}
   setData(data:Record<string,unknown>):this{this.figure.updateData(this.spec,data);return this;}
+  setSemantics(patch:ChannelSemanticsPatch):this{this.figure.updateSourceSemantics(this.spec,patch);return this;}
+  getSemantics():Record<string,SourceSemantics>{
+    const declarations=this.figure.spec.semantics?.sources??{};
+    return Object.fromEntries(Object.entries(this.spec.data).filter(([,source])=>Object.hasOwn(declarations,source)).map(([channel,source])=>[channel,structuredClone(declarations[source])]));
+  }
   enableStreaming(options:StreamingOptions):this{this.figure.enableStreaming(this,options);return this;}
   appendData(data:Record<string,unknown>,options:AppendOptions={}):Promise<void>{return this.figure.appendDataBatch([{layer:this,data}],options);}
   disableStreaming():this{this.figure.disableStreaming(this.id);return this;}
@@ -229,6 +236,7 @@ export class Figure {
   private view?:FigureView;
   private inspectionEnabled=true;
   private importedInspectionBaseline?:{layers:string;sources:Map<string,DataDescriptor>};
+  private importedObservationBaseline?:string;
   private exportStore:SnapshotStore;
   private listeners=new Map<FigureEvent,Set<(event:any)=>void>>();
   private closed=false;
@@ -290,9 +298,10 @@ export class Figure {
       entry.descriptor.id=target;writes.set(target,entry);data[channel]=target;
     }
     const referenced=new Set(this.spec.layers.flatMap(item=>Object.values(item===spec?data:item.data))),released=new Set(Object.values(spec.data).filter(source=>!referenced.has(source)));
+    const semantics=this.migrateSourceSemantics(spec.data,data,released);
     this.checkSourceBudget(writes,false,released);
     for(const [source,entry]of writes)this.registry.store.set(source,entry);
-    spec.data=data;for(const source of released)this.registry.release(source);this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:options.maxPoints,nextSequence:count,revision:0,retained:Math.min(count,options.maxPoints),evicted:Math.max(0,count-options.maxPoints)});
+    spec.data=data;this.assignSourceSemantics(semantics);for(const source of released)this.registry.release(source);this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:options.maxPoints,nextSequence:count,revision:0,retained:Math.min(count,options.maxPoints),evicted:Math.max(0,count-options.maxPoints)});
     this.changed();
   }
   disableStreaming(layerId:string):void{
@@ -360,6 +369,24 @@ export class Figure {
     }catch(error){return Promise.reject(error instanceof Error?Object.assign(error,{accepted:false}):error);}
   }
   setTheme(theme:ThemeInput):this{this.assertOpen();const next=resolveTheme(theme);this.spec.theme=next;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,hasTypography(next)?QUALITY_PROTOCOL_VERSION:PRESENTATION_PROTOCOL_VERSION);this.changed();return this;}
+  updateSourceSemantics(layer:LayerSpec,patch:ChannelSemanticsPatch):void{
+    this.assertOpen();if(!this.spec.layers.includes(layer))throw new Error('Layer has been removed');
+    const next=patchFigureSemantics(this.spec,layer,patch);
+    // Imported JSON key order is not a semantic edit; preserve its observation
+    // across empty or equivalent patches just as across other no-op operations.
+    if(JSON.stringify(next)===JSON.stringify(patchFigureSemantics(this.spec,layer,{})))return;
+    this.assignSourceSemantics(next);if(next)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,OBSERVATION_PROTOCOL_VERSION);this.changed();
+  }
+  private assignSourceSemantics(semantics:FigureSemantics|undefined):void{if(semantics)this.spec.semantics=semantics;else delete this.spec.semantics;}
+  private migrateSourceSemantics(before:Record<string,string>,after:Record<string,string>,released:Iterable<string>):FigureSemantics|undefined{
+    if(!this.spec.semantics)return undefined;
+    const sources=new Map(Object.entries(structuredClone(this.spec.semantics.sources)));
+    for(const [channel,source]of Object.entries(after)){
+      const old=before[channel];if(old!==undefined&&old!==source&&sources.has(old))sources.set(source,structuredClone(sources.get(old)!));
+    }
+    for(const source of released)sources.delete(source);
+    return sources.size?{schemaVersion:1,sources:Object.fromEntries(sources)}:undefined;
+  }
   setHoverMode(mode:HoverMode):this{
     this.assertOpen();if(!['nearest','x'].includes(mode))throw new TypeError('Hover mode must be nearest or x');const draft={...this.spec,hoverMode:mode};this.validateCurrentSemantics(draft);
     this.spec.hoverMode=mode;this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);this.view?.clearInteraction();this.changed();return this;
@@ -510,7 +537,9 @@ export class Figure {
     if(this.spec.slices?.some(slice=>slice.sourceLayerId===layerId))throw new Error('Remove dependent slices before removing their source surface');
     this.disableStreaming(layerId);this.unlinkLayer(layerId);
     if(this.spec.slices){this.spec.slices=this.spec.slices.filter(slice=>slice.targetLayerId!==layerId);if(!this.spec.slices.length)delete this.spec.slices;}
-    this.spec.layers=this.spec.layers.filter(item=>item.id!==layerId);for(const source of Object.values(layer.data))if(!this.spec.layers.some(item=>Object.values(item.data).includes(source)))this.registry.release(source);this.changed();
+    this.spec.layers=this.spec.layers.filter(item=>item.id!==layerId);
+    const released=Object.values(layer.data).filter(source=>!this.spec.layers.some(item=>Object.values(item.data).includes(source)));
+    this.assignSourceSemantics(this.migrateSourceSemantics({}, {},released));for(const source of released)this.registry.release(source);this.changed();
   }
   setCameraPreset(preset:CameraPreset,panelId='main'):this{
     const view=this.panelView(panelId);if(view.kind!=='3d')throw new Error('Camera presets require a 3D panel');
@@ -677,16 +706,17 @@ export class Figure {
       const entry:DataEntry={descriptor,values:values[key]};return [descriptor.id,streaming?streamEntry(entry,streaming.maxPoints):entry];
     }));
     for(const [targetId,derived]of sliceValues)for(const [id,entry]of this.prepareSliceEntries(this.spec.layers.find(item=>item.id===targetId)!,derived))entries.set(id,entry);
+    const released=Object.values(layer.data).filter(source=>!draft.layers.some(item=>Object.values(item.data).includes(source)));
+    const semantics=this.migrateSourceSemantics(layer.data,candidate.data,released);
     this.checkSourceBudget(entries);
     if(streaming)this.rejectStreamWaiters(layer.id);
     for(const [source,entry]of entries)this.registry.store.set(source,entry);
-    const released=Object.values(layer.data).filter(source=>!Object.values(candidate.data).includes(source));
-    Object.assign(layer,candidate);
+    Object.assign(layer,candidate);this.assignSourceSemantics(semantics);
     if(draft.categories!==undefined)this.spec.categories=draft.categories;
     if(isStatistical(layer.kind)||layer.categorical)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,STATISTICS_PROTOCOL_VERSION);
     if(layer.kind==='band'||layer.style.colorbarLabel!==undefined)this.spec.protocolVersion=Math.max(this.spec.protocolVersion,QUALITY_PROTOCOL_VERSION);
     if(layer.kind==='line3d'||layer.kind==='surface'&&(values.color||layer.style.shading!==undefined||layer.style.wireframe!==undefined))this.spec.protocolVersion=Math.max(this.spec.protocolVersion,SCENE3D_PROTOCOL_VERSION);
-    for(const source of released)if(!this.spec.layers.some(item=>Object.values(item.data).includes(source)))this.registry.release(source);
+    for(const source of released)this.registry.release(source);
     if(streaming)this.streams.set(layer.id,{streamId:this.nextStreamId(),maxPoints:streaming.maxPoints,nextSequence:streamCount,revision:0,retained:Math.min(streamCount,streaming.maxPoints),evicted:Math.max(0,streamCount-streaming.maxPoints)});
     if(notify)this.changed();
   }
@@ -802,7 +832,8 @@ export class Figure {
     this.assertOpen();if(!['accepted','displayed'].includes(source))throw new TypeError('Export source must be accepted or displayed');
     if(this.view)return this.view.captureExport(source);
     if(source==='displayed')throw streamError('NOT_READY','Mount and render the figure before exporting a displayed frame');
-    return this.exportStore.capture(this.snapshot(),this.registry);
+    const lease=this.exportStore.capture(this.snapshot(),this.registry);
+    try{captureObservation(lease,'accepted',this.streams);return lease;}catch(error){lease.release();throw error;}
   }
   async ready(options:ReadyOptions={}):Promise<void>{this.assertOpen();if(options.signal?.aborted)throw new DOMException('Waiting for the figure was aborted','AbortError');if(options.timeoutMs!==undefined&&(!Number.isFinite(options.timeoutMs)||options.timeoutMs<=0))throw new RangeError('timeoutMs must be positive');if(this.view)await this.view.ready(options);}
   async savefig(options:ExportPNGOptions={}):Promise<Blob>{
@@ -819,6 +850,9 @@ export class Figure {
     return this.view.exportSnapshotPNG(snapshot,buffers,validateExportPNGOptions(options));
   }
   inspect():Array<RepresentationInfo&{layerId:string;panelId?:string}>{return this.view?.inspect()??[];}
+  getObservation():ObservationRecord|undefined{this.assertOpen();return cloneObservation(this.spec.observation);}
+  /** Internal capture/interaction hook; does not alter protocol-7 inspection metadata. */
+  invalidateObservation():void{delete this.spec.observation;this.importedObservationBaseline=undefined;}
   diagnostics(){return {sourceBytes:Array.from(this.registry.entries(),([,entry])=>entry.descriptor.byteLength).reduce((sum,bytes)=>sum+bytes,0),semanticScans:this.semanticScans,pendingAppends:this.streamWaiters.size,snapshotBytes:this.exportStore.bytes,maxSnapshotBytes:this.exportStore.maximum,snapshotCopiedBytes:this.exportStore.copiedBytes,streams:Object.fromEntries(Array.from(this.streams,([key,state])=>[key,{...state}])),...this.view?.diagnostics()};}
   on<K extends FigureEvent>(event:K,callback:(event:FigureEventMap[K])=>void):()=>void{let handlers=this.listeners.get(event);if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);return ()=>handlers!.delete(callback);}
   emit<K extends FigureEvent>(event:K,payload:FigureEventMap[K]):void{
@@ -840,13 +874,23 @@ export class Figure {
     });
     if(changed){delete this.spec.inspection;this.importedInspectionBaseline=undefined;}
   }
-  changed(streaming=false):void{this.assertOpen();this.invalidateImportedInspection();this.acceptedRevision++;this.view?.schedule(streaming);}
+  private observationIdentity(spec=this.spec,sources=Array.from(this.registry.entries(),([,entry])=>entry.descriptor)):string{
+    const {observation:_,...scene}=spec;
+    return JSON.stringify({scene,sources,selection:this.pendingLink});
+  }
+  private invalidateImportedObservation():void{
+    if(!this.spec.observation){this.importedObservationBaseline=undefined;return;}
+    if(this.importedObservationBaseline!==undefined&&this.importedObservationBaseline!==this.observationIdentity()){
+      this.invalidateObservation();
+    }
+  }
+  changed(streaming=false):void{this.assertOpen();this.invalidateImportedInspection();this.invalidateImportedObservation();this.acceptedRevision++;this.view?.schedule(streaming);}
   snapshot():Snapshot{this.assertOpen();return {figure:structuredClone(this.spec),sources:Array.from(this.registry.entries(),([,entry])=>structuredClone(entry.descriptor))};}
   applySnapshot(snapshot:Snapshot,buffers:Map<string,ArrayBuffer>):void{
     // Clone before touching live storage; even a non-cloneable incoming field
     // must leave the previous scene and its source registry intact.
-    this.assertOpen();const spec=structuredClone(snapshot.figure);
-    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
+    this.assertOpen();validateObservationMetadata(snapshot.figure,snapshot.sources);const spec=structuredClone(snapshot.figure);
+    if(![PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION,OBSERVATION_PROTOCOL_VERSION].includes(spec.protocolVersion))throw new Error(`Unsupported protocol version ${spec.protocolVersion}`);
     const presentationViews=[spec.view,...(spec.panels??[]).flatMap(panel=>panel.view?[panel.view]:[]),...(spec.bookmarks??[]).flatMap(bookmark=>[bookmark.view,...Object.values(bookmark.panelViews??{})])];
     if(spec.theme!==undefined)validateTheme(spec.theme);
     if(spec.protocolVersion<PRESENTATION_PROTOCOL_VERSION&&(spec.theme!==undefined||presentationViews.some(view=>view&&(view.xScale==='time'||view.yScale==='time'||view.xFormat!==undefined||view.yFormat!==undefined))))throw new Error('Themes, time scales and axis formats require protocol version 5');
@@ -907,10 +951,13 @@ export class Figure {
     validateSelectionLink(spec,next);
     this.isolateSelectionSources(spec,next);
     this.checkSourceBudget(new Map(next.entries()),true);
+    validateObservationMetadata(spec,Array.from(next.entries(),([,entry])=>entry.descriptor));
     const importedInspectionBaseline=spec.inspection?{layers:this.inspectionDataIdentity(spec),sources:new Map([...next.entries()].map(([id,entry])=>[id,structuredClone(entry.descriptor)]))}:undefined;
     this.rejectStreamWaiters();this.streams.clear();
     this.registry.clear();for(const [,entry]of next.entries())this.registry.set(entry.descriptor.id,entry.values,entry.descriptor.shape,entry.descriptor.version);
-    this.spec=spec;this.importedInspectionBaseline=importedInspectionBaseline;this.pendingLink=undefined;this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
+    this.spec=spec;this.importedInspectionBaseline=importedInspectionBaseline;this.pendingLink=undefined;
+    this.importedObservationBaseline=spec.observation?this.observationIdentity():undefined;
+    this.notifiedLink='';this.view?.invalidateData();this.view?.clearInteraction();this.changed();
   }
   close():void{if(this.closed)return;this.rejectStreamWaiters();this.streams.clear();this.view?.dispose();this.view=undefined;this.registry.clear();this.exportStore.dispose();this.listeners.clear();this.closed=true;}
   private assertOpen():void{if(this.closed)throw new Error('Figure is closed');}

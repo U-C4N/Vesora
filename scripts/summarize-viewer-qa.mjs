@@ -1,9 +1,10 @@
 import {readdir,readFile,writeFile} from 'node:fs/promises';
 import {join,relative} from 'node:path';
 import {createHash} from 'node:crypto';
+import {viewerBuildFingerprint} from './viewer-build-fingerprint.mjs';
 
 const root='artifacts/v09/ui',hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const build={core:hash(await readFile('packages/core/dist/index.js')),viewer:hash(await readFile('packages/core/dist/viewer.js'))};
+const build=await viewerBuildFingerprint();
 const cases=[];
 for(const item of await readdir(join(root,'matrix'),{withFileTypes:true})){
   if(!item.isDirectory()||!item.name.startsWith('viewer-matrix-'))continue;

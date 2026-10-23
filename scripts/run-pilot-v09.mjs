@@ -5,7 +5,8 @@ import {createServer} from 'node:http';
 import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {loadRelease,sha256} from './release-validation.mjs';
+import {loadRelease,sha256,validateRuntimeHashes} from './release-validation.mjs';
+import {humanEvidenceTemplate} from './human-evidence.mjs';
 
 const usage='Usage: node scripts/run-pilot-v09.mjs <release-directory> [--port 0..65535] [--prepare-only]';
 const args=process.argv.slice(2);
@@ -34,7 +35,7 @@ const remember=async(route,bytes,type,path,origin)=>{
 };
 
 // Extract only named regular-file bytes. The archive never selects filesystem paths.
-for(const member of ['package.json',...['index','worker','viewer','labs'].map(name=>`dist/${name}.js`)]){
+for(const member of ['package.json',...validateRuntimeHashes(manifest.runtime).map(name=>`dist/${name}.js`)]){
   const bytes=execFileSync('tar',['-xOzf',archive,`package/${member}`],{windowsHide:true,maxBuffer:64*1024*1024});
   if(member==='package.json'){
     const pkg=JSON.parse(bytes);assert.equal(pkg.name,'@vesora/core');assert.equal(pkg.version,identity.npm);
@@ -58,9 +59,12 @@ const page=Buffer.from(`<!doctype html>
 const style=Buffer.from(`:root{color-scheme:dark;font-family:system-ui,sans-serif;color:#edf0f4;background:#101215}*{box-sizing:border-box}body{margin:0}main{max-width:1260px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;color:#a2abb8;font-size:13px}.brand{font-size:22px;font-weight:700;color:#edf0f4}.demo-copy,.demo-controls{display:none}.demo-status{font-size:12px;color:#a2abb8;min-height:1.5em}#error{color:#ffb3a8}@media(max-width:640px){main{padding:12px}header{align-items:flex-start}}`);
 const bootstrap=Buffer.from(`import {mountSurfaceLab} from '/examples/web/v09-surface-lab.js';
 import {producerLoop} from '/examples/web/v09-common.js';
-let current,stopProducer;
+let current,stopProducer,disposed=false;
+const dispose=()=>{if(disposed)return;disposed=true;stopProducer?.();current?.dispose();};
+window.addEventListener('pagehide',event=>{if(!event.persisted)dispose();});
 try{
   current=await mountSurfaceLab(document.querySelector('#demo'));
+  if(disposed){current.dispose();}else{
   document.querySelector('.demo-copy')?.remove();
   document.querySelector('.demo-controls')?.remove();
   const status=document.querySelector('.demo-status');
@@ -69,12 +73,42 @@ try{
   stopProducer=producerLoop(()=>current.advance(++tick*.12),1000,error=>{
     const message=document.querySelector('#error');message.hidden=false;message.textContent='Veri üreticisi durdu: '+error.message;
   });
-}catch(error){const message=document.querySelector('#error');message.hidden=false;message.textContent=error.message;}
-window.addEventListener('pagehide',()=>{stopProducer?.();current?.dispose();},{once:true});
+  }
+}catch(error){if(!disposed){const message=document.querySelector('#error');message.hidden=false;message.textContent=error.message;}}
 `);
 await remember('/',page,'text/html; charset=utf-8',join(fixture,'index.html'),'pilot wrapper');
 await remember('/pilot.css',style,'text/css; charset=utf-8',join(fixture,'pilot.css'),'pilot wrapper');
 await remember('/pilot.js',bootstrap,'text/javascript; charset=utf-8',join(fixture,'pilot.js'),'pilot wrapper');
+// A separate observer-only route keeps the approved participant task unchanged.
+const accessibilityPage=Buffer.from(`<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vesora ekran okuyucu oturumu</title><link rel="stylesheet" href="/pilot.css"></head>
+<body><main><h1>Ekran okuyucu kontrolü</h1><p>Bu sayfa gözlemci içindir. Bilimsel örnek ve birbirinden bağımsız iki canlı görüntüleyici aynı doğrulanmış RC arşivini kullanır.</p>
+<section aria-labelledby="surface-heading"><h2 id="surface-heading">Bilimsel yüzey ve kesit</h2><div id="demo"></div></section>
+<section aria-labelledby="independent-heading"><h2 id="independent-heading">Bağımsız canlı görüntüleyiciler</h2><div id="independent"></div></section>
+<p id="error" role="alert" hidden></p></main><script type="module" src="/pilot.js"></script><script type="module" src="/accessibility.js"></script></body></html>`);
+const accessibilityScript=Buffer.from(`import {figure} from '/packages/core/dist/index.js';
+import {mountViewer} from '/packages/core/dist/viewer.js';
+import {producerLoop} from '/examples/web/v09-common.js';
+const cleanup=[];let disposed=false;
+const dispose=()=>{if(disposed)return;disposed=true;for(const stop of cleanup.reverse())stop();cleanup.length=0;};
+window.addEventListener('pagehide',event=>{if(!event.persisted)dispose();});
+const fail=error=>{const node=document.querySelector('#error');node.hidden=false;node.textContent=error.message;};
+try{
+  for(const title of ['Bağımsız A','Bağımsız B']){
+    if(disposed)break;
+    const host=document.createElement('div');host.style.marginBottom='16px';document.querySelector('#independent').append(host);
+    const fig=figure({title,height:240});cleanup.push(()=>fig.close());
+    const line=fig.plot([],[],{label:title}).enableStreaming({maxPoints:200});fig.setHoverMode('x');
+    const viewer=mountViewer(fig,host,{onError:fail});cleanup.push(()=>viewer.dispose());
+    let sequence=0;
+    const tick=()=>{const x=sequence++;return line.appendData({x:[x],y:[Math.sin(x/10)]},{waitFor:'accepted'});};
+    await tick();if(disposed)break;await fig.ready();if(disposed)break;cleanup.push(producerLoop(tick,100,fail));
+  }
+}catch(error){if(!disposed){fail(error);dispose();}}
+`);
+await remember('/accessibility',accessibilityPage,'text/html; charset=utf-8',join(fixture,'accessibility.html'),'screen-reader fixture wrapper');
+await remember('/accessibility.js',accessibilityScript,'text/javascript; charset=utf-8',join(fixture,'accessibility.js'),'screen-reader fixture wrapper');
 await writeFile(join(output,'release-manifest.json'),release.manifestBytes);
 const template=await readFile(join(repo,'docs','pilot','v0.9.0','results-template.md'));
 let results=template.toString('utf8');
@@ -90,9 +124,18 @@ for(const [field,value]of [
 }
 const tasks=await readFile(join(repo,'docs','pilot','v0.9.0','participant-tasks.tr.md'));
 await writeFile(join(output,'results.md'),results);await writeFile(join(output,'participant-tasks.tr.md'),tasks);
+const screenReaderSource=await readFile(join(repo,'docs','qa','v0.9.0-screen-reader.tr.md'));
+const screenReader=Buffer.from(screenReaderSource.toString('utf8').replace('(../pilot/v0.9.0/human-evidence.tr.md)','(human-evidence.tr.md)'));
+await writeFile(join(output,'screen-reader.tr.md'),screenReader);
+const humanGuide=await readFile(join(repo,'docs','pilot','v0.9.0','human-evidence.tr.md'));
+await writeFile(join(output,'human-evidence.tr.md'),humanGuide);
+await writeFile(join(output,'human-evidence.json'),JSON.stringify(humanEvidenceTemplate(release),null,2)+'\n');
 const documents=[
   {file:'results.md',sha256:sha256(Buffer.from(results)),templateSha256:sha256(template),purpose:'Observer form; only archive/fixture identity prefilled; results remain pending'},
   {file:'participant-tasks.tr.md',sha256:sha256(tasks),purpose:'Unmodified participant task wording'},
+  {file:'screen-reader.tr.md',sha256:sha256(screenReader),sourceSha256:sha256(screenReaderSource),purpose:'Human screen-reader checklist with session-local guide link; no results filled'},
+  {file:'human-evidence.tr.md',sha256:sha256(humanGuide),purpose:'Unmodified human evidence intake guide'},
+  {file:'human-evidence.json',sha256:sha256(await readFile(join(output,'human-evidence.json'))),purpose:'Editable human intake; all observations remain pending'},
 ];
 const provenance={
   preparedAt:new Date().toISOString(),version:manifest.version,commit:manifest.commit,tag:manifest.tag,
@@ -105,7 +148,7 @@ const provenance={
 const saveProvenance=()=>writeFile(join(output,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');
 await saveProvenance();
 console.log(`Candidate: ${manifest.version} (manifest candidate=${manifest.candidate}; dirty=${manifest.workingTreeDirty})\nCommit: ${manifest.commit}\nTag: ${manifest.tag??'none'}\nArchive: ${archiveName}\nArchive SHA-256: ${archiveSha256}\nManifest SHA-256: ${manifestSha256}\nFixture/provenance: ${output}`);
-console.log(`Observer results: ${join(output,'results.md')}\nParticipant tasks: ${join(output,'participant-tasks.tr.md')}`);
+console.log(`Observer results: ${join(output,'results.md')}\nParticipant tasks: ${join(output,'participant-tasks.tr.md')}\nScreen-reader checklist: ${join(output,'screen-reader.tr.md')}\nHuman evidence intake: ${join(output,'human-evidence.json')}`);
 
 if(prepareOnly){console.log('Prepared only; no server started. Pilot result remains pending.');}
 else{
@@ -123,7 +166,7 @@ else{
   });
   await new Promise((ready,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',ready);});
   provenance.server.url=`http://127.0.0.1:${server.address().port}/`;await saveProvenance();
-  console.log(`URL: ${provenance.server.url}\nOpen the URL in the participant browser. Ctrl+C stops the local server. Pilot result remains pending.`);
+  console.log(`URL: ${provenance.server.url}\nScreen-reader URL: ${provenance.server.url}accessibility\nOpen the appropriate URL in the human observer/participant browser. Ctrl+C stops the local server. Human results remain pending.`);
   const stop=()=>{server.close();server.closeAllConnections();};
   process.once('SIGINT',stop);process.once('SIGTERM',stop);
 }

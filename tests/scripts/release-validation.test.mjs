@@ -28,11 +28,25 @@ test('canonical ecosystem identity rejects noncanonical SemVer spellings',()=>{
   assert.equal(releaseIdentity(version).python,'0.9.0rc1');assert.equal(releaseIdentity('1.0.0').npmTag,'latest');
   for(const value of ['00.9.0','0.09.0','0.9.00','0.9.0-rc.01',null,900])assert.throws(()=>releaseIdentity(value));
 });
+test('split runtime provenance covers lazy dependencies while legacy manifests remain valid',()=>{
+  const value=manifest();assert.doesNotThrow(()=>validateReleaseManifest(value));
+  value.runtime.runtime=hash;assert.throws(()=>validateReleaseManifest(value),/together/);
+  value.runtime['html-template']=hash;value.runtime.balance=hash;
+  assert.doesNotThrow(()=>validateReleaseManifest(value));
+  value.runtime['html-template']='invalid';assert.throws(()=>validateReleaseManifest(value),/Invalid runtime hash/);
+  value.runtime['html-template']=hash;value.runtime['../outside']=hash;
+  assert.throws(()=>validateReleaseManifest(value),/Unknown runtime entry/);
+});
 test('clean tagged review candidates are still unpublishable',()=>{
   const value={...manifest(),candidate:true};assert.doesNotThrow(()=>validateReleaseManifest(value));
   assert.throws(()=>validateReleaseManifest(value,{publishable:true}),/candidate archives/);
   assert.throws(()=>validateReleaseManifest({...manifest(),workingTreeDirty:true},{publishable:true}),/clean commit/);
   assert.throws(()=>validateReleaseManifest({...manifest(),tag:null},{publishable:true}),/matching release tag/);
+});
+test('observation-capable manifests and fixed protocol-7 archives both validate',()=>{
+  assert.doesNotThrow(()=>validateReleaseManifest({...manifest(),protocolVersions:[1,2,3,4,5,6,7,8]}));
+  assert.doesNotThrow(()=>validateReleaseManifest(manifest()));
+  for(const protocolVersions of [[1,2,3,4,5,6,8],[1,2,3,4,5,6,7,9],[1,2,3,4,5,6,7,8,9]])assert.throws(()=>validateReleaseManifest({...manifest(),protocolVersions}));
 });
 test('manifest cannot omit, duplicate, rename or mis-hash a constructed publication filename',()=>{
   for(const mutate of [m=>m.files.shift(),m=>m.files.push(m.files[0]),m=>m.files[0].name='../core.tgz',m=>m.files[0].sha256='bad']){

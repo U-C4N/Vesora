@@ -1,4 +1,4 @@
-import { figure, Layer, decodeData } from '/assets/index.js';
+import { figure, Layer, decodeData } from '/assets/runtime.js';
 import { mountViewer } from '/assets/viewer.js';
 
 const token=new URL(location.href).searchParams.get('token');

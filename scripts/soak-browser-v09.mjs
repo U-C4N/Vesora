@@ -8,6 +8,7 @@ import {resolve,join} from 'node:path';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {cpus,platform,totalmem} from 'node:os';
+import {validateRuntimeHashes} from './release-validation.mjs';
 
 const version=JSON.parse(await readFile('package.json','utf8')).version;
 const directory=resolve(process.argv[2]??`dist/release-v${version}`),seconds=Number(process.env.VESORA_SOAK_SECONDS??7200);
@@ -23,7 +24,7 @@ const output=resolve(process.env.VESORA_SOAK_OUTPUT??'artifacts/v09/soak');await
 const installed=await mkdtemp(join(output,'browser-runtime-'));
 execFileSync('tar',['-xzf',join(directory,archive),'-C',installed],{windowsHide:true});
 const assets=new Map([['/',Buffer.from('<!doctype html><html><body><div id="chart"></div></body></html>')]]);
-for(const name of ['index','worker','viewer','labs']){const bytes=await readFile(join(installed,`package/dist/${name}.js`));assert.equal(hash(bytes),manifest.runtime[name]);assets.set(`/${name}.js`,bytes);}
+for(const name of validateRuntimeHashes(manifest.runtime)){const bytes=await readFile(join(installed,`package/dist/${name}.js`));assert.equal(hash(bytes),manifest.runtime[name]);assets.set(`/${name}.js`,bytes);}
 const server=createServer((request,response)=>{const path=new URL(request.url,'http://127.0.0.1').pathname,body=assets.get(path);response.writeHead(body?200:404,{'Content-Type':path==='/'?'text/html':'text/javascript',
   'Content-Security-Policy':"default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:"});response.end(body??'Not found');});
 await new Promise((ready,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',ready);});

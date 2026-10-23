@@ -1,4 +1,5 @@
 import {releaseIdentity} from './release-identity.mjs';
+import {validateSceneProtocolVersions,validateRuntimeHashes} from './release-validation.mjs';
 // Verify the exact files that will be distributed, including offline demo exports.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -38,8 +39,8 @@ const manifest = JSON.parse(await readFile(join(directory, 'release-manifest.jso
 assert.equal(manifest.version, version, 'Release manifest version must match the packages.');
 assert.deepEqual(manifest.files.map(file => file.name).sort(), expected.filter(name => name !== 'release-manifest.json').sort(), 'Release provenance must list every package and demo.');
 for (const file of manifest.files) assert.equal(file.sha256, hashes[file.name], `${file.name}: provenance hash does not match the distributed bytes`);
-assert.deepEqual(manifest.protocolVersions, [1, 2, 3, 4, 5, 6, 7], 'Release must retain scene protocols 1–6.');
-for(const name of ['index','worker','viewer','labs']){
+validateSceneProtocolVersions(manifest.protocolVersions);
+for(const name of validateRuntimeHashes(manifest.runtime)){
   assert.match(manifest.runtime[name],/^[a-f0-9]{64}$/);
   const bytes=execFileSync('tar',['-xOf',join(directory,`vesora-core-${version}.tgz`),`package/dist/${name}.js`],{windowsHide:true,maxBuffer:32*1024*1024});
   assert.equal(createHash('sha256').update(bytes).digest('hex'),manifest.runtime[name],`${name}: runtime provenance must match the distributed core archive`);

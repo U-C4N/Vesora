@@ -1,6 +1,6 @@
 import {forwardRef, useEffect, useId, useImperativeHandle, useRef, useState} from 'react';
 import type {ForwardedRef, ReactElement, RefAttributes} from 'react';
-import {figure, resolveTheme, toHTML} from '@vesora/core';
+import {figure, resolveTheme, toHTMLAsync} from '@vesora/core/runtime';
 import type {AppendOptions, ExportHTMLOptions, ExportPNGOptions, Figure, HoverEvent, Layer, StreamState, XHoverEvent} from '@vesora/core';
 import {formatValue, prepareData} from './data';
 import {updateChart} from './chart';
@@ -295,7 +295,7 @@ function Chart<Row extends object>(props: VesoraChartProps<Row>, ref: ForwardedR
       if (latest.current.loading || latest.current.error || renderError) throw new Error('Wait for a valid chart before exporting.');
       const current = owner.current;
       if (!current || current.disposed) throw new Error('The chart is not mounted.');
-      return toHTML(current.figure,options);
+      return toHTMLAsync(current.figure,options);
     },
     resetView() {
       const current = owner.current;

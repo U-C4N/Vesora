@@ -5,6 +5,7 @@ export const LINKED_PROTOCOL_VERSION = 4;
 export const PRESENTATION_PROTOCOL_VERSION = 5;
 export const QUALITY_PROTOCOL_VERSION = 6;
 export const SCENE3D_PROTOCOL_VERSION = 7;
+export const OBSERVATION_PROTOCOL_VERSION = 8;
 export type NumericArray = Float64Array | Float32Array | Int32Array | Uint32Array | Int16Array | Uint16Array | Int8Array | Uint8Array;
 export type ScaleKind = "linear" | "log" | "time";
 export interface ThemeTokens {
@@ -99,6 +100,8 @@ export interface AnnotationSpec {
   x?: number; y?: number; text?: string; style: AnnotationStyle;
 }
 export interface FigureSpec {
+  semantics?: FigureSemantics;
+  observation?: ObservationRecord;
   inspection?: {capturedAt:string;frameId:number;snapshotId?:string;selection?:HoverEvent};
   protocolVersion: number; id: string; title: string; width: number; height: number;
   view: ViewSpec; layers: LayerSpec[];
@@ -140,6 +143,28 @@ export interface RepresentationInfo {
   valid?: number; omitted?: number; rangeExcluded?: number;
   /** Surface triangle counts; omitted vertices and omitted triangles are distinct. */
   totalTriangles?: number; omittedTriangles?: number;
+}
+export type MetadataScalar = string | number | boolean | null;
+export interface ExternalTransformDescription {
+  execution: 'external'; name: string; version?: string;
+  parameters?: Record<string, MetadataScalar>;
+}
+/** User declarations. Units and external transforms are not evaluated by the renderer. */
+export interface SourceSemantics {
+  name?: string; quantity?: string; unit?: string; dimension?: string;
+  origin?: {datasetId: string; field?: string; reference?: string};
+  transforms?: ExternalTransformDescription[];
+}
+export interface FigureSemantics {schemaVersion: 1; sources: Record<string, SourceSemantics>}
+export type ChannelSemanticsPatch = Record<string, SourceSemantics | null>;
+export interface ObservationRecord {
+  schemaVersion: 1; source: 'accepted' | 'displayed'; capturedAt: string;
+  sourceVersions: Array<{id: string; version: number}>;
+  streams: Array<{layerId: string; streamId: string; revision: number; sequenceStart: number; sequenceEndExclusive: number}>;
+  representation: {status: 'not-evaluated'} | {
+    status: 'rendered'; frameId: number; snapshotId?: string;
+    layers: Array<RepresentationInfo & {layerId: string; panelId?: string}>;
+  };
 }
 export interface PointsResult {kind: "points"; indices: Uint32Array; info: RepresentationInfo}
 export interface DensityResult {kind: "density"; counts: Uint32Array; columns: number; rows: number; max: number; bounds: Bounds; info: RepresentationInfo}

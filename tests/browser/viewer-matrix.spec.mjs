@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
-import {createHash} from 'node:crypto';
-import {readFile,writeFile} from 'node:fs/promises';
+import {writeFile} from 'node:fs/promises';
+import {viewerBuildFingerprint} from '../../scripts/viewer-build-fingerprint.mjs';
 
 export async function mountScientificViewer(page,theme='dark'){
   await page.goto('/tests/browser/harness.html');
@@ -41,8 +41,7 @@ for(const width of [360,768,1440])for(const dpr of [1,2])for(const theme of ['da
       await expect(viewer.getByRole('button',{name:'Focus selection',exact:true})).toBeVisible();
       expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await viewer.screenshot({path:testInfo.outputPath('inspector.png')});
-      const core=await readFile('packages/core/dist/index.js'),chrome=await readFile('packages/core/dist/viewer.js');
-      const evidence={status:'passed',width,dpr,theme,motion,metrics,browser:browser.version(),errors,realScreenReader:false,realBrowserZoom:false,buildSha256:{core:createHash('sha256').update(core).digest('hex'),viewer:createHash('sha256').update(chrome).digest('hex')}};
+      const evidence={status:'passed',width,dpr,theme,motion,metrics,browser:browser.version(),errors,realScreenReader:false,realBrowserZoom:false,buildSha256:await viewerBuildFingerprint()};
       expect(errors).toEqual([]);await writeFile(testInfo.outputPath('evidence.json'),JSON.stringify(evidence,null,2));
     }finally{await context.close();}
   });

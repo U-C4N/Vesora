@@ -1,0 +1,1596 @@
+{
+  "createdAt": "2026-10-23T12:06:34.703Z",
+  "environment": {
+    "node": "v24.19.0",
+    "browser": "156.0.8078.47",
+    "os": "win32",
+    "release": "10.0.26300",
+    "cpu": "Intel(R) Core(TM) i9-14900HX",
+    "viewport": {
+      "width": 1280,
+      "height": 1000
+    },
+    "deviceScaleFactor": 1,
+    "gpu": "ANGLE SwiftShader"
+  },
+  "method": "5 paired rounds per mode; fresh contexts, network cache disabled, shared browser process (not cold-process/GPU); local uncompressed HTTP; identical self-only CSP and external-request blocking exclude remote fonts and security-software script injection in both phases; first completed frame via figure.ready() or both Workbench freeze controls enabled with Live status, plus 2 rAFs (a proxy, not physical presentation). JS bytes include every dedicated-worker request. Gzip level 9 is computed offline, not sent over HTTP. No hardware GPU/FPS or Internet speed claim.",
+  "contentSecurityPolicy": "default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; font-src 'self' data:; object-src 'none'",
+  "manifests": {
+    "before": {
+      "capturedAt": "2026-10-23T11:35:30.614Z",
+      "phase": "before",
+      "files": [
+        {
+          "name": "app/assets/index-BI16Eswf.css",
+          "bytes": 46276,
+          "gzipBytes": 9654,
+          "sha256": "f851e1f4246e12af324fc78c79c348d4e45492ad72fe100d1a27af093471c4ee"
+        },
+        {
+          "name": "app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325,
+          "sha256": "a09ba8ec11c830a53226b3316aa2ecb6fa82c7f78a8493bda8114dbc42e0e0f6"
+        },
+        {
+          "name": "app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965,
+          "sha256": "ea94d3864a85ad2a48f3507300218c962b8875f1b5c0ccf52e03a0cc081e70c6"
+        },
+        {
+          "name": "app/index.html",
+          "bytes": 512,
+          "gzipBytes": 338,
+          "sha256": "be61e7398a7a320b8a596d3eec4d213d2f50de7ed4d7fac5f1793706a575b412"
+        },
+        {
+          "name": "core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278,
+          "sha256": "4e58365c4c681c6b0a8f8149d1a8697a62c46f7147086444e86cc5b80a4431b8"
+        },
+        {
+          "name": "core/labs.js",
+          "bytes": 620919,
+          "gzipBytes": 145982,
+          "sha256": "cab0fa615ac41b1c18b85171acc3065bfdfdca9f68190849d4af8ffb7d9d8001"
+        },
+        {
+          "name": "core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735,
+          "sha256": "1cef753957d4c3637fe11056e7f1852d5afdc7da00df5f6b44f57d00b67626b2"
+        },
+        {
+          "name": "core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965,
+          "sha256": "ea94d3864a85ad2a48f3507300218c962b8875f1b5c0ccf52e03a0cc081e70c6"
+        }
+      ]
+    },
+    "after": {
+      "capturedAt": "2026-10-23T12:00:49.731Z",
+      "phase": "after",
+      "files": [
+        {
+          "name": "app/assets/App-B7SwXjRw.css",
+          "bytes": 45179,
+          "gzipBytes": 9407,
+          "sha256": "b145ace5be47e5fc48ad541d30228eb62d4e43f40fa15756b350eb9580de0407"
+        },
+        {
+          "name": "app/assets/App-kcPJzTCV.js",
+          "bytes": 34976,
+          "gzipBytes": 10880,
+          "sha256": "21f3ca1a90f70b5b2cc2d49adad7e2057a1ba361ff5e2a196e5e582d0b549eb9"
+        },
+        {
+          "name": "app/assets/BalanceDemo-CLM-bpPD.css",
+          "bytes": 18368,
+          "gzipBytes": 4326,
+          "sha256": "33440a012112e1c6c1f0f7ca267aeada0b76789be3608e292bb311c28256d6a4"
+        },
+        {
+          "name": "app/assets/BalanceDemo-wTvIOw-q.js",
+          "bytes": 28410,
+          "gzipBytes": 9562,
+          "sha256": "c23b42af2c52ed255e6f2484da14bd9cbc86cb184d40f79a462b2b0ef96fc57c"
+        },
+        {
+          "name": "app/assets/dist-CN395Rlz.js",
+          "bytes": 22961,
+          "gzipBytes": 7959,
+          "sha256": "ad7be13a3623f165c0818ae68fe71d6bf16c6f609642066c3fbcd8d19a08af31"
+        },
+        {
+          "name": "app/assets/html-template-CI2YA681.js",
+          "bytes": 592980,
+          "gzipBytes": 140072,
+          "sha256": "07e45a456aefbdca9fa326e12ed85bcb873f9d3751547f8705c6170f7709867b"
+        },
+        {
+          "name": "app/assets/index-14uPoXh_.css",
+          "bytes": 536,
+          "gzipBytes": 336,
+          "sha256": "9b200324bc1613f7b29d5a136a883aa016b877d8a61036dbac360075b2e80843"
+        },
+        {
+          "name": "app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012,
+          "sha256": "34f0decfb664bb7e552b8e8ff542a96e48865274ff4eb48b08a0eebe4fab9279"
+        },
+        {
+          "name": "app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846,
+          "sha256": "6c2c04385a1291e9a265d911e3e280efa6eeb471b58ca96a81b0f87ab9d5dc55"
+        },
+        {
+          "name": "app/assets/StreamingDemo-BbNwbqSQ.css",
+          "bytes": 1098,
+          "gzipBytes": 546,
+          "sha256": "fbbe63a7792c7f02d52e55885b3f6abea320771944dfc8ac68c1ef4f38447aa5"
+        },
+        {
+          "name": "app/assets/StreamingDemo-C3biykXH.js",
+          "bytes": 3343,
+          "gzipBytes": 1607,
+          "sha256": "52bb1f33005f12572b9f6abb078406da8547034f60d3f819bfad4b61ee9756fc"
+        },
+        {
+          "name": "app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936,
+          "sha256": "350dac8f24d5b517b78a4b0bc5492eab6247a6db6eaa066f1c8860aee29d53c2"
+        },
+        {
+          "name": "app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029,
+          "sha256": "f67dd74ec32abb4e1ad9b4f6ed812dcaa391604023246244e9a8d4c8f3a2af23"
+        },
+        {
+          "name": "app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965,
+          "sha256": "ea94d3864a85ad2a48f3507300218c962b8875f1b5c0ccf52e03a0cc081e70c6"
+        },
+        {
+          "name": "app/index.html",
+          "bytes": 512,
+          "gzipBytes": 338,
+          "sha256": "8cd2be29065946775a294d29b69e5015477308375cb7386c26711b9b0573534f"
+        },
+        {
+          "name": "core/balance.js",
+          "bytes": 6227,
+          "gzipBytes": 2022,
+          "sha256": "f65e77bb5bd50005cd3357923d2c42ef65c7b76b0c42508daef013eb4b3d09c8"
+        },
+        {
+          "name": "core/html-template.js",
+          "bytes": 600116,
+          "gzipBytes": 140371,
+          "sha256": "e413867afd0856b8228417744df4dca3097050d0f09e9b835cf89117d5fb3805"
+        },
+        {
+          "name": "core/index.js",
+          "bytes": 15216,
+          "gzipBytes": 4589,
+          "sha256": "5922079c467978fac8a23cf440ceb06a83de95f0adc06b7bcaeaa49e286b452a"
+        },
+        {
+          "name": "core/labs.js",
+          "bytes": 17820,
+          "gzipBytes": 5265,
+          "sha256": "0b8bbfd54ac436bb447eaa59702c589316aa00b8ef02458a99f471443161ba1f"
+        },
+        {
+          "name": "core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639,
+          "sha256": "ddc30a48e3bf0159e5d75ed8875d5685852f6b9496a4ca18b66becafaca33c0c"
+        },
+        {
+          "name": "core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255,
+          "sha256": "2b84019f8cb1c77cfc5eae115d2e602013721b6937324ade97754d9e8c868710"
+        },
+        {
+          "name": "core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965,
+          "sha256": "ea94d3864a85ad2a48f3507300218c962b8875f1b5c0ccf52e03a0cc081e70c6"
+        }
+      ]
+    }
+  },
+  "summary": [
+    {
+      "mode": "studio",
+      "phase": "before",
+      "readyMedianMs": 1339.1000000238419,
+      "afterPaintMedianMs": 1357.6000000238419,
+      "initialScriptBytes": 1715262,
+      "initialScriptGzipBytes": 403978
+    },
+    {
+      "mode": "studio",
+      "phase": "after",
+      "readyMedianMs": 790.1000000238419,
+      "afterPaintMedianMs": 813.9000000953674,
+      "initialScriptBytes": 495008,
+      "initialScriptGzipBytes": 118859
+    },
+    {
+      "mode": "embed",
+      "phase": "before",
+      "readyMedianMs": 1396.8999999761581,
+      "afterPaintMedianMs": 1407.2999999523163,
+      "initialScriptBytes": 1715262,
+      "initialScriptGzipBytes": 403978
+    },
+    {
+      "mode": "embed",
+      "phase": "after",
+      "readyMedianMs": 498.7000000476837,
+      "afterPaintMedianMs": 506.6999999284744,
+      "initialScriptBytes": 495008,
+      "initialScriptGzipBytes": 118859
+    },
+    {
+      "mode": "workbench",
+      "phase": "before",
+      "readyMedianMs": 1078.0999999046326,
+      "afterPaintMedianMs": 1163,
+      "initialScriptBytes": 1890325,
+      "initialScriptGzipBytes": 484255
+    },
+    {
+      "mode": "workbench",
+      "phase": "after",
+      "readyMedianMs": 957.7000000476837,
+      "afterPaintMedianMs": 963.1000000238419,
+      "initialScriptBytes": 631481,
+      "initialScriptGzipBytes": 183753
+    }
+  ],
+  "samples": [
+    {
+      "round": 0,
+      "phase": "before",
+      "mode": "studio",
+      "readyMs": 3595.399999976158,
+      "afterPaintMs": 3601.100000023842,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 2800
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 2800
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "phase": "after",
+      "mode": "studio",
+      "readyMs": 1128.3999999761581,
+      "afterPaintMs": 1160.3999999761581,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 208
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 792
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "phase": "before",
+      "mode": "embed",
+      "readyMs": 1021.5,
+      "afterPaintMs": 1034,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 228
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 828
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "phase": "after",
+      "mode": "embed",
+      "readyMs": 497.7999999523163,
+      "afterPaintMs": 506.6999999284744,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 108
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 372
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "phase": "before",
+      "mode": "workbench",
+      "readyMs": 1200.4000000953674,
+      "afterPaintMs": 1295.5,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 1890325,
+      "scriptGzipBytes": 484255,
+      "scripts": [
+        {
+          "url": "/before/app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED",
+        "Loading the stylesheet 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap' violates the following Content Security Policy directive: \"style-src 'self' 'unsafe-inline' http://gc.kis.v2.scr.kaspersky-labs.com ws://gc.kis.v2.scr.kaspersky-labs.com\". Note that 'style-src-elem' was not explicitly set, so 'style-src' is used as a fallback. The action has been blocked."
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 252
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 652
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "phase": "after",
+      "mode": "workbench",
+      "readyMs": 1366,
+      "afterPaintMs": 1389.2999999523163,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 631481,
+      "scriptGzipBytes": 183753,
+      "scripts": [
+        {
+          "url": "/after/app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012
+        },
+        {
+          "url": "/after/app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029
+        },
+        {
+          "url": "/after/app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846
+        },
+        {
+          "url": "/after/app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 308
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 308
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "after",
+      "mode": "studio",
+      "readyMs": 812.1000000238419,
+      "afterPaintMs": 831.6000000238419,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 116
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 548
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "before",
+      "mode": "studio",
+      "readyMs": 1235.3999999761581,
+      "afterPaintMs": 1240.3999999761581,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 92
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 972
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "after",
+      "mode": "embed",
+      "readyMs": 498.7000000476837,
+      "afterPaintMs": 504.39999997615814,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 124
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 372
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "before",
+      "mode": "embed",
+      "readyMs": 1208.5,
+      "afterPaintMs": 1251.8000000715256,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 100
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 936
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "after",
+      "mode": "workbench",
+      "readyMs": 940.1999999284744,
+      "afterPaintMs": 943.8999999761581,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 631481,
+      "scriptGzipBytes": 183753,
+      "scripts": [
+        {
+          "url": "/after/app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012
+        },
+        {
+          "url": "/after/app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029
+        },
+        {
+          "url": "/after/app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846
+        },
+        {
+          "url": "/after/app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 372
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 372
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "phase": "before",
+      "mode": "workbench",
+      "readyMs": 762.5,
+      "afterPaintMs": 775.7999999523163,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 1890325,
+      "scriptGzipBytes": 484255,
+      "scripts": [
+        {
+          "url": "/before/app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED",
+        "Loading the stylesheet 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap' violates the following Content Security Policy directive: \"style-src 'self' 'unsafe-inline' http://gc.kis.v2.scr.kaspersky-labs.com ws://gc.kis.v2.scr.kaspersky-labs.com\". Note that 'style-src-elem' was not explicitly set, so 'style-src' is used as a fallback. The action has been blocked."
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 180
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 480
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "before",
+      "mode": "studio",
+      "readyMs": 1339.1000000238419,
+      "afterPaintMs": 1357.6000000238419,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 124
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1008
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "after",
+      "mode": "studio",
+      "readyMs": 786.2999999523163,
+      "afterPaintMs": 793.7999999523163,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 92
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 576
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "before",
+      "mode": "embed",
+      "readyMs": 1781.7999999523163,
+      "afterPaintMs": 1787.3999999761581,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 172
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1488
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "after",
+      "mode": "embed",
+      "readyMs": 484.3000000715256,
+      "afterPaintMs": 493.3000000715256,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 96
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 344
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "before",
+      "mode": "workbench",
+      "readyMs": 1239.6999999284744,
+      "afterPaintMs": 1258.1999999284744,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 1890325,
+      "scriptGzipBytes": 484255,
+      "scripts": [
+        {
+          "url": "/before/app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED",
+        "Loading the stylesheet 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap' violates the following Content Security Policy directive: \"style-src 'self' 'unsafe-inline' http://gc.kis.v2.scr.kaspersky-labs.com ws://gc.kis.v2.scr.kaspersky-labs.com\". Note that 'style-src-elem' was not explicitly set, so 'style-src' is used as a fallback. The action has been blocked."
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 188
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 736
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phase": "after",
+      "mode": "workbench",
+      "readyMs": 1042.8999999761581,
+      "afterPaintMs": 1048,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 631481,
+      "scriptGzipBytes": 183753,
+      "scripts": [
+        {
+          "url": "/after/app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012
+        },
+        {
+          "url": "/after/app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029
+        },
+        {
+          "url": "/after/app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846
+        },
+        {
+          "url": "/after/app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 312
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 312
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "after",
+      "mode": "studio",
+      "readyMs": 782.5,
+      "afterPaintMs": 802.8999999761581,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 120
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 552
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "before",
+      "mode": "studio",
+      "readyMs": 1317.2000000476837,
+      "afterPaintMs": 1324.7999999523163,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 140
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1140
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "after",
+      "mode": "embed",
+      "readyMs": 831.7999999523163,
+      "afterPaintMs": 844.2999999523163,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 96
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 528
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "before",
+      "mode": "embed",
+      "readyMs": 1476.2999999523163,
+      "afterPaintMs": 1482.6999999284744,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 116
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1216
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "after",
+      "mode": "workbench",
+      "readyMs": 868.8999999761581,
+      "afterPaintMs": 878.8999999761581,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 631481,
+      "scriptGzipBytes": 183753,
+      "scripts": [
+        {
+          "url": "/after/app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012
+        },
+        {
+          "url": "/after/app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029
+        },
+        {
+          "url": "/after/app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846
+        },
+        {
+          "url": "/after/app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 228
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 228
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phase": "before",
+      "mode": "workbench",
+      "readyMs": 974.0999999046326,
+      "afterPaintMs": 977.6999999284744,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 1890325,
+      "scriptGzipBytes": 484255,
+      "scripts": [
+        {
+          "url": "/before/app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED",
+        "Loading the stylesheet 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap' violates the following Content Security Policy directive: \"style-src 'self' 'unsafe-inline' http://gc.kis.v2.scr.kaspersky-labs.com ws://gc.kis.v2.scr.kaspersky-labs.com\". Note that 'style-src-elem' was not explicitly set, so 'style-src' is used as a fallback. The action has been blocked."
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 140
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 620
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "before",
+      "mode": "studio",
+      "readyMs": 1475.6000000238419,
+      "afterPaintMs": 1493.7999999523163,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 76
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1196
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "after",
+      "mode": "studio",
+      "readyMs": 790.1000000238419,
+      "afterPaintMs": 813.9000000953674,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 128
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 648
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "before",
+      "mode": "embed",
+      "readyMs": 1396.8999999761581,
+      "afterPaintMs": 1407.2999999523163,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 1715262,
+      "scriptGzipBytes": 403978,
+      "scripts": [
+        {
+          "url": "/before/core/index.js",
+          "bytes": 985896,
+          "gzipBytes": 232278
+        },
+        {
+          "url": "/before/core/viewer.js",
+          "bytes": 656250,
+          "gzipBytes": 154735
+        },
+        {
+          "url": "/before/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 108
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 1192
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "after",
+      "mode": "embed",
+      "readyMs": 639.5,
+      "afterPaintMs": 657.1000000238419,
+      "worker": true,
+      "frameId": 1,
+      "scriptBytes": 495008,
+      "scriptGzipBytes": 118859,
+      "scripts": [
+        {
+          "url": "/after/core/runtime.js",
+          "bytes": 383089,
+          "gzipBytes": 91639
+        },
+        {
+          "url": "/after/core/viewer.js",
+          "bytes": 38803,
+          "gzipBytes": 10255
+        },
+        {
+          "url": "/after/core/worker.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 140
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 476
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "before",
+      "mode": "workbench",
+      "readyMs": 1078.0999999046326,
+      "afterPaintMs": 1163,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 1890325,
+      "scriptGzipBytes": 484255,
+      "scripts": [
+        {
+          "url": "/before/app/assets/index-C326Lrn-.js",
+          "bytes": 1744093,
+          "gzipBytes": 450325
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/before/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED",
+        "Loading the stylesheet 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap' violates the following Content Security Policy directive: \"style-src 'self' 'unsafe-inline' http://gc.kis.v2.scr.kaspersky-labs.com ws://gc.kis.v2.scr.kaspersky-labs.com\". Note that 'style-src-elem' was not explicitly set, so 'style-src' is used as a fallback. The action has been blocked."
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 208
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 672
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "phase": "after",
+      "mode": "workbench",
+      "readyMs": 957.7000000476837,
+      "afterPaintMs": 963.1000000238419,
+      "workers": [
+        true,
+        true
+      ],
+      "scriptBytes": 631481,
+      "scriptGzipBytes": 183753,
+      "scripts": [
+        {
+          "url": "/after/app/assets/index-BI9yofV0.js",
+          "bytes": 222850,
+          "gzipBytes": 69012
+        },
+        {
+          "url": "/after/app/assets/WorkbenchDemo-Bzl2ldY4.js",
+          "bytes": 4432,
+          "gzipBytes": 2029
+        },
+        {
+          "url": "/after/app/assets/runtime-Bke7V7Ft.js",
+          "bytes": 231431,
+          "gzipBytes": 69846
+        },
+        {
+          "url": "/after/app/assets/viewer-BMUku-Nx.js",
+          "bytes": 26536,
+          "gzipBytes": 8936
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        },
+        {
+          "url": "/after/app/assets/worker-LEWO5HFh.js",
+          "bytes": 73116,
+          "gzipBytes": 16965
+        }
+      ],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "paint": [
+        {
+          "name": "first-paint",
+          "startTime": 308
+        },
+        {
+          "name": "first-contentful-paint",
+          "startTime": 308
+        }
+      ]
+    }
+  ],
+  "sourceReportSha256": "3e60a131154128e33991b07502fe0ecb7a93813db2bd61cb6a1ba01f3952ecff",
+  "publicReportScope": "All 30 ready/paint timing samples, requested-script byte totals, build manifests and environment are retained. Per-resource browser timing entries are omitted; those include machine-specific injected script URLs. This report describes development builds, not RC7 archive acceptance."
+}

@@ -8,7 +8,7 @@ import configuration from '../../playwright.config.ts';
 const test = base.extend({
   demoURL: async ({}, use) => {
     const root = fileURLToPath(new URL('../../', import.meta.url));
-    const files = new Set(['/tests/browser/harness.html', '/examples/web/streaming.html', '/examples/web/streaming.js', '/packages/core/dist/index.js', '/packages/core/dist/worker.js']);
+    const files = new Set(['/tests/browser/harness.html', '/examples/web/streaming.html', '/examples/web/streaming.js', '/packages/core/dist/index.js', '/packages/core/dist/runtime.js', '/packages/core/dist/html-template.js', '/packages/core/dist/worker.js']);
     // The development server deliberately sends no-store, which excludes this
     // page from Chrome's BFCache. Serve the identical shipped files using normal
     // HTTP caching rules to cover deployment hosts that permit BFCache.

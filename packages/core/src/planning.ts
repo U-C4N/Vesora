@@ -3,6 +3,7 @@ import type {DataEntry} from './types';
 import type {DensityResult, LineResult, NumericArray, PointPlan, Query} from './types';
 import {createNormalizer, validateDomain} from './scales';
 import type {LineIndexCache} from './line-index';
+import type {ScatterIndexCache} from './scatter-index';
 
 const CHUNK_SIZE = 65_536;
 
@@ -46,9 +47,12 @@ function validateInputs(x: Coordinates, y: Coordinates, query: Query): void {
 function visible(px: number, py: number): boolean {return px >= 0 && px <= 1 && py >= 0 && py <= 1;}
 
 /** Cooperative steps are used by workers and the asynchronous fallback. */
-export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query): Generator<void, PointPlan> {
+export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArray|DataEntry, query: Query, index?:ScatterIndexCache, workerOwned=false): Generator<void, PointPlan> {
   const x=coordinates(xInput),y=coordinates(yInput);
   validateInputs(x, y, query);
+  if(index&&!ArrayBuffer.isView(xInput)&&!ArrayBuffer.isView(yInput)){
+    const indexed=yield* index.plan(xInput as DataEntry,yInput as DataEntry,query,workerOwned);if(indexed)return indexed;
+  }
   const normalizeX=createNormalizer(query.bounds.x,query.xScale),normalizeY=createNormalizer(query.bounds.y,query.yScale);
   const columns = Math.max(1, Math.min(1024, Math.ceil(query.width / 4)));
   const rows = Math.max(1, Math.min(1024, Math.ceil(query.height / 4)));

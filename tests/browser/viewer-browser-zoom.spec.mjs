@@ -1,7 +1,7 @@
 import {test,expect,chromium} from '@playwright/test';
 import {resolve} from 'node:path';
-import {createHash} from 'node:crypto';
-import {readFile,writeFile} from 'node:fs/promises';
+import {writeFile} from 'node:fs/promises';
+import {viewerBuildFingerprint} from '../../scripts/viewer-build-fingerprint.mjs';
 
 test('actual automatic Chromium browser zoom at 200 percent preserves viewer controls and reflow',async({},testInfo)=>{
   const extension=resolve('tests/fixtures/viewer-zoom-extension');
@@ -38,7 +38,6 @@ test('actual automatic Chromium browser zoom at 200 percent preserves viewer con
     await viewer.getByRole('button',{name:'Light theme',exact:true}).click();await viewer.locator('summary').filter({hasText:/^Inspector$/}).click();
     await viewer.getByRole('button',{name:'XY',exact:true}).click();await viewer.getByRole('slider',{name:'Surface Y slice',exact:true}).fill('0');
     await page.evaluate(()=>window.zoomFixture.fig.ready({target:'displayed'}));await viewer.getByRole('button',{name:'Focus selection',exact:true}).scrollIntoViewIfNeeded();await captureViewport('browser-zoom-200-light-inspector.png');
-    const core=await readFile('packages/core/dist/index.js'),chrome=await readFile('packages/core/dist/viewer.js');
-    await writeFile(testInfo.outputPath('evidence.json'),JSON.stringify({status:'passed',method:'chrome.tabs.setZoom, automatic browser handling, per-tab scope',headless:true,browser:context.browser().version(),zoom,before,after,screenshots,realBrowserZoom:true,realScreenReader:false,buildSha256:{core:createHash('sha256').update(core).digest('hex'),viewer:createHash('sha256').update(chrome).digest('hex')},sources:['https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom','https://developer.chrome.com/docs/extensions/reference/api/tabs#type-ZoomSettingsMode','https://playwright.dev/docs/chrome-extensions']},null,2));
+    await writeFile(testInfo.outputPath('evidence.json'),JSON.stringify({status:'passed',method:'chrome.tabs.setZoom, automatic browser handling, per-tab scope',headless:true,browser:context.browser().version(),zoom,before,after,screenshots,realBrowserZoom:true,realScreenReader:false,buildSha256:await viewerBuildFingerprint(),sources:['https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom','https://developer.chrome.com/docs/extensions/reference/api/tabs#type-ZoomSettingsMode','https://playwright.dev/docs/chrome-extensions']},null,2));
   }finally{await context.close();}
 });

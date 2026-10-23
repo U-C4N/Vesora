@@ -2,6 +2,14 @@
 
 The scientific PNGs in this directory are exported by Vesora itself through the Python API and its bundled TypeScript/WebGL2 engine. Signal Studio PNGs are browser screenshots of the production React starter. The SVG banner is a decorative wordmark, not a data plot.
 
+## PRISM workspace
+
+`prism-workspace.png` is a real 1440 × 1100 screenshot of the `0.9.0-rc.6` Obsidian viewer. It shows the synthetic 65 × 49 surface, independent scalar field and two exact row/column profiles. The camera was set to isometric and the displayed frame frozen through the viewer controls. The four panels and their source data were not altered for the screenshot.
+
+The capture loaded verified core, worker, viewer and Labs modules from the fixed RC6 tarball in a separate headless browser. Page errors were empty. The screenshot is not a performance measurement, human pilot result or proof of two-hour endurance.
+
+Image SHA-256: `3c8d6799f45b3bba48bef73d4cb6435ec77daa998bab481f5b949f5ed14ff394`. The capture script and provenance are retained at `artifacts/v09/capture-prism-readme-20261015.mjs` and `artifacts/v09/prism-readme-capture-20261015.json`; the latter has SHA-256 `1ae086a2222844f052df28a38bef2d9af89f52a2d2538201cf3a512b4cbabd3e`.
+
 ## Signal Studio screenshots
 
 From the repository root:
@@ -45,3 +53,10 @@ The generator uses Python's standard library; NumPy is not required. Each scient
 | `lorenz.png` | Explicit Euler integration of the Lorenz equations, dt = 0.006, sigma = 10, rho = 28, beta = 8/3. Of 20,000 steps, the initial 1,000 are discarded; the remaining 19,000 are drawn as 3D points colored by z. This is an illustrative numerical trajectory. |
 
 The formulas and export settings are in [`scripts/render_readme.py`](../../scripts/render_readme.py).
+
+
+## Denge Membrane candidate
+
+`denge-membrane.png` is an actual 1440 px browser capture of the RC7 React example, cropped to its 2D component. The deterministic synthetic pair starts at 56/6 litres; the capture follows a 0.5-second step, selection of East and saving the current baseline. The pair therefore reads approximately 52.1/9.9 litres, with 21.1 litres remaining to its 31/31 equilibrium. It is an interface example, not an experiment with real fluid.
+
+Reproduce with `npm run build:example` and `npm run test:saas -- tests/saas/balance.spec.mjs`; the browser test writes `denge-2d-desktop.png` in its output directory. The source of the mark is the existing three-path `VesoraMark`, also present in `vesora-banner.svg`; this release does not introduce a replacement logo.

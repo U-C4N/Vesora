@@ -8,6 +8,25 @@ import {releaseIdentity} from './release-identity.mjs';
 export const releaseGates=['correctness','browser','qt','jupyter','reactConsumers','packages','performance','soak','accessibility','betaPilot'];
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const hashPattern=/^[a-f0-9]{64}$/;
+export const runtimeEntryNames=['index','worker','viewer','labs','runtime','html-template','balance'];
+export function validateRuntimeHashes(hashes){
+  assert.ok(hashes&&typeof hashes==='object'&&!Array.isArray(hashes),'Runtime hashes must be an object');
+  for(const name of runtimeEntryNames.slice(0,4))assert.match(hashes[name],hashPattern,`Missing runtime hash: ${name}`);
+  for(const [name,hash]of Object.entries(hashes)){
+    assert.ok(runtimeEntryNames.includes(name),`Unknown runtime entry: ${name}`);
+    assert.match(hash,hashPattern,`Invalid runtime hash: ${name}`);
+  }
+  // Historical monolithic RC archives have four entries. A split engine always
+  // needs both its startup runtime and the separately loaded export template.
+  assert.equal(Object.hasOwn(hashes,'runtime'),Object.hasOwn(hashes,'html-template'),'Split runtime hashes must include runtime and html-template together');
+  return Object.keys(hashes);
+}
+export const sceneProtocolVersions=[1,2,3,4,5,6,7,8];
+export function validateSceneProtocolVersions(versions){
+  // Fixed protocol-7 RC archives remain independently verifiable.
+  assert.ok(Array.isArray(versions)&&[7,8].includes(versions.length),'Release must declare legacy protocols 1–7, optionally including observation protocol 8');
+  assert.deepEqual(versions,sceneProtocolVersions.slice(0,versions.length),'Scene protocol list must be complete and ordered');
+}
 export function releasePackageNames(version){const id=releaseIdentity(version);return [`vesora-core-${id.npm}.tgz`,`vesora-react-${id.npm}.tgz`,`vesora-${id.python}-py3-none-any.whl`];}
 export function releaseFileNames(version){return [...releasePackageNames(version),...['discovery','comparison','statistics','linked','saas','quality','streaming','prism-surface','prism-telemetry','prism-labs'].map(name=>`vesora-${name}-demo.html`)];}
 
@@ -19,9 +38,9 @@ export function validateReleaseManifest(manifest,{publishable=false}={}){
   assert.equal(typeof manifest.candidate,'boolean','Candidate flag is required');
   assert.equal(typeof manifest.workingTreeDirty,'boolean','Working tree state is required');
   assert.ok(manifest.tag===null||manifest.tag===identity.tag,'Release tag differs from canonical identity');
-  assert.deepEqual(manifest.protocolVersions,[1,2,3,4,5,6,7]);
+  validateSceneProtocolVersions(manifest.protocolVersions);
   assert.deepEqual(manifest.transportVersions,[2,3]);
-  for(const name of ['index','worker','viewer','labs'])assert.match(manifest.runtime?.[name],hashPattern,`Missing runtime hash: ${name}`);
+  validateRuntimeHashes(manifest.runtime);
   assert.ok(Array.isArray(manifest.files),'Release artifact list is required');
   assert.deepEqual(manifest.files.map(file=>file?.name).sort(),releaseFileNames(identity.canonical).sort(),'Release manifest must list every expected artifact exactly once');
   for(const file of manifest.files)assert.match(file.sha256,hashPattern,`Invalid artifact hash: ${file.name}`);

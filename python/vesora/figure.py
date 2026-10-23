@@ -13,6 +13,7 @@ from typing import Any, Callable
 from .numeric import NumericData, ChunkedNumericData, as_numeric, numeric_range
 from . import statistics as _statistics
 from . import presentation as _presentation
+from . import observation as _observation
 
 PROTOCOL_VERSION = 1
 EXTENDED_PROTOCOL_VERSION = 2
@@ -21,6 +22,7 @@ LINKED_PROTOCOL_VERSION = 4
 PRESENTATION_PROTOCOL_VERSION = _presentation.PRESENTATION_PROTOCOL_VERSION
 QUALITY_PROTOCOL_VERSION = _presentation.QUALITY_PROTOCOL_VERSION
 SCENE3D_PROTOCOL_VERSION = 7
+OBSERVATION_PROTOCOL_VERSION = _observation.OBSERVATION_PROTOCOL_VERSION
 _MAX_SAFE_SELECTION_SEQUENCE = 2**53 - 1
 _STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain", "colorbarLabel", "shading", "wireframe"}
 _BAND_STYLES = {"color", "opacity", "label"}
@@ -267,6 +269,50 @@ class Layer:
                 return layer
         raise RuntimeError("Layer has been removed")
 
+    def set_semantics(self, channels: dict[str, Any]) -> Layer:
+        """Patch channel declarations; units and external transforms are inert metadata.
+
+        A value replaces the entire channel declaration; None removes it. Data updates
+        preserve declarations, so callers must replace them when data meaning changes.
+        """
+        if type(channels) is not dict or any(type(name) is not str for name in channels):
+            raise ValueError("Semantics patches must be plain channel-keyed dictionaries")
+        with self.figure._lock:
+            layer = self._spec()
+            if channels.keys() - layer["data"].keys():
+                raise ValueError("Semantics patch references an unknown layer channel")
+            updates = {}
+            for channel, declaration in channels.items():
+                data_id = layer["data"][channel]
+                validated = None if declaration is None else _observation.validate_source_semantics(declaration)
+                if data_id in updates and not _observation.same_declaration(updates[data_id], validated):
+                    raise ValueError("Aliased channels cannot receive conflicting source declarations")
+                updates[data_id] = validated
+            if not updates:
+                return self
+            sources = copy.deepcopy(self.figure._spec.get("semantics", {}).get("sources", {}))
+            for data_id, declaration in updates.items():
+                if declaration is None:
+                    sources.pop(data_id, None)
+                else:
+                    sources[data_id] = declaration
+            candidate = {"schemaVersion": 1, "sources": sources}
+            _observation.validate_semantics(candidate, [item[0] for item in self.figure._sources.values()])
+            if sources:
+                self.figure._spec["semantics"] = candidate
+                self.figure._spec["protocolVersion"] = max(self.figure._spec["protocolVersion"], OBSERVATION_PROTOCOL_VERSION)
+            else:
+                self.figure._spec.pop("semantics", None)
+            self.figure._publish()
+        return self
+
+    def get_semantics(self) -> dict[str, Any]:
+        """Return detached declarations keyed by this layer's existing channels."""
+        with self.figure._lock:
+            layer = self._spec()
+            sources = self.figure._spec.get("semantics", {}).get("sources", {})
+            return {channel: copy.deepcopy(sources[data_id]) for channel, data_id in layer["data"].items() if data_id in sources}
+
     def set_data(self, *args: Any, **kwargs: Any) -> Layer:
         if any(item["targetLayerId"] == self.id for item in self.figure._spec.get("slices", [])):
             raise ValueError("A bound surface slice is read-only; update the source or slice index")
@@ -457,7 +503,7 @@ class Layer:
             self.figure._streams.pop(self.id, None)
             self.figure._stream_last_x.pop(self.id, None)
             for data_id in spec["data"].values():
-                self.figure._sources.pop(data_id, None)
+                self.figure._release_source(data_id)
         self.figure._publish()
 
 
@@ -781,6 +827,22 @@ class Figure:
         with self._lock:
             return {"figure": copy.deepcopy(self._spec), "sources": [copy.deepcopy(v[0]) for v in self._sources.values()]}
 
+    def get_observation(self) -> dict[str, Any] | None:
+        """Return a detached attached record, if any; live exports do not attach one."""
+        with self._lock:
+            self._ensure_open()
+            return copy.deepcopy(self._spec.get("observation"))
+
+    def _release_source(self, data_id: str) -> None:
+        if any(data_id in layer["data"].values() for layer in self._spec["layers"]):
+            return
+        self._sources.pop(data_id, None)
+        semantics = self._spec.get("semantics")
+        if semantics is not None:
+            semantics["sources"].pop(data_id, None)
+            if not semantics["sources"]:
+                self._spec.pop("semantics")
+
     def _data_bytes(self, data_id: str, version: int) -> bytes:
         with self._lock:
             descriptor, array = self._sources[data_id]
@@ -791,6 +853,9 @@ class Figure:
     def _publish(self, change: dict[str, Any] | None = None) -> None:
         import logging
         with self._lock:
+            # Python has no snapshot importer; nevertheless never carry an attached
+            # capture record through a successful canonical scene mutation.
+            self._spec.pop("observation", None)
             self._last_change = change
             try:
                 for listener in tuple(self._listeners):
@@ -1098,7 +1163,7 @@ class Figure:
 
     def _commit_layer_arrays(self, layer: dict[str, Any], arrays: dict[str, NumericData], changed: set[str], categories: dict[str, list[str]]) -> None:
         for name in set(layer["data"]) - arrays.keys():
-            self._sources.pop(layer["data"].pop(name), None)
+            self._release_source(layer["data"].pop(name))
         for name in arrays:
             if name not in changed:
                 continue
@@ -1568,8 +1633,14 @@ class Figure:
         self._publish()
         return self
 
-    def to_html(self) -> str:
-        """Return a standalone interactive HTML document, without starting a host."""
+    def to_html(self, *, observation: bool = False) -> str:
+        """Export accepted data without starting a host.
+
+        observation=True binds source versions, declared meaning and retained stream
+        windows to this capture. Its representation is explicitly not evaluated.
+        """
+        if type(observation) is not bool:
+            raise TypeError("observation must be a boolean")
         from .html import make_html
         from datetime import datetime, timezone
         with self._lock:
@@ -1577,14 +1648,19 @@ class Figure:
             captured_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             snapshot = self.snapshot()
             buffers = [(source["id"], self._data_bytes(source["id"], source["version"])) for source in snapshot["sources"]]
+            snapshot["figure"].pop("observation", None)
+            if observation:
+                snapshot["figure"]["protocolVersion"] = max(snapshot["figure"]["protocolVersion"], OBSERVATION_PROTOCOL_VERSION)
+                snapshot["figure"]["observation"] = _observation.make_accepted_observation(
+                    snapshot["figure"], snapshot["sources"], copy.deepcopy(self._streams), captured_at)
         return make_html(snapshot, buffers, captured_at=captured_at)
 
-    def save_html(self, path: str | Path) -> Path:
+    def save_html(self, path: str | Path, *, observation: bool = False) -> Path:
         """Write a standalone interactive HTML document to disk."""
         path = Path(path)
         if path.suffix.lower() not in (".html", ".htm"):
             raise ValueError("HTML export requires a .html or .htm path")
-        path.write_text(self.to_html(), encoding="utf-8")
+        path.write_text(self.to_html(observation=observation), encoding="utf-8")
         return path
 
     def on(self, event: str, callback: Callable[[Any], None]) -> Callable[[], None]:

@@ -1,18 +1,3 @@
-export {Figure,Layer,Panel,SurfaceSlice,Annotation,SelectionLink,figure,subplots,plot,plot3d,fillBetween,scatter,scatter3d,heatmap,surface,hist,bar,barh,boxplot,defaultView} from './figure';
+/** Compatibility entry: synchronous HTML export loads the standalone runtime eagerly. */
+export * from './runtime';
 export {toHTML,downloadHTML} from './html-export';
-export type {ExportHTMLOptions} from './html-export';
-export type {Series,Grid,AxisSeries,Groups,LayerOptions,SurfaceSliceOptions,HistogramOptions,BarOptions,BoxplotOptions,FigureEvent,SelectionLinkOptions} from './figure';
-export {DataRegistry,toNumericArray,decodeData,describeData} from './data';
-export {planScatter,planLine} from './planning';
-export {planBand} from './band';
-export {buildXInspectionIndex,nearestWithinRun} from './inspection';
-export type {XInspectionIndex} from './inspection';
-export {validateExportPNGOptions,validateExportRaster,MAX_EXPORT_PIXELS} from './export-options';
-export {QueryScheduler} from './scheduler';
-export {extent,normalize,project,invert,ticks} from './scales';
-export {PROTOCOL_VERSION,EXTENDED_PROTOCOL_VERSION,STATISTICS_PROTOCOL_VERSION,LINKED_PROTOCOL_VERSION,PRESENTATION_PROTOCOL_VERSION,QUALITY_PROTOCOL_VERSION,SCENE3D_PROTOCOL_VERSION} from './types';
-export {cameraPreset} from './renderer';
-export {LIGHT_THEME,DARK_THEME,resolveTheme,validateTheme,validateAxisFormat,formatValue,formatTimeTick} from './presentation';
-export {timeTicks} from './scales';
-export {setWorkerURL} from './scheduler';
-export type * from './types';

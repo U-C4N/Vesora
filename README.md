@@ -1,399 +1,283 @@
 <p align="center">
-  <img src="docs/assets/vesora-banner.svg" alt="Vesora — charts that fit your app. One engine for React, JavaScript and Python." width="100%">
+  <img src="docs/assets/vesora-banner.svg" alt="Vesora — One engine. Shared observations." width="100%" />
 </p>
 
 <p align="center">
-  <strong>Charts that fit your app. One engine for React, JavaScript and Python.</strong><br>
-  React + TypeScript · Custom themes · Interactive exploration · PNG &amp; offline HTML
+  <strong>Scientific visualization for Python, JavaScript and React.</strong><br />
+  Explore a surface, inspect a live signal, and share the data behind the view.
 </p>
 
 <p align="center">
-  <a href="#signal-studio">Signal Studio</a> ·
-  <a href="#react-saas-charts-in-v06">React</a> ·
-  <a href="#see-it-in-action">Scientific gallery</a> ·
-  <a href="#get-started">Quick start</a> ·
-  <a href="docs/api.md">API reference</a> ·
-  <a href="docs/releases/v0.9.0.md">PRISM candidate</a>
+  <a href="#get-started">Get started</a> ·
+  <a href="#denge-membrane">Denge Membrane</a> ·
+  <a href="docs/observation.md">Observations</a> ·
+  <a href="docs/api.md">API</a> ·
+  <a href="docs/releases/v0.9.0-rc.7.md">Release notes</a>
 </p>
 
-> **v0.9.0-rc.6 PRISM candidate, MIT licensed.** Build and install the local archives below. This checkout is not a completed public release; the [release gates](docs/releases/v0.9.0.md) track remaining validation. WebGL2 is required; Python desktop windows use QtWebEngine.
+Vesora brings research figures and application charts into one WebGL2 engine. Python notebooks, Qt desktop windows, browser applications and standalone HTML use the same scene format and renderer. React adds chart components and a viewer you can embed in your own product.
 
-## PRISM: scientific inspection and live telemetry
+**Current candidate: `0.9.0-rc.7` · Python `0.9.0rc7`.** This is a release candidate prepared for review, not a stable release or a claim of npm/PyPI publication. Final archive acceptance, including uninterrupted endurance, real screen-reader use and the five-person pilot, remains required. See the [candidate status](docs/releases/v0.9.0-rc.7.md).
 
-Explore a surface alongside exact row/column profiles, color it by a separate scalar, and inspect continuous 3D trajectories. The optional Obsidian viewer shares camera controls, source identities and displayed-frame exports across JavaScript, React, Python hosts and offline HTML. Freeze inspection while bounded live ingestion continues; return to live when ready.
+## What you can build
 
-Start with the [PRISM API and migration guide](docs/prism.md), [three interactive reference demos](examples/web/v09.html), [measured evidence](docs/benchmarks/v0.9.0.md), or [five-participant pilot packet](docs/pilot/v0.9.0/README.md). Existing `VesoraChart` defaults remain available. Experimental bounded 3D streams and A/B pins require the separate `@vesora/core/labs` entry; automatic adaptive detail is not included.
+| Experience | What Vesora provides |
+| --- | --- |
+| Scientific figures | Mixed 2D/3D panels, surfaces with independent scalar color, exact grid slices, trajectories, linked selection, statistics and annotations. |
+| Live inspection | Bounded line/scatter streams, freeze and resume, source-aware picking, and exports of accepted data or the completed displayed frame. |
+| Research workspaces | **Studio** exposes layers, inspection, diagnostics and export controls. |
+| Embedded charts | **Embed** uses the same viewer in compact containers; React chart cards add themes, formatting, legends, tooltips and loading states. |
+| Portable observations | Optional channel units, source descriptions and capture records travel with source values in self-contained HTML. |
+| Denge Membrane | An experimental area-based view of conservation and pairwise equalization, linked to a 3D scientific scene. |
 
-## New in v0.8: bounded live measurements
+The core package has no runtime npm dependencies. NumPy is optional for Python. Use the lightweight browser entry when startup size matters; the standalone HTML template loads on the first async export.
 
-Append numeric line/scatter data with an explicit retained capacity in Python, JavaScript and React. The shared engine keeps accepted updates atomic, identifies samples across evictions, and captures a frozen retained snapshot for PNG or offline HTML. Worker watchdogs, WebGL restoration and resource diagnostics make long-running charts easier to operate.
+## Get started
 
-```python
-import vesora as vs
+### Run the examples
 
-fig = vs.figure(title="Live measurements")
-line = fig.plot([], [], label="Signal").enable_streaming(max_points=100_000)
-line.append_data(x=[0, 1, 2], y=[3.2, 1.8, 1.0])
-fig.show()
-```
+Use Node.js **22.12+** and a WebGL2-capable browser. From this checkout:
 
-Read the [streaming guide](docs/streaming.md), [v0.8 release notes](docs/releases/v0.8.0.md) and [recorded measurements](docs/benchmarks/v0.8.0.md). Run the three-curve examples in [JavaScript](examples/web/streaming.html), [Python](examples/python_streaming.py), or the [React starter](examples/react-saas/README.md). Existing scene protocols 1–6 remain supported.
-
-## New in v0.7: readable figures and shared inspection
-
-Draw an explicit interval around a curve, compare source samples at a common cursor x position, and export at a chosen size. Themes now separate title, axis-label, tick and legend sizes; colorbars can name the quantity and units they encode. The same scene works in Python, JavaScript, React and offline HTML.
-
-```python
-import vesora as vs
-
-x, mean = [0, 1, 2, 3], [3.2, 1.8, 1.0, 0.7]
-fig = vs.figure(title="Synthetic learning curve", theme={"tickFontSize": 14, "labelFontSize": 16})
-fig.fill_between(x, [v * .85 for v in mean], [v * 1.15 for v in mean], color="#3569c8")
-fig.plot(x, mean, color="#3569c8", label="Model A")
-fig.set_axes(xlabel="Training step", ylabel="Loss", yscale="log")
-fig.set_hover_mode("x")
-fig.savefig("learning.png", width=1000, height=600, scale=2)
-```
-
-The example bounds are synthetic and illustrative; Vesora does not estimate a confidence interval. Shared-x inspection reports actual source samples without interpolation. Read the [v0.7 overview](docs/releases/v0.7.0.md), [interval and inspection API](docs/api.md#show-an-interval-around-a-curve) and [React band API](packages/react/README.md#show-bands-and-compare-series).
-
-<p align="center">
-  <a href="docs/assets/signal-studio-light.png"><img src="docs/assets/signal-studio-light.png" alt="Vesora Signal Studio in light mode: revenue trend, period-peak insight, subscription bars and account scatter" width="100%"></a>
-</p>
-
-## Signal Studio
-
-**See what moves.** The [React SaaS starter](examples/react-saas/) pairs a dark chart stage with warm paper surfaces, a compact navigation rail and a responsive account workspace. The charts use Vesora's own engine; the surrounding cards, filters and table are ordinary React components you can adapt to your product.
-
-| After dark | On a small screen |
-| :---: | :---: |
-| <a href="docs/assets/signal-studio-dark.png"><img src="docs/assets/signal-studio-dark.png" alt="Signal Studio dashboard with coordinated dark surfaces and chart themes" width="380"></a> | <a href="docs/assets/signal-studio-mobile.png"><img src="docs/assets/signal-studio-mobile-preview.png" alt="Signal Studio revenue chart and navigation on a 390 px mobile viewport; click for the full dashboard" width="170"></a> |
-| Coordinated chart, text and interface colors. | The same working dashboard at 390 px. |
-
-- Switch between **Revenue, Adoption and Expansion**, choose a 7/30/90-day window, and compare an available preceding period on the same date axis.
-- Inspect an account from the scatter plot or table; search, filter by plan and page through the results. The account constellation also works as a plan filter.
-- Open quick actions with **Ctrl/Cmd + K**, refresh the simulated API, switch themes, or export the current chart as PNG or interactive HTML.
-
-The screenshots show deterministic **synthetic data**, not customer results. The account workspace contains 24 sampled rows; the subscription chart uses a separate, larger synthetic plan summary. Metrics and insights are computed from the selected data. See the [starter guide](examples/react-saas/README.md) for controls, data replacement and export behavior.
-
-## React SaaS charts in v0.6
-
-Use `@vesora/react` for declarative line, grouped/stacked bar and scatter charts. The component owns rendering and cleanup, retains series identity during data refresh, and supplies keyboard-operable legends, custom tooltips and loading/empty/error states. The framework-independent core remains available.
-
-```tsx
-import { VesoraChart } from '@vesora/react';
-
-const rows = [
-  { timestamp: Date.UTC(2026, 9, 1), revenue: 4200, cost: 2100 },
-  { timestamp: Date.UTC(2026, 9, 2), revenue: 5100, cost: 2300 },
-];
-
-export function RevenueChart() {
-  return <VesoraChart type="line" data={rows} xKey="timestamp"
-    series={[{ key: 'revenue', label: 'Revenue' }, { key: 'cost', label: 'Cost' }]}
-    theme="dark" height={360} xAxis={{ type: 'time' }}
-    yAxis={{ format: 'currency', currency: 'USD' }} />;
-}
-```
-
-From this checkout:
-
-```bash
-npm ci --cache artifacts/npm-cache
+```sh
+npm ci
 npm run build
 npm run demo:react
 ```
 
-Open the URL printed by Vite to run Signal Studio. See the [React API](packages/react/README.md), [shared presentation API](docs/api.md#themes-dates-and-number-formats) and [web developer pilot](docs/pilot-v0.6.md).
+Open the Vite URL printed in the terminal:
 
-Build portable packages with `npm run package:release`, then install the matching archives into another React project:
-
-```bash
-npm install ./vesora-core-0.9.0-rc.6.tgz ./vesora-react-0.9.0-rc.6.tgz
-```
-
-React 18.3/19 is a peer dependency. The core has no runtime npm dependencies. HTML export explicitly includes all chart source rows and excludes React callbacks; use the ref handle's `exportPNG`, `exportHTML` and `resetView` methods. The pilot thresholds are proposed validation criteria, not completed user research or measured competitive advantages.
-
-## See it in action
-
-These are **real PNG exports from Vesora's shared engine**, generated through the Python API without NumPy. Click a figure to inspect it at full resolution.
-
-### Compare learning curves
-
-<a href="docs/assets/training-loss.png"><img src="docs/assets/training-loss.png" alt="Three synthetic learning curves on a logarithmic loss axis with an illustrative interval around Model A" width="760"></a>
-
-Multi-series lines, log scales, readable labels and an explicit interval. **Synthetic models and illustrative bounds; not measured confidence intervals or benchmark results.**
-
-### Explore dense measurements
-
-<a href="docs/assets/density.png"><img src="docs/assets/density.png" alt="One million synthetic samples aggregated into a density map with a labeled count-per-bin colorbar" width="760"></a>
-
-1,000,000 generated samples aggregated into screen-space bins. Color means **count per bin**.
-
-### Inspect mathematical surfaces
-
-<a href="docs/assets/surface.png"><img src="docs/assets/surface.png" alt="Interference surface on a regular grid with color labeled as amplitude" width="760"></a>
-
-A 140 × 140 regular grid, with color mapped to amplitude.
-
-### Follow nonlinear dynamics
-
-<a href="docs/assets/lorenz.png"><img src="docs/assets/lorenz.png" alt="A Lorenz trajectory rendered as 19000 three-dimensional points colored by z" width="760"></a>
-
-19,000 numerical trajectory samples, with color mapped to z. The PNGs are 1520 × 1000 pixels; their typography is sized for the preview as well as the full image.
-
-The [original gallery](examples/web/) contains **16 experiments: 11 in 2D and 5 in 3D**. The [comparison gallery](examples/web/compare.html) adds **3 multi-panel experiments**, the [statistics gallery](examples/web/statistics.html) adds **6**, and [linked inspection](examples/web/linked.html) adds **one 200,000-row experiment**, bringing the total to 26. Pages remain separate to limit simultaneous GPU contexts. Every experiment includes Python and JavaScript code, PNG export and interactive HTML export.
-
-## New in v0.5: follow the same observations
-
-Select a rectangle in either of two linked scatter plots to highlight the same source rows and compare their count histogram with the full dataset. Membership uses original coordinates even when a scatter is displayed as density. Share the completed cohort in an offline HTML file.
-
-```python
-import vesora as vs
-
-fig = vs.subplots(1, 3, title="Inspect model errors", width=1200)
-prediction, residual, feature = [1, 2, 3, 4], [0.1, 0.2, 3.0, 0.1], [0.1, 0.2, 0.9, 0.3]
-a = fig.panel(0, 0).scatter(prediction, residual)
-b = fig.panel(0, 1).scatter(feature, residual)
-h = fig.panel(0, 2).hist(residual, bins=[0, 1, 2, 4])
-link = fig.link_selection(scatter=[a, b], histogram=h)
-fig.show()  # Shift + drag in either scatter plot.
-fig.save_html("model-errors.html")
-```
-
-Exactly two numeric scatter layers and one count histogram must occupy three distinct 2D panels. Row position identifies an observation: provide equally sized, explicitly aligned arrays. Linked data and histogram options remain fixed until `link.remove()`. Pan/zoom and Reset view preserve the cohort; `link.clear()` and the viewer's Clear selection button remove it. See [linked inspection](docs/api.md#follow-observations-across-views), [the v0.5 release](docs/releases/v0.5.0.md) and [the pilot protocol](docs/pilot-v0.5.md).
-
-## Statistics and categories from v0.4
-
-Create histograms, grouped/stacked bars and boxplots directly from source arrays. Use named categories in bars, boxes, lines and scatter plots. Exact counts and quartiles are computed in the shared TypeScript engine, including when the figure originates in Python or is opened from an offline HTML file. NumPy remains optional.
-
-```python
-import vesora as vs
-
-fig = vs.subplots(1, 2, title="Compare measurements", width=1100)
-fig.panel(0, 0).hist([1, 2, 2, 3, 3, 3, 4, 8], bins=8)
-fig.panel(0, 1).boxplot([[1, 2, 3, 4, 8], [2, 3, 3, 4]],
-                        labels=["Batch A", "Batch B"])
-fig.bookmark("Overview")
-fig.save_html("statistics.html")
-```
-
-Try all six [statistics examples](examples/web/statistics.html), or read [the statistical API](docs/api.md#analyze-distributions-and-categories). Histogram bins do not change when zooming. Grouped bars retain slots for missing categories; stacked bars accumulate positive and negative values independently. Histograms and boxplots use linear axes; v0.6 also permits time-positioned bars with a linear value axis.
-
-## Also included: compare and explain
-
-Compare measurements in a fixed 2D grid, pan or zoom shared axes together, and explain the result with data-coordinate text and reference lines. One figure owns the complete layout, one WebGL context, and its exports. Existing single-panel and 3D APIs remain available.
-
-```python
-import math
-import vesora as vs
-
-x = [i / 100 for i in range(1000)]
-signal = [math.sin(t) for t in x]
-residual = [0.08 * math.sin(17 * t) for t in x]
-fig = vs.subplots(2, 1, sharex=True, title="Signal and residual", height=800)
-top, bottom = fig.panel(0, 0), fig.panel(1, 0)
-top.plot(x, signal, label="Signal")
-top.set_title("Measured signal")
-bottom.plot(x, residual, label="Residual")
-bottom.axhline(0, color="#64748b")
-bottom.text(2, 0.06, "Small oscillation", font_size=13)
-bottom.set_axes(xlabel="Time (s)", ylabel="Residual")
-fig.bookmark("Overview")
-bottom.set_axes(xlim=(2, 3))
-fig.bookmark("Detail", note="Both panels show the same interval.")
-fig.restore_bookmark("Overview")
-fig.save_html("comparison.html")
-```
-
-`subplots` returns a `Figure`; `panel(row, col)` uses zero-based indices. Shared axes synchronize scales and limits; panel labels remain independent. A figure bookmark now captures every panel view. Text, `axhline` and `axvline` return handles with `update` and `remove` methods. See the [panel and annotation API](docs/api.md#compare-data-in-panels).
-
-Send the whole layout as **one self-contained HTML file**. No window needs to open to create it. The file embeds original source data and a matching runtime, with bookmarks, reset, PNG download and a layer inspector. In JavaScript, use `toHTML(fig)` or `downloadHTML(fig, "comparison.html")`. Python callbacks, gallery sliders and live connections are not serialized. See [the sharing API](docs/api.md#share-an-interactive-figure).
-
-Run it locally from a checkout:
-
-```bash
-npm ci
-npm run build
-npm run demo
-```
-
-Open **[localhost:4173/examples/web/](http://127.0.0.1:4173/examples/web/)**. Node.js 22.12+ is needed for development. The images above are static previews; the local gallery is interactive. Regenerate the images with [`scripts/render_readme.py`](scripts/render_readme.py).
-
-## Why Vesora exists
-
-A scientific workflow can begin in a Python script, move into a notebook and end up in a browser application. Rebuilding the chart for each environment means repeating scale logic, interactions, selection behavior and export code. As data grows, plotting every sample can also obscure the structure you are trying to find.
-
-Vesora brings those workflows onto **one TypeScript engine with two language APIs**. Python prepares data and sends a versioned scene plus binary buffers; JavaScript uses the engine directly. Rendering, scales, cameras, selection and representation planning live in the shared core.
-
-| The problem | Vesora's approach |
+| URL suffix | Example |
 | --- | --- |
-| A Python chart and its web counterpart drift apart | Shared scene semantics and rendering, with Python/JS parity checks. |
-| Dense point clouds hide useful structure | Automatic count aggregation for dense views; individual points when the view is sparse. |
-| Reducing a long signal can erase a narrow peak | View-dependent line reduction retains local extrema, ordering and missing-data gaps. |
-| Scientific values lose small differences at large offsets | Float64 source coordinates stay separate from normalized GPU coordinates. |
-| Users cannot tell what a reduced view represents | JavaScript `fig.inspect()` and representation events report counts, method and exactness; exported files include an inspector. |
+| `?demo=balance` | Denge Membrane and its linked 3D view |
+| `?demo=workbench` | Studio and an independent 320 px Embed card |
+| `?demo=streaming` | Bounded synthetic training telemetry |
+| No suffix | Signal Studio, a working SaaS dashboard |
 
-Python functions run in Python, and JavaScript functions run in JavaScript. Supply their sampled arrays or grids to Vesora; the engine does not translate arbitrary functions between languages.
+For the scientific gallery, run `npm run demo` and open [the local PRISM gallery](http://127.0.0.1:4173/examples/web/v09.html). All example datasets are synthetic.
 
-## Get started
+### Install the candidate locally
 
-Build local v0.9 candidate packages from this checkout with Node.js 22.12+ and Python 3.10+:
+With the candidate assets downloaded or built locally, install the archives into your application or Python environment:
 
-```bash
+```sh
+npm install ./vesora-core-0.9.0-rc.7.tgz ./vesora-react-0.9.0-rc.7.tgz react react-dom
+python -m pip install ./vesora-0.9.0rc7-py3-none-any.whl
+```
+
+Python requires **3.10+**. The wheel includes the renderer and desktop assets; the `notebook` extra adds the Jupyter widget dependency. React **18.3 and 19** are supported peer ranges. Use React components inside a client boundary in frameworks such as Next.js.
+
+To create local review archives from source after building:
+
+```sh
 python -m pip install "setuptools>=77" wheel
-npm ci
-npm run build
 npm run package:release -- --candidate
 ```
 
-The result is `dist/release-v0.9.0-rc.6`: a Python wheel, core and React npm tarballs, ten standalone demos, a provenance manifest and `SHA256SUMS.txt`. `--candidate` permits local review builds; publication requires a clean matching tag and passed gates. Packaging does not publish a release. The previously published [v0.2.0 release](https://github.com/U-C4N/Vesora/releases/tag/v0.2.0) remains available for its original feature set.
+Files are written to `dist/release-v0.9.0-rc.7/`. These local review archives are not published packages. Preserve fixed release directories; see the [release procedure](docs/releases/v0.9.0.md) before producing release evidence.
 
-### Python: a plot in a few lines
+## JavaScript: a figure with meaning
 
-With Python 3.10+, install the wheel you built:
+Provide a container, for example `<div id="chart" style="height: 420px"></div>`, then:
 
-```bash
-python -m pip install ./dist/release-v0.9.0-rc.6/vesora-0.9.0rc6-py3-none-any.whl
+```ts
+import {figure, toHTMLAsync} from '@vesora/core/runtime';
+import {mountViewer} from '@vesora/core/viewer';
+
+const fig = figure({title: 'Temperature', height: 420});
+const signal = fig.plot([0, 1, 2], [273.25, 274.5, 275.75], {
+  label: 'Sensor A',
+  color: '#5273df',
+});
+signal.setSemantics({
+  x: {quantity: 'time', unit: 's'},
+  y: {
+    quantity: 'temperature',
+    unit: 'K',
+    origin: {datasetId: 'experiment-17', field: 'temperature'},
+  },
+});
+fig.setView({xLabel: 'Time (s)', yLabel: 'Temperature (K)'});
+
+const viewer = mountViewer(fig, document.getElementById('chart')!, {
+  mode: 'studio',
+  exportSource: 'displayed',
+  observation: true,
+});
+await fig.ready();
+
+// Call from your application's export action.
+async function exportObservation() {
+  return toHTMLAsync(fig, {source: 'displayed', observation: true});
+}
+
+// On teardown: viewer.dispose(); fig.close();
 ```
 
+`@vesora/core/runtime` shares the engine with the viewer and React adapter. Its async export captures the scene and data before loading the HTML template. The compatibility entry `@vesora/core` retains synchronous `toHTML`, with an eager template dependency.
+
+The viewer borrows the figure: mount it on an unmounted figure, dispose the viewer when its container goes away, and close the figure when your application no longer needs its data. [API reference →](docs/api.md)
+
+## Python: the same observation contract
+
 ```python
-import math
 import vesora as vs
 
-x = [i / 100 for i in range(1200)]
-vs.plot(x, [math.sin(t) for t in x], label="sin(x)")
-vs.show()
+fig = vs.figure(title="Temperature")
+signal = fig.plot([0, 1, 2], [273.25, 274.5, 275.75])
+signal.set_semantics({
+    "x": {"quantity": "time", "unit": "s"},
+    "y": {"quantity": "temperature", "unit": "K"},
+})
+
+fig.save_html("temperature.html", observation=True)
+fig.show()  # Jupyter widget or Qt desktop, depending on the environment.
 ```
 
-`show()` opens a desktop window and keeps a normal script running until it closes. The wheel includes the compiled engine: **no Node.js setup and no mandatory NumPy dependency**. The desktop installation includes `PySide6` and `aiohttp`.
+Python exports capture accepted data under the figure lock. The HTML file embeds the source values and matching viewer, and opens without a running Python process or an asset server. Python lists work directly; NumPy arrays are also supported. [Python and scientific examples →](docs/prism.md)
 
-Use a figure explicitly for multiple layers, updates or export:
+## React: charts and a full viewer
 
-```python
-fig = vs.figure(title="Two views of a signal")
-fig.plot(x, [math.sin(t) for t in x], label="sin(x)", color="#3569c8")
-fig.plot(x, [math.cos(t) for t in x], label="cos(x)", color="#d36a55")
-fig.set_axes(xlabel="Time (s)", ylabel="Amplitude")
-fig.savefig("signal.png")
-fig.show()
+```tsx
+import {VesoraChart} from '@vesora/react';
+
+const rows = [
+  {time: Date.UTC(2026, 9, 1), temperature: 273.25},
+  {time: Date.UTC(2026, 9, 2), temperature: 274.5},
+];
+
+export function TemperatureCard() {
+  return <VesoraChart
+    type="line"
+    data={rows}
+    xKey="time"
+    series={[{key: 'temperature', label: 'Temperature (K)'}]}
+    xAxis={{type: 'time', timeZone: 'UTC'}}
+    title="Daily temperature"
+    height={300}
+    theme="dark"
+  />;
+}
 ```
 
-Lists, tuples, `array.array` and supported numeric buffers work out of the box. Existing NumPy arrays also work when NumPy is installed. For notebook support, install the same wheel with the optional extra:
+`VesoraChart` owns its figure and handles mount/update/unmount. For an application-owned scientific figure, use `VesoraViewer`:
 
-```bash
-python -m pip install "./dist/release-v0.9.0-rc.6/vesora-0.9.0rc6-py3-none-any.whl[notebook]"
+```tsx
+import {VesoraViewer} from '@vesora/react/viewer';
+import type {Figure} from '@vesora/core/runtime';
+
+export function EmbeddedFigure({figure}: {figure: Figure}) {
+  return <VesoraViewer
+    figure={figure}
+    mode="embed"
+    chrome={{inspector: false, help: false}}
+    themeTokens={{accent: '#79b7ff'}}
+    exportSource="displayed"
+    observation
+  />;
+}
 ```
 
-### JavaScript / TypeScript: the same engine in your app
+Studio and Embed share rendering behavior and observation options. Mode and chrome updates preserve the mounted figure, camera and frozen inspection state. See the [React API](packages/react/README.md) and [Signal Studio starter](examples/react-saas/README.md).
 
-Copy the built tarball into your frontend project and install it:
+## Keep the data behind the view
 
-```bash
-npm install ./vesora-core-0.9.0-rc.6.tgz
-```
+An observation connects channel meaning to the source versions and retained stream interval used for a capture. JavaScript and Python share the validated schema.
 
-Add a mount element to your HTML:
-
-```html
-<div id="chart"></div>
-```
-
-Then use the package from a browser frontend entry point with an ESM-capable bundler:
-
-```typescript
-import { figure } from "@vesora/core";
-
-const chart = document.getElementById("chart");
-if (!chart) throw new Error("Missing #chart element");
-
-const x = Float64Array.from({ length: 1200 }, (_, i) => i / 100);
-const fig = figure({ title: "Two views of a signal" });
-fig.plot(x, x.map(Math.sin), { label: "sin(x)", color: "#3569c8" });
-fig.plot(x, x.map(Math.cos), { label: "cos(x)", color: "#d36a55" });
-fig.setView({ xLabel: "Time (s)", yLabel: "Amplitude" });
-fig.mount(chart);
-```
-
-The core package includes TypeScript declarations and has **no runtime npm dependencies**. It needs browser APIs and WebGL2 to render. The package's `dist/index.js` can also be imported directly from an HTTP-served page; keep `dist/worker.js` alongside it. See the [API reference](docs/api.md) for updates, events, PNG downloads and cleanup.
-
-## How it compares with Matplotlib
-
-**The key difference is the shared Python/browser architecture.** Vesora is a young engine for interactive scientific exploration across both ecosystems. Matplotlib provides a much broader plotting system and export ecosystem today.
-
-| Dimension | Vesora today | Matplotlib today |
-| --- | --- | --- |
-| Programming model | Python and JS/TS APIs feed the same TypeScript engine. | Python plotting APIs with pluggable output backends. |
-| Rendering | WebGL2 data drawing; Canvas2D text and annotations. | Multiple raster, vector and interactive backends. |
-| Interaction | Pan/zoom, shared 2D axes, hover and region selection, 3D orbit in the shared viewer. | Interactive figures, navigation tools and an event system. |
-| Dense data | Automatic scatter count aggregation, extrema-preserving line reduction and representation inspection. | Line simplification, marker subsampling and Agg path chunking are available. |
-| 3D | Regular-grid surfaces, scalar colors, 3D scatter/trajectories, mixed panels and exact row/column slices. | `mplot3d` supports a wider range of 3D plot types. |
-| Export | PNG, including axes and labels; self-contained interactive HTML with bookmarks. | PNG, SVG, PDF and other formats, depending on backend. |
-| Maturity | v0.9 PRISM candidate; scientific inspection, bounded streaming and shared viewer, with explicit outstanding release gates. | An established plotting library with extensive configuration and documentation. |
-
-Choose Vesora when sharing one engine between Python and a browser application is central to your workflow. Prefer Matplotlib today when you need its broader plotting catalog, publication layout controls or vector export. Vesora does not implement the Matplotlib API, and this project makes **no unmeasured speedup claim** against it.
-
-Comparison references: Matplotlib's official [backend documentation](https://matplotlib.org/stable/users/explain/figure/backends.html), [interactive figures](https://matplotlib.org/stable/users/explain/figure/interactive.html), [performance options](https://matplotlib.org/stable/users/explain/artists/performance.html) and [`mplot3d` reference](https://matplotlib.org/stable/api/toolkits/mplot3d.html).
-
-## Inside the engine
-
-```text
-Python API                            JavaScript / TypeScript API
-    │                                             │
-    └── desktop / notebook host + binary bridge ───┤
-                                                  ▼
-                                    Shared TypeScript engine
-                                scene · scales · camera · selection
-                                                  │
-                                  Viewport / representation planner
-                                    worker queries · bounded cache
-                                                  │
-                                   WebGL2 data + Canvas2D labels
-                                                  │
-                                     Interactive view / PNG export
-```
-
-The Python adapter manages the local viewer connection. Numeric buffers retain their dtype, shape and version. Query cancellation prevents late results from an older view replacing a newer one. Layer updates reuse the figure; `close()` releases its viewer resources. Read the [architecture guide](docs/architecture.md) for the contracts and limits.
-
-## What works, and what comes next
-
-| Available in the preview | Planned extensions |
+| Capture | What it contains |
 | --- | --- |
-| `plot`, `fill_between`, `scatter`, `heatmap`, `surface`, `scatter3d`, `hist`, `bar`/`barh`, `boxplot` | Violin plots, vector fields and adaptive function sampling |
-| Fixed 2D grids, shared axes, source-sample x inspection, text and reference lines | Error bars and more layout tools |
-| Desktop Python, notebook adapter and browser JS/TS | Additional data providers and host integrations |
-| In-memory adaptive representations, bounded numeric streaming and cancellable queries | Indexed disk data, tiles and additional streaming plot types |
-| Sized PNG export, readable typography, self-contained HTML and view bookmarks | SVG/PDF export and additional render backends |
+| `accepted` | Latest accepted scene and retained values. Representation is explicitly `not-evaluated`. This is the default export source. |
+| `displayed` | The last completed frame, its owned sources and rendered representation. A frozen view remains frozen even while new data arrives. |
 
-Scatter and general line queries can scan **O(n)** source rows; sorted numeric lines narrow the visible x interval. Workers copy source buffers and reuse immutable chunks when streaming. The million-sample example demonstrates aggregation; it is not a universal frame-rate guarantee. Cross-dataset joins, indexed out-of-core data, statistical streaming and general mesh/volume rendering remain outside this release. Bounded trajectory and rolling-surface experiments live in the separate Labs entry; automatic adaptive detail is excluded. WebGPU remains a future option to evaluate against measured bottlenecks.
+For bounded telemetry, using the mounted figure above:
 
-## Develop and validate
+```ts
+const live = fig.plot([], []).enableStreaming({maxPoints: 2000});
+await live.appendData({x: [3, 4], y: [276.1, 276.4]});
+await fig.ready();
+fig.freezeInspection();
 
-From a checkout, using Node.js 22.12+ and Python 3.10+:
-
-```bash
-npm ci
-npm run build
-python -m pip install -e ".[test,notebook]"
-npm run check
-npm run test:parity
-npm run test:examples
-npx playwright install chromium
-npm run test:browser
-npm run test:saas
-python -m pytest tests/python
+// Later appends can continue while the displayed capture stays fixed.
+const html = await toHTMLAsync(fig, {
+  source: 'displayed',
+  observation: true,
+});
+fig.resumeLive();
 ```
 
-The checks cover scene equivalence, real rendered pixels, invalid values and gaps, stale queries, layer updates, panels, annotations, exports and resource cleanup. The galleries' **26 Python snippets run with NumPy blocked**, alongside their 26 JavaScript equivalents. Real Qt desktop tests are opt-in; the browser tests use software WebGL and are not hardware benchmarks. Run `npm run benchmark:panels` for a measured single-panel versus four-panel comparison; see [development and measurement](docs/development.md).
+HTML retains raw chart sources, including hidden series, and a matching offline runtime. It captures the retained stream window; it does not restore evicted history, reconnect producers or serialize application callbacks. PNG exports the image only.
 
-| Read next | What you will find |
+Units, origins and external transform descriptions are declarations. They do not execute a pipeline, convert values or certify numerical accuracy. Observation records are descriptive metadata, not cryptographic signatures. Protocol **8** adds these declarations and records; existing protocols **1–7** remain readable. [Observation guide →](docs/observation.md)
+
+## Denge Membrane
+
+![Denge Membrane — a connected pair represented by two conserved areas, with a hatched transfer region](docs/assets/denge-membrane.png)
+
+**Fixed area. Moving boundary. Conserved volume.**
+
+Denge combines an ideal communicating-vessel model with two views of the same quantities. In **Membrane**, the selected pair occupies one rectangle. Its curved boundary divides the rectangle in the exact volume ratio; the hatched region is the amount that must change sides to reach equal shares. The pair's total is labeled separately from the total across all reservoirs, with numeric values and percentages for every category.
+
+The linked **3D view** uses equal physical footprints and heights derived from volume. Vertical exaggeration is labeled. Passive equalization follows hydrostatic pressure and constant hydraulic resistance; explicit manual transfers can move against the pressure difference and account for external work. The curve itself is a visual encoding, not a physical membrane or fluid-surface simulation.
+
+The reusable model is an opt-in core entry:
+
+```ts
+import {createBalance, stepBalance, inspectBalance} from '@vesora/core/balance';
+
+const initial = createBalance([
+  {id: 'north', label: 'North', volume: 56},
+  {id: 'east', label: 'East', volume: 24},
+  {id: 'south', label: 'South', volume: 20},
+]); // Default mapping: one quantity unit = one litre.
+
+const next = stepBalance(initial, {
+  from: 'north', to: 'east', openness: 0.5,
+}, 1); // One simulated second.
+
+console.table(inspectBalance(next.state));
+```
+
+Version 1 accepts **3–8 finite, nonnegative categories** and advances one connected pair analytically, conserving its total within floating-point precision without overshooting equilibrium. The Membrane UI lives in the [React example](examples/react-saas/src/BalanceDistribution.tsx); it is not a public `@vesora/react` component. Its HTML export contains the displayed 3D scene and observation, not the 2D controller or a resumable simulation.
+
+This is an experimental Vesora composition. Area-based curved regions and flow graphics have established precedents in [area-proportional Euler diagrams](https://doi.org/10.1109/TVCG.2013.104), [streamgraphs](https://leebyron.com/streamgraph/) and [Sankey diagrams](https://github.com/d3/d3-sankey). We make no world-first claim. The [model and geometry notes](docs/plans/balance-model-v1.md) explain the formulas, assumptions and tests.
+
+## Measured startup improvements
+
+The new browser entry defers the standalone HTML template; the React example also loads its screens by route. A local paired comparison measured **all initial JavaScript requests, including workers**, rather than a single entry chunk:
+
+| Experience | Initial JS before → after | First completed-frame readiness, median |
+| --- | ---: | ---: |
+| Studio, direct ESM | 1,715,262 → 495,008 B (**−71.1%**) | 1,339.1 → 790.1 ms |
+| Embed, direct ESM | 1,715,262 → 495,008 B (**−71.1%**) | 1,396.9 → 498.7 ms |
+| React Workbench, production | 1,890,325 → 631,481 B (**−66.6%**) | 1,078.1 → 957.7 ms |
+
+These are five paired runs per experience on one Windows machine, using Chrome/ANGLE SwiftShader, a fresh browser context with network cache disabled, local uncompressed HTTP and the same CSP. The browser process was reused. Readiness is an application-level completion measure, not physical screen presentation or a general device/network guarantee. The results belong to recorded development builds, not final RC7 archive certification.
+
+Repeated narrow scatter queries can also reuse an exact source-version index with an 8 MiB budget. Cold construction has a cost; broad queries and ineligible data still scan. See the [measurement method and results](docs/benchmarks/v0.9.0.md#development-startup-and-bundle-comparison-2026-10-23) and [planner behavior](docs/observation.md#repeated-scatter-queries).
+
+## Scientific scope
+
+![PRISM scientific workspace with independently colored surface and linked grid slice](docs/assets/prism-workspace.png)
+
+*The PRISM workspace, captured from the RC6 viewer with synthetic data.*
+
+Available scientific primitives include 2D lines/scatter/bands, heatmaps, histograms, bars, box plots, 3D scatter and trajectories, grid surfaces, orthographic/perspective cameras, independent scalar color and exact grid-aligned slices. Linked views, annotations, bookmarks and picking keep the underlying values accessible.
+
+Experimental 3D streaming and manual sampling tools live under `@vesora/core/labs`. General unstructured meshes, volume rendering, arbitrary-plane slicing, automatic adaptive 3D LOD, WebGPU and SVG/PDF export are outside the current release. [PRISM guide →](docs/prism.md)
+
+## Documentation and development
+
+| Read | For |
 | --- | --- |
-| [API and examples](docs/api.md) | Plot types, data updates, selection, notebook use and export |
-| [Architecture](docs/architecture.md) | Shared scene model, binary protocol and representation rules |
-| [Development and benchmarks](docs/development.md) | Packaging, validation, measured performance and support limits |
-| [Scientific gallery](examples/web/), [comparisons](examples/web/compare.html), [statistics](examples/web/statistics.html) and [linked views](examples/web/linked.html) | Twenty-six experiments with Python and JS source |
-| [Signal Studio](examples/react-saas/README.md) and [React API](packages/react/README.md) | A working SaaS starter and typed chart component |
-| [v0.7 overview](docs/releases/v0.7.0.md) | Readability, bands, shared inspection, exports and compatibility |
-| [v0.8 overview](docs/releases/v0.8.0.md) and [streaming guide](docs/streaming.md) | Bounded telemetry, runtime recovery, row identity and release validation |
+| [API reference](docs/api.md) | Figure, panel, layer and export operations |
+| [Observation and Studio/Embed](docs/observation.md) | Channel semantics, capture ownership and viewer configuration |
+| [React package](packages/react/README.md) | Chart cards, data updates, streaming and application integration |
+| [Streaming guide](docs/streaming.md) | Retention, append acknowledgements, freeze and recovery |
+| [Architecture](docs/architecture.md) | Scene protocol, workers, caches, hosts and packaging |
+| [RC7 release notes](docs/releases/v0.9.0-rc.7.md) | Candidate changes and remaining acceptance |
+| [Development guide](docs/development.md) | Setup, host checks and contribution workflow |
 
-Have a reproducible rendering issue or a scientific workflow Vesora should support? [Open an issue](https://github.com/U-C4N/Vesora/issues) with a small dataset, the expected result and your environment.
+Run `npm run check` for the build, type checks and core/React/release-contract suites. Use `npm run test:parity`, `npm run test:examples`, `npm run test:browser` and `python -m pytest` for the additional suites described in the development guide. Automated checks do not substitute for real-host or human acceptance.
+
+Historical RC6 results remain tied to their original archives; they do not certify RC7. [Report a bug or discuss a feature](https://github.com/U-C4N/Vesora/issues) with a minimal example and the relevant browser or host details.
+
+Vesora is available under the [MIT license](LICENSE).

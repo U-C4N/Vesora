@@ -56,7 +56,7 @@ class LocalHost:
     def start(self) -> LocalHost:
         if self._thread is not None:
             return self
-        if not (ASSETS / "index.js").is_file() or not (ASSETS / "viewer.html").is_file():
+        if any(not (ASSETS / name).is_file() for name in ("runtime.js", "html-template.js", "viewer.js", "viewer.html")):
             raise RuntimeError("Vesora viewer assets are missing. Build the JavaScript package before running from source.")
         self._thread = threading.Thread(target=self._run, name="vesora-host", daemon=True)
         self._thread.start()

@@ -1,5 +1,7 @@
 # API and usage
 
+The next-release development tree adds [channel semantics, observation HTML, and Studio/Embed](observation.md), including Python/JavaScript examples and React integration.
+
 Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. Each panel contains either 2D or 3D layers. In v0.9, `subplots({rows, cols, kinds})` creates mixed figures with fixed cell types; shared axes are rejected for mixed layouts. The [PRISM guide](prism.md) covers surface scalar colors, exact slices, true `plot3d`, scientific camera controls, frozen inspection, atomic Python batches and the shared viewer. Existing protocols 1–6, interval bands and numeric 2D streaming remain available.
 
 ## Append live data
@@ -333,6 +335,23 @@ downloadHTML(fig, 'measurements.html');
 ```
 
 `save_html(path)` returns a `Path`; use an `.html` or `.htm` extension. `to_html()` and `toHTML(fig)` return a string. `downloadHTML` starts a browser download; its default filename is `figure.html`.
+
+For browser applications, the development build provides a lighter `@vesora/core/runtime` entry. It exposes the same engine APIs and Figure class, with `toHTMLAsync` / `downloadHTMLAsync` in place of the synchronous HTML functions. The standalone viewer template loads only on the first HTML export. Studio, Embed and the React adapter use this entry. Keep the generated `runtime.js`, `html-template.js` and `worker.js` alongside the other distribution modules when serving them directly; bundlers resolve these dependencies automatically.
+
+```javascript
+import {figure, toHTMLAsync} from '@vesora/core/runtime';
+import {mountViewer} from '@vesora/core/viewer';
+
+const fig = figure({title: 'Measurements'});
+fig.plot([0, 1, 2], [12, 18, 15]);
+mountViewer(fig, document.querySelector('#chart'), {mode: 'embed'});
+await fig.ready();
+const html = await toHTMLAsync(fig, {source: 'displayed', observation: true});
+```
+
+The scene, source buffers and observation are captured when `toHTMLAsync` is called, before the template download. Changes made while that download is pending do not change the export. The capture is released on success or failure. The existing `@vesora/core` synchronous API remains available; importing that entry eagerly loads its HTML template. Exported documents still contain their complete runtime and work offline. These additions apply to the development tree, not the fixed RC6 archives.
+
+The separate `@vesora/core/balance` entry provides the conservative equal-area vessel model (`createBalance`, `inspectBalance`, `stepBalance`, `transferBalance`). It is opt-in and adds no weight to ordinary charts. See [the model, units and assumptions](plans/balance-model-v1.md) and the React example at `?demo=balance`.
 
 ### Save and restore viewpoints
 

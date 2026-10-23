@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .observation import validate_figure_metadata
+
 
 _TEMPLATE = Path(__file__).parent / "_assets" / "standalone.html"
 _PLACEHOLDER = "__VESORA_PAYLOAD_JSON__"
@@ -13,6 +15,7 @@ _PLACEHOLDER = "__VESORA_PAYLOAD_JSON__"
 
 def make_html(snapshot: dict[str, Any], buffers: list[tuple[str, bytes]], *, captured_at: str) -> str:
     """Embed the scene without interpreting any title, label, or note as HTML."""
+    validate_figure_metadata(snapshot["figure"], snapshot["sources"])
     try:
         template = _TEMPLATE.read_text(encoding="utf-8")
     except FileNotFoundError as exc:

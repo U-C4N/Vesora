@@ -1,5 +1,5 @@
 import {DataRegistry, chunkEntry} from './data';
-import type {DataEntry, NumericArray, Snapshot} from './types';
+import type {DataEntry, NumericArray, ObservationRecord, Snapshot, StreamState} from './types';
 
 export const DEFAULT_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 export interface SnapshotLease {
@@ -7,7 +7,16 @@ export interface SnapshotLease {
   registry: DataRegistry;
   bytes: number;
   capturedAt: string;
+  /** Export metadata captured synchronously with this lease's scene and sources. */
+  observation?: ObservationRecord;
   release(): void;
+}
+
+export function captureObservation(lease:SnapshotLease,source:'accepted'|'displayed',streams:ReadonlyMap<string,StreamState>,representation:ObservationRecord['representation']={status:'not-evaluated'}):void {
+  lease.observation={schemaVersion:1,source,capturedAt:lease.capturedAt,
+    sourceVersions:lease.snapshot.sources.map(({id,version})=>({id,version})),
+    streams:[...streams].map(([layerId,state])=>({layerId,streamId:state.streamId,revision:state.revision,sequenceStart:state.nextSequence-state.retained,sequenceEndExclusive:state.nextSequence})),
+    representation:structuredClone(representation)};
 }
 
 /** Source storage only. Geometry, worker copies and raster targets are separate budgets. */

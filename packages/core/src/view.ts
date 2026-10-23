@@ -1,6 +1,6 @@
 import {Figure} from './figure';
 import {DataRegistry} from './data';
-import {SnapshotStore,ownFrameEntry} from './snapshot-store';
+import {SnapshotStore,ownFrameEntry,captureObservation} from './snapshot-store';
 import type {SnapshotLease} from './snapshot-store';
 import {streamError} from './streaming';
 import type {DataEntry,InspectionState,StreamState} from './types';
@@ -109,7 +109,7 @@ export class FigureView {
   private captureFigure(source=this.frozenFigure??this.figure,registry?:DataRegistry):Figure{
     const captured=Object.create(source) as Figure,owned=registry??new DataRegistry();
     if(!registry)for(const [id,entry]of source.registry.entries())owned.store.set(id,this.renderTarget||source===this.frozenFigure?entry:ownFrameEntry(entry,this.frameCopies,bytes=>{this.frameCopiedBytes+=bytes;}));
-    Object.defineProperties(captured,{spec:{value:structuredClone(source.spec),writable:true},registry:{value:owned},presentation:{value:{...source.presentation}},streams:{value:new Map([...source.streams].map(([id,state])=>[id,{...state}]))},pendingLink:{value:structuredClone(source.selectionRequest()),writable:true},acceptedRevision:{value:source.acceptedRevision,writable:true},view:{value:undefined},changed:{value:()=>this.scheduleInspection()}});
+    Object.defineProperties(captured,{spec:{value:structuredClone(source.spec),writable:true},registry:{value:owned},presentation:{value:{...source.presentation}},streams:{value:new Map([...source.streams].map(([id,state])=>[id,{...state}]))},pendingLink:{value:structuredClone(source.selectionRequest()),writable:true},acceptedRevision:{value:source.acceptedRevision,writable:true},view:{value:undefined},changed:{value:()=>{captured.invalidateObservation();this.scheduleInspection();}}});
     return captured;
   }
   private get theme():ThemeTokens{return this.source.spec.theme??LIGHT_THEME as ThemeTokens;}
@@ -238,6 +238,7 @@ export class FigureView {
       }
       lease.snapshot.figure.inspection={capturedAt:this.frozenLease?.capturedAt??this.committedAt,frameId:this.completedFrames,snapshotId:this.snapshotId,...(this.selectedHit?{selection:structuredClone(this.selectedHit)}:{})};
     }
+    captureObservation(lease,source,figure.streams,source==='displayed'?{status:'rendered',frameId:this.completedFrames,...(this.snapshotId?{snapshotId:this.snapshotId}:{}),layers:this.inspect()}:{status:'not-evaluated'});
     return lease;
   }
   private queueFrame():void{
@@ -485,7 +486,7 @@ export class FigureView {
           }else{
             const count=this.source.registry.get(layer.data.z??layer.data.x).values.length;
             if(count>1_000_000)throw new Error(`${layer.kind} exceeds the initial renderer budget of 1,000,000 values. Reduce the grid or use 2D density exploration.`);
-            info={layerId:layer.id,...this.panelMetadata(panel.id),kind:layer.kind==='heatmap'?'grid':layer.kind==='surface'?'surface':'points',total:count,visible:count,rendered:count,exact:true,method:layer.kind==='surface'?'regular-grid triangulation':layer.kind==='heatmap'?'scalar grid':'raw points'};
+            info={layerId:layer.id,...this.panelMetadata(panel.id),kind:layer.kind==='heatmap'?'grid':layer.kind==='surface'?'surface':layer.kind==='line3d'?'line':'points',total:count,visible:count,rendered:count,exact:true,method:layer.kind==='surface'?'regular-grid triangulation':layer.kind==='heatmap'?'scalar grid':layer.kind==='line3d'?'raw 3D segments':'raw points'};
           }
           if(this.disposed||generation!==this.generation)throw new DOMException('Superseded','AbortError');
           const geometryStarted=performance.now();
@@ -496,6 +497,13 @@ export class FigureView {
           if(geometry.primitive==='points'){
             info.rendered=geometry.positions.length/3;info.visible=info.rendered;
             if(layer.data.color)info.method+='; non-finite scalar colors omitted';
+          }else if(layer.kind==='line3d'){
+            // Segment source indices are ordered. Adjacent segments share one
+            // endpoint; invalid, isolated and degenerate samples draw no segment.
+            let previous=-2,drawn=0;
+            for(const start of geometry.sourceIndices??[]){drawn+=start===previous+1?1:2;previous=start;}
+            info.visible=drawn;info.rendered=drawn;info.omitted=info.total-drawn;
+            info.method='raw 3D segments; invalid, isolated and degenerate samples omitted';
           }else if(layer.kind==='surface'){
             info.rendered=geometryVertexCount(geometry)/3;info.method='indexed regular-grid triangles; invalid coordinates/scalars omitted';
             info.visible=geometry.positions.length/3;info.valid=info.visible;info.omitted=info.total-info.visible;
@@ -832,7 +840,7 @@ export class FigureView {
     const d=this.drag;if(!d)return;const panel=this.panels.find(panel=>panel.id===d.panelId);
     if(d.select&&this.box&&panel)this.select(this.box,panel);
     const [x,y]=this.location(event),clicked=!d.select&&!d.moved&&Math.hypot(x-d.x,y-d.y)<4;this.drag=undefined;this.box=undefined;if(this.overlay.hasPointerCapture(event.pointerId))this.overlay.releasePointerCapture(event.pointerId);
-    if(clicked){this.hover(x,y,true);if(this.hoverHit){this.selectedHit=structuredClone(this.hoverHit);this.figure.emit('click',this.hoverHit);}if(this.displayedSource.spec.hoverMode==='x'&&panel){this.inspectX(this.pointToData(x,y,panel)[0],panel);this.xPinned=event.pointerType==='touch';}}this.drawOverlay();this.emitInspectionViewChange(d.panelId);
+    if(clicked){this.hover(x,y,true);if(this.hoverHit){this.interactionFigure.invalidateObservation();this.displayedSource.invalidateObservation();this.selectedHit=structuredClone(this.hoverHit);this.figure.emit('click',this.hoverHit);}if(this.displayedSource.spec.hoverMode==='x'&&panel){this.inspectX(this.pointToData(x,y,panel)[0],panel);this.xPinned=event.pointerType==='touch';}}this.drawOverlay();this.emitInspectionViewChange(d.panelId);
   };
   private pointToData(x:number,y:number,panel:PanelFrame):[number,number]{const {rect:r,bounds,view}=panel;return [denormalize((x-r.left)/r.width,bounds.x,view.xScale),denormalize(1-(y-r.top)/r.height,bounds.y,view.yScale)];}
   private statisticsInfo(prepared:PreparedStatistics,panel:PanelFrame):PanelInfo{
