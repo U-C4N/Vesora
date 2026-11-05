@@ -1,5 +1,7 @@
 # API and usage
 
+Version 1 adds ten analysis families, event-aligned run comparison and stable-ID observation groups. Their methods/data contracts are maintained in the [v1 guide](v1.md); existing figure/source/presentation/inspection contracts below continue to apply.
+
 The next-release development tree adds [channel semantics, observation HTML, and Studio/Embed](observation.md), including Python/JavaScript examples and React integration.
 
 Python uses `snake_case`; JavaScript uses `camelCase`. Both APIs send the same scene and data model to the shared TypeScript engine. Each panel contains either 2D or 3D layers. In v0.9, `subplots({rows, cols, kinds})` creates mixed figures with fixed cell types; shared axes are rejected for mixed layouts. The [PRISM guide](prism.md) covers surface scalar colors, exact slices, true `plot3d`, scientific camera controls, frozen inspection, atomic Python batches and the shared viewer. Existing protocols 1–6, interval bands and numeric 2D streaming remain available.
@@ -201,7 +203,7 @@ In JavaScript, use `fig.axhline(3, {color: '#b45309', width: 2})`, `fig.text(1, 
 | Text font size | `font_size` | `fontSize` | Positive finite CSS-pixel size. |
 | Position / content | `x`, `y`, `text` | `x`, `y`, `text` | Use the coordinates required by the annotation kind; text content must be a string. |
 
-`text` requires x and y; a horizontal line accepts y; a vertical line accepts x. Coordinates must be finite numbers. Error bars, arrows, mathematical text rendering and 3D annotations are not part of this API. Use an [interval-band layer](#show-an-interval-around-a-curve) to shade explicit lower/upper bounds.
+`text` requires x and y; a horizontal line accepts y; a vertical line accepts x. Coordinates must be finite numbers. Use v1's [`errorbar`](v1.md) for supplied asymmetric measurement bounds, or an [interval-band layer](#show-an-interval-around-a-curve) to shade lower/upper bounds. Annotation arrows, mathematical text rendering and 3D annotations remain outside the annotation API.
 
 Defaults are color `#475569`, line width `1`, opacity `1`, and font size `12`. Text uses the system sans-serif font, left alignment, and literal newline characters for multiple lines. Text is never interpreted as HTML or mathematical markup.
 

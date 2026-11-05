@@ -1,10 +1,13 @@
 """Vesora: Python data APIs backed by one shared TypeScript visualization engine."""
 from __future__ import annotations
 from typing import Any
-from .figure import Figure, Layer, Panel, Annotation, SelectionLink, SurfaceSlice, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION, SCENE3D_PROTOCOL_VERSION, OBSERVATION_PROTOCOL_VERSION
+from .figure import Figure, Layer, Panel, Annotation, SelectionLink, SurfaceSlice, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION, SCENE3D_PROTOCOL_VERSION, OBSERVATION_PROTOCOL_VERSION, ADVANCED_PROTOCOL_VERSION
+from .analysis import create_run_comparison, link_observations, ObservationController, query_ecdf
 
-__version__ = "0.9.0rc8"
+__version__ = "1.0.0"
 __all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "SurfaceSlice", "figure", "subplots", "plot", "plot3d", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
+__all__ += ["ecdf", "ccdf", "spectrogram", "event_timeline", "errorbar", "contour", "contourf", "quiver", "parallel_coordinates", "pareto_front", "phase_portrait", "hysteresis", "ternary", "create_run_comparison", "link_observations", "ObservationController"]
+__all__ += ["query_ecdf"]
 _last_figure: Figure | None = None
 
 
@@ -72,6 +75,58 @@ def barh(*args: Any, **options: Any) -> Layer:
 
 def boxplot(*args: Any, **options: Any) -> Layer:
     return _convenience("boxplot", *args, **options)
+
+
+def ecdf(*args: Any, **options: Any) -> Layer:
+    return _convenience("ecdf", *args, **options)
+
+
+def ccdf(*args: Any, **options: Any) -> Layer:
+    return _convenience("ccdf", *args, **options)
+
+
+def spectrogram(*args: Any, **options: Any) -> Layer:
+    return _convenience("spectrogram", *args, **options)
+
+
+def event_timeline(*args: Any, **options: Any) -> Layer:
+    return _convenience("event_timeline", *args, **options)
+
+
+def errorbar(*args: Any, **options: Any) -> Layer:
+    return _convenience("errorbar", *args, **options)
+
+
+def contour(*args: Any, **options: Any) -> Layer:
+    return _convenience("contour", *args, **options)
+
+
+def contourf(*args: Any, **options: Any) -> Layer:
+    return _convenience("contourf", *args, **options)
+
+
+def quiver(*args: Any, **options: Any) -> Layer:
+    return _convenience("quiver", *args, **options)
+
+
+def parallel_coordinates(*args: Any, **options: Any) -> Layer:
+    return _convenience("parallel_coordinates", *args, **options)
+
+
+def pareto_front(*args: Any, **options: Any) -> Layer:
+    return _convenience("pareto_front", *args, **options)
+
+
+def phase_portrait(*args: Any, **options: Any) -> Layer:
+    return _convenience("phase_portrait", *args, **options)
+
+
+def hysteresis(*args: Any, **options: Any) -> Layer:
+    return _convenience("hysteresis", *args, **options)
+
+
+def ternary(*args: Any, **options: Any) -> Layer:
+    return _convenience("ternary", *args, **options)
 
 
 def show(fig: Figure | None = None, **options: Any) -> Any:

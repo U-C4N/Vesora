@@ -8,6 +8,8 @@ import {ScatterIndexCache} from './scatter-index';
 import {lineSteps, runSteps, scatterSteps} from './planning';
 import {bandSteps} from './band';
 import {statisticsSteps} from './statistics';
+import {prepareAdvanced} from './advanced';
+import type {PreparedAdvanced} from './advanced';
 import {linkedSteps, maskedScatterSteps} from './linked';
 import type {LinkedResult} from './linked';
 import type {PreparedStatistics} from './statistics';
@@ -21,6 +23,7 @@ export type WorkerRequest =
   | {type:'selection';requestId:number;key:string;xId:string;yId:string;bounds:Bounds;colorId?:string}
   | {type: 'band'; requestId: number; key: string; xId: string; lowerId: string; upperId: string; query: Query}
   | {type: 'statistics'; requestId: number; key: string; layer: LayerSpec}
+  | {type: 'advanced'; requestId: number; key: string; layer: LayerSpec}
   | {type: 'linked'; requestId: number; key: string; link: SelectionLinkSpec; layers: LayerSpec[]; baseline: PreparedStatistics}
   | {type: 'selected-scatter'; requestId: number; key: string; xId: string; yId: string; mask: Uint8Array; query: Query}
   | {type: 'cancel'; requestId: number}
@@ -31,7 +34,7 @@ export type WorkerResponse =
   | {type:'scatter-index-stats';stats:ReturnType<ScatterIndexCache['diagnostics']>}
   | {type:'progress';requestId:number}
   | {type:'sync-error';message:string}
-  | {type: 'result'; requestId: number; result: PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult;lineIndex?:ReturnType<LineIndexCache['diagnostics']>;scatterIndex?:ReturnType<ScatterIndexCache['diagnostics']>}
+  | {type: 'result'; requestId: number; result: PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult | PreparedAdvanced;lineIndex?:ReturnType<LineIndexCache['diagnostics']>;scatterIndex?:ReturnType<ScatterIndexCache['diagnostics']>}
   | {type: 'error'; requestId: number; name: string; message: string;lineIndex?:ReturnType<LineIndexCache['diagnostics']>;scatterIndex?:ReturnType<ScatterIndexCache['diagnostics']>};
 
 const registry = new DataRegistry();
@@ -81,7 +84,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
     registry.clear();lineIndex.clear();scatterIndex.clear(); scope.close(); return;
   }
   const {requestId} = message;
-  const task = {cancelled: false, ids: message.type === 'statistics' ? Object.values(message.layer.data)
+  const task = {cancelled: false, ids: message.type === 'statistics' || message.type === 'advanced' ? Object.values(message.layer.data)
     : message.type === 'linked' ? [...new Set(message.layers.flatMap(layer => Object.values(layer.data)))] : message.type === 'band' ? [message.xId, message.lowerId, message.upperId] : message.type==='selection'?[message.xId,message.yId,...(message.colorId?[message.colorId]:[])]:[message.xId, message.yId]};
   requests.set(requestId, task);
   void (async () => {
@@ -90,14 +93,15 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>): void => {
       // message can replace another group's source without changing this task's
       // immutable source/version snapshot.
       const captured: DataStore = new Map(task.ids.map(id => [id, registry.get(id)]));
-      const steps = message.type==='selection'?selectionSteps(captured.get(message.xId)!.values,captured.get(message.yId)!.values,message.bounds,message.colorId?captured.get(message.colorId)!.values:undefined):message.type === 'statistics' ? statisticsSteps(message.layer, captured)
+      function* advancedSteps():Generator<void,PreparedAdvanced>{yield;return prepareAdvanced((message as Extract<WorkerRequest,{type:'advanced'}>).layer,captured);}
+      const steps = message.type==='advanced'?advancedSteps():message.type==='selection'?selectionSteps(captured.get(message.xId)!.values,captured.get(message.yId)!.values,message.bounds,message.colorId?captured.get(message.colorId)!.values:undefined):message.type === 'statistics' ? statisticsSteps(message.layer as Parameters<typeof statisticsSteps>[0], captured)
         : message.type === 'linked' ? linkedSteps(message.link, message.layers, captured, message.baseline)
           : message.type === 'band' ? bandSteps(captured.get(message.xId)!.values, captured.get(message.lowerId)!.values, captured.get(message.upperId)!.values, message.query)
           : message.type === 'selected-scatter' ? maskedScatterSteps(captured.get(message.xId)!.values, captured.get(message.yId)!.values, message.mask, message.query)
             : message.kind === 'line' ? lineSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query,ascending(captured.get(message.xId)!),lineIndex)
               : scatterSteps(captured.get(message.xId)!, captured.get(message.yId)!, message.query,scatterIndex,true);
-      function* progress():Generator<void,PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>{let last=Date.now();while(true){const step=steps.next();if(step.done)return step.value;if(Date.now()-last>=250){scope.postMessage({type:'progress',requestId});last=Date.now();}yield;}}
-      const result = await runSteps<PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult>(progress(), () => task.cancelled || disposed);
+      function* progress():Generator<void,PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult | PreparedAdvanced>{let last=Date.now();while(true){const step=steps.next();if(step.done)return step.value;if(Date.now()-last>=250){scope.postMessage({type:'progress',requestId});last=Date.now();}yield;}}
+      const result = await runSteps<PointPlan | LineResult | BandResult | PreparedStatistics | LinkedResult | SelectionResult | PreparedAdvanced>(progress(), () => task.cancelled || disposed);
       if (task.cancelled || disposed) return;
       const transfer: Transferable[] = result.kind==='selection'?[result.indices.buffer]:result.kind === 'linked' ? [result.mask.buffer, result.preview.buffer]
         : 'marks' in result ? [] : result.kind === 'points' ? [result.indices.buffer] : result.kind === 'density' ? [result.counts.buffer] : result.segments.map(segment => segment.buffer);

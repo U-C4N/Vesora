@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vesora"
+  short_description: "Build scientific and embedded charts with Vesora"
+  default_prompt: "Use $vesora to build and verify the requested visualization with the installed Vesora API."

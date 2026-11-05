@@ -82,7 +82,7 @@ async function start():Promise<void> {
     inspectorEmpty.hidden=Boolean(info);inspectorContent.hidden=!info;
     if(!info){inspectorEmpty.textContent='No visible layers';return;}
     const layer=fig!.spec.layers.find(value=>value.id===info.layerId)!;
-    const description:{name:string;note:string;rendered:string}={
+    const descriptions:Record<string,{name:string;note:string;rendered:string}>={
       points:{name:'Original points',note:'Original data',rendered:'Points drawn'},
       density:{name:'Count density',note:'All visible samples counted',rendered:'Occupied bins'},
       line:{name:info.exact?'Full line':'Reduced line',note:info.exact?'Original samples retained':'Extrema-preserving reduction',rendered:'Retained samples'},
@@ -92,7 +92,8 @@ async function start():Promise<void> {
       hist:{name:'Histogram',note:'Exact source-data counts',rendered:'Bins drawn'},
       bar:{name:'Bar chart',note:'Original series values',rendered:'Bars drawn'},
       boxplot:{name:'Box plot',note:'Exact source-data quartiles',rendered:'Groups drawn'},
-    }[info.kind];
+    };
+    const description=descriptions[info.kind]??{name:info.kind,note:info.method,rendered:'Marks drawn'};
     element('vesora-representation').textContent=description.name;
     element('vesora-representation-note').textContent=description.note;
     element('vesora-method').textContent=info.method;
@@ -114,7 +115,7 @@ async function start():Promise<void> {
     infos=next;const selected=layerSelect.value;layerSelect.replaceChildren();
     for(const info of infos){
       const index=fig!.spec.layers.findIndex(layer=>layer.id===info.layerId),layer=fig!.spec.layers[index];
-      const names={line:'Line',band:'Uncertainty band',scatter:'Scatter',line3d:'3D line',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot'};
+      const names:Record<string,string>={line:'Line',band:'Uncertainty band',scatter:'Scatter',line3d:'3D line',scatter3d:'3D scatter',heatmap:'Heatmap',surface:'Surface',hist:'Histogram',bar:'Bar chart',boxplot:'Box plot',ecdf:'Empirical distribution',spectrogram:'Spectrogram',eventTimeline:'Event timeline',errorbar:'Error bars',contour:'Contour',quiver:'Vector field',parallelCoordinates:'Parallel coordinates',paretoFront:'Pareto frontier',phasePortrait:'Phase portrait',ternary:'Ternary'};
       const panel=fig!.spec.panels?.find(panel=>panel.id===(info.panelId??'main'));
       const label=layer.style.label||`${names[layer.kind]} ${index+1}`;
       const option=document.createElement('option');option.value=info.layerId;option.textContent=panel?`${panel.title||`Panel ${panel.row+1}, ${panel.col+1}`} · ${label}`:label;

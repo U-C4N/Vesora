@@ -25,9 +25,12 @@ import {buildGeometry,gridEdges} from './geometry';
 import {prepareBars} from './statistics';
 import type {PreparedStatistics,StatMark} from './statistics';
 import {buildStatisticsGeometry} from './statistics-geometry';
+import {isAdvancedLayer,buildAdvancedGeometry} from './advanced';
+import type {PreparedAdvanced} from './advanced';
+import {pickAdvanced,selectAdvanced,highlightAdvanced,advancedTooltip} from './advanced-view';
 import {WebGLRenderer,cameraMatrix,cameraPreset,scientificAspect,geometryByteLength,geometryVertexCount,identity} from './renderer';
 import type {Geometry,PlotRect} from './renderer';
-import type {Bounds,Domain,LayerSpec,PointPlan,LineResult,Query,RepresentationInfo,Selection,ViewSpec} from './types';
+import type {Bounds,Domain,LayerSpec,LayerStyle,PointPlan,LineResult,Query,RepresentationInfo,Selection,ViewSpec} from './types';
 
 type PanelInfo=RepresentationInfo&{layerId:string;panelId?:string};
 type AxisTick={value:number;label:string;position:number};
@@ -49,6 +52,10 @@ export class FigureView {
   // One scheduler/worker and one GPU context are shared by every panel.
   private scheduler:QueryScheduler;
   private observer:ResizeObserver;
+  private visibilityObserver?:IntersectionObserver;
+  private offscreen=false;
+  private offscreenTimer?:ReturnType<typeof setTimeout>;
+  private offscreenDeferrals=0;
   private width=800;private height=520;private dpr=1;
   private renderingStacked=false;
   private displayedLayout?:{stacked:boolean;width:number;height:number};
@@ -57,6 +64,10 @@ export class FigureView {
   private geometries=new Map<string,{key:string;geometry:Geometry}>();
   private extents=new Map<string,{key:string;domain?:Domain}>();
   private statistics=new Map<string,PreparedStatistics>();
+  private advanced=new Map<string,PreparedAdvanced>();
+  private preparingAdvanced=new Map<string,PreparedAdvanced>();
+  private advancedRequests=new Set<string>();
+  private parallelBrushes=new Map<string,Record<string,Domain>>();
   private barCache=new Map<string,{key:string;prepared:Map<string,PreparedStatistics>}>();
   private statisticsRequests=new Set<string>();
   private sources=new Set<string>();
@@ -128,11 +139,15 @@ export class FigureView {
     const controls=document.createElement('div');controls.dataset.vesoraSelection='';controls.style.cssText='position:absolute;right:18px;top:34px;z-index:1;display:flex;gap:12px;align-items:center;font:12px system-ui;';
     this.selectionStatus=document.createElement('span');this.selectionStatus.className='vesora-selection-summary';this.selectionStatus.setAttribute('role','status');this.selectionStatus.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);';
     this.clearSelectionButton=document.createElement('button');this.clearSelectionButton.className='vesora-clear-selection';this.clearSelectionButton.type='button';this.clearSelectionButton.textContent='Clear selection';this.clearSelectionButton.disabled=true;
-    this.clearSelectionButton.addEventListener('click',()=>{const source=this.interactionFigure,link=source.selectionRequest();if(link)source.clearLinkedSelection(link.id);});
+    this.clearSelectionButton.addEventListener('click',()=>{const source=this.interactionFigure,link=source.selectionRequest();this.parallelBrushes.clear();if(link)source.clearLinkedSelection(link.id);if(source.spec.observationGroups?.length)source.setObservationGroups(source.spec.observationGroups.map(group=>{const copy=structuredClone(group);delete copy.selectedIds;copy.sequence++;return copy;}));});
     controls.append(this.selectionStatus,this.clearSelectionButton);this.root.append(controls);container.appendChild(this.root);
-    controls.hidden=!figure.spec.selectionLink;controls.style.display=figure.spec.selectionLink?'flex':'none';
+    controls.hidden=!figure.spec.selectionLink&&!figure.spec.observationGroups?.length;controls.style.display=controls.hidden?'none':'flex';
     try{this.renderer=new WebGLRenderer(canvas,message=>this.fail(new Error(message)),sharedGL,()=>{this.geometries.clear();this.failure=undefined;this.schedule();});}catch(error){this.root.remove();this.scheduler.dispose();throw error;}
     this.observer=new ResizeObserver(()=>this.frozenFigure?this.scheduleInspection():this.schedule());this.observer.observe(this.root);
+    if(!renderTarget&&typeof IntersectionObserver!=='undefined'){
+      this.visibilityObserver=new IntersectionObserver(entries=>{const entry=entries.at(-1);if(!entry)return;this.offscreen=!entry.isIntersecting;if(!this.offscreen&&this.offscreenTimer){clearTimeout(this.offscreenTimer);this.offscreenTimer=undefined;this.queueFrame();}},{rootMargin:'100px'});
+      this.visibilityObserver.observe(this.root);
+    }
     this.listen('wheel',this.wheel as EventListener,{passive:false});
     this.listen('pointerdown',this.pointerDown as EventListener);this.listen('pointermove',this.pointerMove as EventListener);this.listen('pointerup',this.pointerUp as EventListener);
     this.listen('pointercancel',(()=>{this.clearInteraction();this.drawOverlay();}) as EventListener);
@@ -153,7 +168,7 @@ export class FigureView {
     for(const key of this.statisticsRequests)this.scheduler.cancel(key);
     for(const source of this.sources)this.scheduler.release(source);
     this.sources.clear();this.statisticsRequests.clear();
-    this.inspection.clear();this.hoverIndices.clear();this.extents.clear();this.geometries.clear();this.plans.clear();this.statistics.clear();this.barCache.clear();this.previous.clear();
+    this.inspection.clear();this.hoverIndices.clear();this.extents.clear();this.geometries.clear();this.plans.clear();this.statistics.clear();this.advanced.clear();this.preparingAdvanced.clear();for(const key of this.advancedRequests)this.scheduler.cancel(key);this.advancedRequests.clear();this.barCache.clear();this.previous.clear();
     for(const id of this.linkedSpec?.scatter??[])this.scheduler.cancel(`${id}:selected`);
     this.linkedResult=undefined;this.linkedSpec=undefined;this.selectedPlans.clear();this.scheduler.cancel('__linked');
     this.clearInteraction();
@@ -169,7 +184,7 @@ export class FigureView {
     const link=this.figure.selectionRequest(),controls=this.clearSelectionButton.parentElement!;
     this.scheduler.cancel('__linked');
     for(const id of new Set([...(this.linkedSpec?.scatter??[]),...(link?.scatter??[])]))this.scheduler.cancel(`${id}:selected`);
-    controls.hidden=!link;controls.style.display=link?'flex':'none';controls.style.top=this.figure.spec.title?'34px':'8px';
+    controls.hidden=!link&&!this.figure.spec.observationGroups?.length;controls.style.display=controls.hidden?'none':'flex';controls.style.top=this.figure.spec.title?'34px':'8px';
     if(link){this.selectionStatus.textContent='Updating selection…';this.root.setAttribute('aria-busy','true');this.root.dispatchEvent(new Event('vesora-selection-pending',{bubbles:true}));}
     this.queueFrame();
   }
@@ -188,6 +203,7 @@ export class FigureView {
     const lease=this.snapshotStore.capture(this.committedFigure.snapshot(),this.committedFigure.registry);
     try{this.frozenFigure=this.captureFigure(this.committedFigure,lease.registry);}catch(error){lease.release();throw error;}
     this.frozenLease=lease;this.snapshotId=`snapshot-${++this.snapshotSerial}`;this.generation++;
+    clearTimeout(this.offscreenTimer);this.offscreenTimer=undefined;
     if(this.raf){cancelAnimationFrame(this.raf);this.raf=0;}
     this.requestedRevision=this.committedRevision;this.frameRevision=this.committedRevision;this.completed=this.generation;
     // Private inspection edits replace entries/spec in frozenFigure. Keep a
@@ -242,15 +258,18 @@ export class FigureView {
     return lease;
   }
   private queueFrame():void{
-    if(this.disposed||this.rendering||this.raf)return;
-    this.raf=requestAnimationFrame(()=>{
+    if(this.disposed||this.rendering||this.raf||this.offscreenTimer)return;
+    const start=()=>{this.offscreenTimer=undefined;if(this.disposed)return;this.raf=requestAnimationFrame(()=>{
       this.raf=0;if(this.disposed)return;this.rendering=true;this.frameRevision=this.requestedRevision;this.frameStarted=performance.now();this.renderingFigure=this.captureFigure();
       this.figure.emit('framepending',{...this.getInspectionState(),displayedRevision:this.renderingFigure.acceptedRevision,displayedStreams:Object.fromEntries([...this.renderingFigure.streams].map(([id,state])=>[id,{...state}]))});
       void this.render(this.generation).finally(()=>{
         this.rendering=false;this.renderingFigure=undefined;
         if(!this.disposed&&this.requestedRevision>this.frameRevision){this.generation++;this.failure=undefined;this.queueFrame();}
       });
-    });
+    });};
+    // Keep readiness finite: background figures coalesce at 10Hz after their
+    // first completed frame, while visible cards and explicit exports stay eager.
+    if(this.offscreen&&this.completedFrames>0&&!this.renderTarget){this.offscreenDeferrals++;this.offscreenTimer=setTimeout(start,100);}else start();
   }
   ready(options:ReadyOptions={}):Promise<void>{
     if(options.target!==undefined&&!['live','displayed'].includes(options.target))return Promise.reject(new TypeError('Ready target must be live or displayed'));
@@ -269,7 +288,7 @@ export class FigureView {
       void (async()=>{let pending;do{pending=this.fontReady;await pending;}while(pending!==this.fontReady);if(settled)return;if(this.disposed)return finish(new Error('Figure view disposed'));if(this.frozenFigure&&options.target!=='displayed')return finish(streamError('PRESENTATION_FROZEN','Live presentation is frozen after data acceptance'));if(this.failure)return finish(this.failure);if(this.committedRevision>=revision&&this.completed===this.generation)return finish();this.waiters.push(waiter);})();
     });
   }
-  diagnostics(){const sourceBytes=[...this.figure.registry.entries()].reduce((sum,[,entry])=>sum+entry.descriptor.byteLength,0),geometryBytes=this.committedGeometryBytes;return {backend:'WebGL2',frameCopiedBytes:this.frameCopiedBytes,exportCopiedBytes:this.exportCopiedBytes,snapshotCopiedBytes:this.snapshotStore.copiedBytes,materializedSourceBytes:[...this.figure.registry.entries()].reduce((n,[,entry])=>n+(entry.materializedByteLength??0),0),picking:{...picking3DStats},contextLost:this.renderer.gl.isContextLost(),sourceBytes,geometryBytes,estimatedGPUBytes:geometryBytes,pendingExports:this.exportReservations.size,lastFrameMs:this.lastFrameMs,planningMs:this.lastPlanningMs,drawMs:this.lastDrawMs,geometryBuilds:this.geometryBuilds,geometryBuildMs:this.geometryBuildMs,completedFrames:this.completedFrames,requestedRevision:this.requestedRevision,committedRevision:this.committedRevision,...this.scheduler.stats,...this.renderer.stats,...this.getInspectionState()};}
+  diagnostics(){const sourceBytes=[...this.figure.registry.entries()].reduce((sum,[,entry])=>sum+entry.descriptor.byteLength,0),geometryBytes=this.committedGeometryBytes;return {backend:'WebGL2',offscreen:this.offscreen,offscreenDeferrals:this.offscreenDeferrals,frameCopiedBytes:this.frameCopiedBytes,exportCopiedBytes:this.exportCopiedBytes,snapshotCopiedBytes:this.snapshotStore.copiedBytes,materializedSourceBytes:[...this.figure.registry.entries()].reduce((n,[,entry])=>n+(entry.materializedByteLength??0),0),picking:{...picking3DStats},contextLost:this.renderer.gl.isContextLost(),sourceBytes,geometryBytes,estimatedGPUBytes:geometryBytes,pendingExports:this.exportReservations.size,lastFrameMs:this.lastFrameMs,planningMs:this.lastPlanningMs,drawMs:this.lastDrawMs,geometryBuilds:this.geometryBuilds,geometryBuildMs:this.geometryBuildMs,completedFrames:this.completedFrames,requestedRevision:this.requestedRevision,committedRevision:this.committedRevision,...this.scheduler.stats,...this.renderer.stats,...this.getInspectionState()};}
   private prepareFont():void{
     const theme=this.figure.spec.theme??LIGHT_THEME,key=`${theme.fontSize}px ${theme.fontFamily}`;if(key===this.fontKey)return;this.fontKey=key;
     if(!document.fonts)return;
@@ -280,6 +299,13 @@ export class FigureView {
   inspect():PanelInfo[]{return this.infos.map(info=>({...info}));}
   private panelMetadata(id:string,source=this.source):{panelId?:string}{return source.spec.layout?{panelId:id}:{};}
   private sourceExtent(layer:LayerSpec,axis:'x'|'y'|'z',scale:ScaleKind):Domain|undefined{
+    const advanced=this.preparingAdvanced?.get(layer.id)??this.advanced?.get(layer.id);
+    if(advanced&&axis!=='z'){
+      const domain=advanced.bounds[axis];
+      if(scale!=='log'||domain[0]>0)return domain;
+      const values=advanced.marks.flatMap(mark=>mark.kind==='point'?[mark[axis]]:mark.kind==='polygon'?mark.points.map(point=>point[axis==='x'?0:1]):[mark[axis==='x'?'x0':'y0'],mark[axis==='x'?'x1':'y1']]).filter(value=>Number.isFinite(value)&&value>0);
+      return values.length?extent(values,'log'):undefined;
+    }
     if(layer.kind==='band'&&axis!=='z'){
       const xs=this.source.registry.get(layer.data.x),lo=this.source.registry.get(layer.data.lower),hi=this.source.registry.get(layer.data.upper);
       const panel=this.source.panelView(layer.panelId??'main'),key=JSON.stringify([layer.data.x,xs.descriptor.version,layer.data.lower,lo.descriptor.version,layer.data.upper,hi.descriptor.version,panel.xScale,panel.yScale,axis]);
@@ -302,6 +328,7 @@ export class FigureView {
   }
   private categories(axis:'x'|'y',panelId:string,source=this.source):string[]|undefined{
     const spec=source.spec,shared=spec.layout?.[axis==='x'?'shareX':'shareY'];
+    if(axis==='y'){const timeline=source.panelLayers(panelId).find(layer=>layer.visible&&layer.kind==='eventTimeline');if(timeline)return (timeline.options as {lanes:string[]}).lanes;}
     return spec.categories?.[`${axis}:${shared?'shared':panelId}`];
   }
   private axisValue(axis:'x'|'y',value:number,panelId:string):string|number{
@@ -320,7 +347,7 @@ export class FigureView {
     const scale=view[`${axis}Scale`],layout=this.source.spec.layout;
     const extentScale=axis!=='z'&&view[`${axis}Format`]?.kind==='date'&&scale==='linear'?'time':scale;
     const shared=axis==='x'?layout?.shareX:axis==='y'?layout?.shareY:false;
-    const layers=(shared?this.source.spec.layers:this.source.panelLayers(panelId)).filter(l=>l.visible&&(l.data[axis]||axis==='y'&&l.kind==='band'||axis!=='z'&&statistics.has(l.id)));
+    const layers=(shared?this.source.spec.layers:this.source.panelLayers(panelId)).filter(l=>l.visible&&(l.data[axis]||axis==='y'&&l.kind==='band'||axis!=='z'&&(statistics.has(l.id)||isAdvancedLayer(l))));
     if(axis!=='z'){
       const labels=this.categories(axis,panelId);
       if(labels){
@@ -335,7 +362,7 @@ export class FigureView {
       }
     }
     let min=Infinity,max=-Infinity,heatmap=false;
-    for(const layer of layers){const prepared=statistics.get(layer.id),d=prepared&&axis!=='z'?(prepared.marks.length?prepared.bounds[axis]:undefined):this.sourceExtent(layer,axis,extentScale);if(d&&d.every(Number.isFinite)){min=Math.min(min,d[0]);max=Math.max(max,d[1]);if(layer.kind==='heatmap')heatmap=true;}}
+    for(const layer of layers){const prepared=statistics.get(layer.id),d=prepared&&axis!=='z'?(prepared.marks.length?prepared.bounds[axis]:undefined):this.sourceExtent(layer,axis,extentScale);if(d&&d.every(Number.isFinite)){min=Math.min(min,d[0]);max=Math.max(max,d[1]);if(layer.kind==='heatmap'||layer.kind==='spectrogram')heatmap=true;}}
     if(min===Infinity)return scale==='log'?[1,10]:[0,1];
     const domain:Domain=min===max?extent([min,max],extentScale):[min,max];
     if(heatmap)return domain;
@@ -365,7 +392,7 @@ export class FigureView {
       const link=spec.selectionLink;if(link)for(const layer of layers)if(layer.id===link.histogram)layer.style.label='All observations';
       const linked=link&&layers.some(l=>link.scatter.includes(l.id)||link.histogram===l.id);
       const density=(l:LayerSpec)=>l.kind==='scatter'&&(resolvedPlans?.has(l.id)?resolvedPlans.get(l.id)?.kind==='density':l.style.representation==='density'||l.style.representation!=='points'&&(this.previous.has(l.id)?this.previous.get(l.id)==='density':this.source.registry.get(l.data.x).values.length>256));
-      const possibleColor=layers.find(l=>l.kind==='heatmap'||l.kind==='surface'||l.data.color||density(l));
+      const possibleColor=layers.find(l=>l.kind==='heatmap'||l.kind==='surface'||l.kind==='spectrogram'||l.kind==='contour'||l.data.color||density(l));
       const possibleDensity=!!possibleColor&&density(possibleColor);
       const statusHeight=linked?(layers.some(l=>l.id===link!.histogram)?90:44):possibleDensity?f.tick+10:0;
       const panel:PanelFrame={id:entry.id,title:entry.title,view,layers,cell,rect:{...cell},bounds:{x:this.domain('x',entry.id,view,statistics),y:this.domain('y',entry.id,view,statistics)},zDomain:this.domain('z',entry.id,view,statistics),legendRows:0,statusHeight,reservedColor:!!possibleColor,reservedDensity:possibleDensity,xTicks:[],yTicks:[],xOffset:0,yOffset:0,legendTop:0,labelY:0};
@@ -377,7 +404,7 @@ export class FigureView {
       measure.font=`${f.tick}px ${this.theme.fontFamily}`;
       if(possibleColor){
         let domain=possibleColor.style.colorDomain;
-        if(!domain&&!possibleDensity)domain=extent(this.source.registry.get(possibleColor.data.color??possibleColor.data.z).values);
+        if(!domain&&!possibleDensity)domain=this.preparingAdvanced.get(possibleColor.id)?.colorDomain??extent(this.source.registry.get(possibleColor.data.color??possibleColor.data.z).values);
         const labels=domain?ticks(domain,'linear',5).map(v=>formatTick(v,domain[1]-domain[0])):[String(this.source.registry.get(possibleColor.data.x).descriptor.shape[0])];
         right=42+Math.max(...labels.map(t=>measure.measureText(t).width))+(colorbarLabel(possibleColor,possibleDensity,view)?f.label+10:0);
       }
@@ -450,6 +477,31 @@ export class FigureView {
     }));
     return prepared;
   }
+  private async prepareAdvancedLayers(generation:number):Promise<Map<string,PreparedAdvanced>>{
+    const layers=this.source.spec.layers.filter(layer=>layer.visible&&isAdvancedLayer(layer)),keys=new Set(layers.map(layer=>`advanced:${layer.id}`)),prepared=new Map<string,PreparedAdvanced>();
+    for(const key of this.advancedRequests)if(!keys.has(key))this.scheduler.cancel(key);this.advancedRequests=keys;
+    await Promise.all(layers.map(async layer=>{const value=await this.scheduler.queryAdvanced(`advanced:${layer.id}`,layer,this.source.registry);if(!this.disposed&&generation===this.generation)prepared.set(layer.id,value);}));
+    return prepared;
+  }
+  private observationRows(layerId:string):Set<number>|undefined{
+    let rows:Set<number>|undefined;
+    for(const group of this.source.spec.observationGroups??[]){
+      const member=group.members.find(member=>member.layerId===layerId);if(!member||group.selectedIds===undefined)continue;
+      const selected=new Set(group.selectedIds),next=new Set<number>();member.rowIds.forEach((id,index)=>{if(selected.has(id)&&(!rows||rows.has(index)))next.add(index);});rows=next;
+    }return rows;
+  }
+  private commitObservationSelection(layerId:string,indices:readonly number[]):boolean{
+    const source=this.interactionFigure,groups=source.spec.observationGroups;
+    if(!groups?.some(group=>group.members.some(member=>member.layerId===layerId)))return false;
+    const displayed=this.displayedSource.spec.layers.find(layer=>layer.id===layerId),live=source.spec.layers.find(layer=>layer.id===layerId);
+    if(!displayed||!live||Object.entries(displayed.data).some(([channel,id])=>live.data[channel]!==id||this.displayedSource.registry.get(id).descriptor.version!==source.registry.get(id).descriptor.version))return false;
+    const next=groups.map(group=>{
+      const member=group.members.find(member=>member.layerId===layerId);if(!member)return group;
+      const wanted=new Set(indices.map(index=>member.rowIds[index]).filter(id=>id!==undefined));
+      if(group.sequence===Number.MAX_SAFE_INTEGER)throw new RangeError('Observation sequence exhausted');
+      return {...group,selectedIds:group.rowIds.filter(id=>wanted.has(id)),sequence:group.sequence+1};
+    });source.setObservationGroups(next);return true;
+  }
   private async render(generation:number,layoutPlans?:Map<string,PointPlan|LineResult|BandResult>):Promise<void>{
     try{
       const spec=this.source.spec;
@@ -462,6 +514,9 @@ export class FigureView {
       // resolving automatic/shared extents. The committed frame stays untouched.
       const nextStatistics=await this.prepareStatistics(generation);
       if(this.disposed||generation!==this.generation)return;
+      const nextAdvanced=await this.prepareAdvancedLayers(generation);
+      if(this.disposed||generation!==this.generation)return;
+      this.preparingAdvanced=nextAdvanced;
       const request=this.source.selectionRequest(),link=request?structuredClone(request):undefined;
       const linked=link?await this.scheduler.queryLinked('__linked',link,spec.layers,nextStatistics.get(link.histogram)!,this.source.registry):undefined;
       if(!link)this.scheduler.cancel('__linked');
@@ -473,11 +528,15 @@ export class FigureView {
         const results=await Promise.all(panel.layers.map(async layer=>{
           const versions=Object.values(layer.data).map(source=>`${source}:${this.source.registry.get(source).descriptor.version}`);
           const member=!!link&&(link.scatter.includes(layer.id)||link.histogram===layer.id),active=member&&!!link?.selection;
-          const baseStyle=active?{...layer.style,opacity:(layer.style.opacity??1)*.3}:layer.style;
+          const observationRows=this.observationRows(layer.id);
+          const baseStyle=active||observationRows?{...layer.style,opacity:(layer.style.opacity??1)*.3}:layer.style;
           const key=JSON.stringify([versions,layer.options,baseStyle,bounds,zDomain,view.xScale,view.yScale,view.zScale,rect.width,rect.height,layer.kind==='bar'?this.barCache.get(panel.id)?.key:undefined]);
           const cache=this.geometries.get(layer.id);let plan:PointPlan|LineResult|BandResult|undefined,info:PanelInfo;
           const prepared=nextStatistics.get(layer.id);
-          if(prepared){
+          const advanced=nextAdvanced.get(layer.id);
+          if(advanced){
+            info={...advanced.info,layerId:layer.id,...this.panelMetadata(panel.id)};
+          }else if(prepared){
             info=this.statisticsInfo(prepared,panel);
           }else if(layer.kind==='line'||layer.kind==='scatter'||layer.kind==='band'){
             const query:Query={bounds,width:Math.round(rect.width),height:Math.round(rect.height),xScale:view.xScale,yScale:view.yScale,pointBudget:250_000,mode:layer.style.representation??'auto',previous:this.previous.get(layer.id)};
@@ -490,8 +549,9 @@ export class FigureView {
           }
           if(this.disposed||generation!==this.generation)throw new DOMException('Superseded','AbortError');
           const geometryStarted=performance.now();
-          const geometry=cache?.key===key?cache.geometry:prepared
-            ?buildStatisticsGeometry(prepared,bounds,view,rect.width,rect.height,baseStyle)
+          const geometry:Geometry=cache?.key===key?cache.geometry:advanced
+            ?layer.kind==='spectrogram'?this.spectrogramGeometry(layer,bounds,view,baseStyle):buildAdvancedGeometry(advanced,bounds,view,rect.width,rect.height,baseStyle)
+            :prepared?buildStatisticsGeometry(prepared,bounds,view,rect.width,rect.height,baseStyle)
             :buildGeometry({...layer,style:baseStyle},this.source.registry,bounds,zDomain,view,rect.width,rect.height,plan);
           if(cache?.geometry!==geometry){this.geometryBuilds++;this.geometryBuildMs+=performance.now()-geometryStarted;}
           if(geometry.primitive==='points'){
@@ -511,6 +571,16 @@ export class FigureView {
             info.totalTriangles=2*(shape[0]-1)*(shape[1]-1);info.omittedTriangles=info.totalTriangles-info.rendered;
           }else if(layer.kind==='heatmap'){info.rendered=geometry.positions.length/18;info.visible=info.rendered;}
           const selected:Geometry[]=[];
+          if(observationRows&&observationRows.size){
+            if(advanced&&layer.kind!=='spectrogram'){
+              const highlight=buildAdvancedGeometry(highlightAdvanced(advanced,observationRows),bounds,view,rect.width,rect.height,{...layer.style,color:this.theme.selection,opacity:1});highlight.id=`${layer.id}:observations`;selected.push(highlight);
+            }else if(layer.kind==='scatter'||layer.kind==='line'){
+              const count=this.source.registry.get(layer.data.x).descriptor.shape[0],mask=new Uint8Array(Math.ceil(count/8));for(const row of observationRows)mask[row>>3]|=1<<(row&7);
+              const query:Query={bounds,width:Math.round(rect.width),height:Math.round(rect.height),xScale:view.xScale,yScale:view.yScale,pointBudget:250_000,mode:'points'};
+              const selectedPlan=await this.scheduler.querySelectedScatter(`${layer.id}:observations`,layer.data.x,layer.data.y,mask,query,this.source.registry);
+              const highlight=buildGeometry({...layer,kind:'scatter',id:`${layer.id}:observations`,style:{...layer.style,color:this.theme.selection,opacity:1}},this.source.registry,bounds,zDomain,view,rect.width,rect.height,selectedPlan);selected.push(highlight);
+            }
+          }
           if(active&&linked&&link){
             if(layer.id===link.histogram){
               const highlight=buildStatisticsGeometry(linked.histogram,bounds,view,rect.width,rect.height,{...layer.style,color:this.theme.selection,opacity:1});
@@ -530,11 +600,11 @@ export class FigureView {
           if(this.disposed||generation!==this.generation)throw new DOMException('Superseded','AbortError');
           nextGeometry.set(layer.id,{key,geometry});return {geometry,selected,info};
         }));
-        panel.colorLayer=panel.layers.find(l=>l.kind==='heatmap'||l.kind==='surface'||l.data.color||nextPlans.get(l.id)?.kind==='density');
+        panel.colorLayer=panel.layers.find(l=>l.kind==='heatmap'||l.kind==='surface'||l.kind==='spectrogram'||l.kind==='contour'||l.data.color||nextPlans.get(l.id)?.kind==='density');
         if(panel.colorLayer){
           const layer=panel.colorLayer,plan=nextPlans.get(layer.id),density=plan?.kind==='density'?plan:undefined;
           panel.colorDensity=!!density;
-          panel.colorDomain=layer.style.colorDomain??(density?[0,Math.max(1,density.max)] as Domain:extent(this.source.registry.get(layer.data.color??layer.data.z).values));
+          panel.colorDomain=layer.style.colorDomain??nextAdvanced.get(layer.id)?.colorDomain??(density?[0,Math.max(1,density.max)] as Domain:extent(this.source.registry.get(layer.data.color??layer.data.z).values));
         }
         const items=results.flatMap(result=>[result.geometry,...result.selected]);if(view.kind==='3d')items.unshift(this.axes3d());
         return {panel,items,infos:results.map(result=>result.info)};
@@ -558,7 +628,7 @@ export class FigureView {
       }
       this.renderer.endFrame();
       this.lastDrawMs=performance.now()-drawStarted;
-      this.panels=panels;this.geometries=nextGeometry;this.plans=nextPlans;this.statistics=nextStatistics;this.infos=panelResults.flatMap(result=>result.infos);
+      this.panels=panels;this.geometries=nextGeometry;this.plans=nextPlans;this.statistics=nextStatistics;this.advanced=nextAdvanced;this.infos=panelResults.flatMap(result=>result.infos);
       this.linkedResult=linked;this.linkedSpec=link;this.selectedPlans=nextSelectedPlans;
       for(const [id,plan] of nextPlans)if(plan.kind==='points'||plan.kind==='density')this.previous.set(id,plan.kind);
       const previousFigure=this.committedFigure;
@@ -583,8 +653,8 @@ export class FigureView {
       const hoverPosition=this.lastHover;
       this.clearHover();if(hoverPosition&&!this.drag)this.hover(...hoverPosition);else this.drawOverlay();
       this.root.setAttribute('aria-busy','false');
-      this.clearSelectionButton.disabled=!link?.selection;
-      this.selectionStatus.textContent=link&&linked?this.selectionSummary(linked,!!link.selection):'';
+      this.clearSelectionButton.disabled=!link?.selection&&!this.committedFigure?.spec.observationGroups?.some(group=>group.selectedIds!==undefined);
+      this.selectionStatus.textContent=link&&linked?this.selectionSummary(linked,!!link.selection):(this.committedFigure?.spec.observationGroups??[]).map(group=>`${group.selectedIds?.length??group.rowIds.length} / ${group.rowIds.length} observations`).join('; ');
       if(link&&linked){
         const origin=link.selection?.originLayerId??link.scatter[0],layer=spec.layers.find(layer=>layer.id===origin)!;
         const event:LinkedSelection={kind:'linked',linkId:link.id,generation:link.generation,sequence:link.sequence,layerId:origin,...this.panelMetadata(layer.panelId??'main'),active:!!link.selection,count:linked.count,total:linked.total,fraction:linked.total?linked.count/linked.total:0,indices:Array.from(linked.preview),truncated:linked.truncated,...(link.selection?{bounds:structuredClone(link.selection.bounds)}:{})};
@@ -599,6 +669,14 @@ export class FigureView {
   private axes3d():Geometry{
     if(this.axesGeometry?.color!==this.theme.muted)this.axesGeometry={color:this.theme.muted,geometry:{id:'__axes3d',primitive:'lines',positions:new Float32Array([-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1]),colors:Float32Array.from(Array.from({length:6},()=>parseColor(this.theme.muted)).flat())}};
     return this.axesGeometry.geometry;
+  }
+  private spectrogramGeometry(layer:LayerSpec,bounds:Bounds,view:ViewSpec,style:LayerStyle):Geometry{
+    const frequencies=this.source.registry.get(layer.data.x).values,times=this.source.registry.get(layer.data.y).values,entry=this.source.registry.get(layer.data.z),state=this.source.streams.get(layer.id);
+    const options=layer.options as unknown as {maxRows?:number;valueScale?:'linear'|'db';dbReference?:number;dbFloor?:number};
+    return {id:layer.id,primitive:'triangles',positions:new Float32Array(0),colors:new Float32Array(0),spectrogram:{
+      frequencies,times,values:entry.values,bounds,view,domain:style.colorDomain??this.preparingAdvanced.get(layer.id)?.colorDomain??extent(entry.values),colormap:style.colormap??'viridis',opacity:style.opacity??1,valueScale:options.valueScale??'linear',dbReference:options.dbReference??1,dbFloor:options.dbFloor??-120,
+      capacity:options.maxRows??Math.max(1,times.length),sequenceStart:state?state.nextSequence-state.retained:0,sequenceEnd:state?.nextSequence??times.length,epoch:state?.streamId??`${layer.data.z}:static`,version:entry.descriptor.version,
+    }};
   }
   private ctx():CanvasRenderingContext2D{
     const w=Math.round(this.width*this.dpr),h=Math.round(this.height*this.dpr);
@@ -638,13 +716,36 @@ export class FigureView {
     const percent=result.total?100*result.count/result.total:0;
     return `Selected ${result.count.toLocaleString('en-US')} / ${result.total.toLocaleString('en-US')} (${percent.toFixed(2)}%)${result.count===0?' · No observations in this selection':''}`;
   }
+  private drawProjectionAxes(ctx:CanvasRenderingContext2D,panel:PanelFrame):void{
+    const r=panel.rect,b=panel.bounds,view=panel.view,f=this.fonts;
+    const at=(x:number,y:number):[number,number]=>[r.left+normalize(x,b.x,view.xScale)*r.width,r.top+(1-normalize(y,b.y,view.yScale))*r.height];
+    const line=(a:[number,number],b:[number,number])=>{ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();};
+    if(view.projection==='ternary'){
+      const h=Math.sqrt(3)/2,layer=panel.layers.find(layer=>layer.kind==='ternary'),options=layer?.options as unknown as {labels?:string[];sum?:number}|undefined,labels=options?.labels??['A','B','C'];
+      ctx.strokeStyle=this.theme.grid;
+      for(let i=1;i<5;i++){const t=i/5;line(at(t,0),at(.5+.5*t,h*(1-t)));line(at(t,0),at(.5*t,h*t));line(at(.5*t,h*t),at(1-.5*t,h*t));}
+      ctx.strokeStyle=this.theme.axis;line(at(0,0),at(1,0));line(at(1,0),at(.5,h));line(at(.5,h),at(0,0));
+      const positions=[at(0,0),at(1,0),at(.5,h)];ctx.font=`${f.label}px ${this.theme.fontFamily}`;ctx.textAlign='center';ctx.fillStyle=this.theme.foreground;
+      positions.forEach((p,i)=>ctx.fillText(this.fitText(ctx,labels[i]??String.fromCharCode(65+i),Math.max(50,r.width/3)),p[0],p[1]+(i===2?-8:f.label+8)));
+    }else{
+      const layer=panel.layers.find(layer=>layer.kind==='parallelCoordinates'),prepared=layer?this.advanced.get(layer.id):undefined;
+      const axes=(prepared as unknown as {axes?:Array<{key:string;label:string;domain:Domain;scale:'linear'|'log';reverse?:boolean}>})?.axes??[];
+      axes.forEach((axis,index)=>{
+        const bottom=at(index,0),top=at(index,1);ctx.strokeStyle=this.theme.axis;line(bottom,top);ctx.fillStyle=this.theme.foreground;ctx.textAlign='center';ctx.font=`${f.tick}px ${this.theme.fontFamily}`;
+        ctx.fillText(this.fitText(ctx,axis.label||axis.key,Math.max(45,r.width/Math.max(1,axes.length))),bottom[0],bottom[1]+f.tick+12);
+        for(const value of ticks(axis.domain,axis.scale,4)){const t=normalize(value,axis.domain,axis.scale),p=at(index,axis.reverse?1-t:t);ctx.fillText(formatValue(value),p[0],p[1]-5);}
+      });
+    }
+  }
   private drawPanelOverlay(ctx:CanvasRenderingContext2D,panel:PanelFrame,exporting=false):void{
     const {rect:r,cell,view,bounds,zDomain,layers}=panel,grid=!!this.source.spec.layout,bottom=cell.top+cell.height;
     ctx.save();ctx.beginPath();ctx.rect(cell.left,cell.top,cell.width,cell.height);ctx.clip();
     const f=this.fonts;
     ctx.font=`${f.tick}px ${this.theme.fontFamily}`;ctx.fillStyle=this.theme.foreground;ctx.strokeStyle=this.theme.axis;ctx.lineWidth=1;
     if(grid&&panel.title){ctx.font=`600 ${f.title}px ${this.theme.fontFamily}`;ctx.textAlign='left';ctx.fillText(this.fitText(ctx,panel.title,cell.left+cell.width-r.left-12),r.left,cell.top+f.title+8);ctx.font=`${f.tick}px ${this.theme.fontFamily}`;}
-    if(view.kind==='2d'){
+    if(view.kind==='2d'&&view.projection&&view.projection!=='cartesian'){
+      this.drawProjectionAxes(ctx,panel);
+    }else if(view.kind==='2d'){
       ctx.strokeRect(r.left,r.top,r.width,r.height);
       for(const item of panel.xTicks){
         const x=r.left+normalize(item.value,bounds.x,view.xScale)*r.width;ctx.strokeStyle=this.theme.grid;ctx.beginPath();ctx.moveTo(x,r.top);ctx.lineTo(x,r.top+r.height);ctx.stroke();
@@ -803,7 +904,7 @@ export class FigureView {
   }
   private panelAt(x:number,y:number):PanelFrame|undefined{return this.panels.find(({rect:r})=>x>=r.left&&x<=r.left+r.width&&y>=r.top&&y<=r.top+r.height);}
   private wheel=(event:WheelEvent):void=>{
-    const [x,y]=this.location(event),panel=this.panelAt(x,y);if(!panel)return;event.preventDefault();
+    const [x,y]=this.location(event),panel=this.panelAt(x,y);if(!panel||panel.view.projection&&panel.view.projection!=='cartesian')return;event.preventDefault();
     const view=this.interactionFigure.panelView(panel.id),factor=Math.exp(Math.max(-1,Math.min(1,event.deltaY*.001))),r=panel.rect;
     if(view.kind==='3d'){this.interactionFigure.setPanelView(panel.id,{camera:{...view.camera,distance:Math.max(1,Math.min(20,view.camera.distance*factor))}});}
     else {const tx=(x-r.left)/r.width,ty=1-(y-r.top)/r.height;
@@ -825,6 +926,7 @@ export class FigureView {
     const r=d.rect;
     if(d.select){this.box=[d.x,d.y,Math.max(r.left,Math.min(r.left+r.width,x)),Math.max(r.top,Math.min(r.top+r.height,y))];this.drawOverlay();return;}
     const view=this.interactionFigure.panelView(d.panelId);
+    if(view.projection&&view.projection!=='cartesian')return;
     if(view.kind==='3d'){
       if(d.pan){const pan=view.pan3d??[0,0];this.interactionFigure.setPanelView(d.panelId,{pan3d:[pan[0]+(x-d.lastX)/r.width*2,pan[1]-(y-d.lastY)/r.height*2]});}
       else this.interactionFigure.setPanelView(d.panelId,{camera:{...view.camera,azimuth:view.camera.azimuth+(x-d.lastX)*.5,elevation:Math.max(-89,Math.min(89,view.camera.elevation+(y-d.lastY)*.5))}});
@@ -920,6 +1022,15 @@ export class FigureView {
     if(source.spec.hoverMode==='x'&&!forceNearest){if(!this.xPinned)this.inspectX(this.pointToData(x,y,panel)[0],panel);return;}
     const {rect:r,view,bounds}=panel,metadata=this.panelMetadata(panel.id,source);
     for(const layer of [...panel.layers].reverse()){
+      const advanced=this.advanced.get(layer.id);
+      if(advanced){
+        if(layer.kind==='spectrogram'){
+          const xs=source.registry.get(layer.data.x).values,ys=source.registry.get(layer.data.y).values,[vx,vy]=this.pointToData(x,y,panel),xe=gridEdges(xs,view.xScale),ye=gridEdges(ys,view.yScale);
+          const column=xe.findIndex((edge,i)=>i<xs.length&&vx>=edge&&vx<xe[i+1]),row=ye.findIndex((edge,i)=>i<ys.length&&vy>=edge&&vy<ye[i+1]);
+          if(row>=0&&column>=0){const value=source.registry.get(layer.data.z).values[row*xs.length+column];if(Number.isFinite(value)){this.tooltip={x,y,text:`frequency=${formatValue(xs[column])} · time=${formatValue(ys[row])} · value=${formatValue(value)}`};this.emitHit({kind:'cell',layerId:layer.id,...metadata,index:row,row,column,value,frequency:xs[column],time:ys[row],sourceKind:'window'});break;}}
+        }else{const hit=pickAdvanced(advanced,layer,bounds,view,r,x,y);if(hit){this.tooltip={x,y,text:advancedTooltip(hit)};this.emitHit({...hit,...metadata});break;}}
+        continue;
+      }
       const prepared=this.statistics.get(layer.id);
       if(prepared){if(this.statisticsHover(prepared,layer,x,y,panel))break;continue;}
       const plan=this.plans.get(layer.id);
@@ -953,6 +1064,22 @@ export class FigureView {
     const sequence=++this.selectionSequence,revision=this.committedRevision,source=this.displayedSource;
     const a=this.pointToData(box[0],box[1],panel),b=this.pointToData(box[2],box[3],panel);const bounds:Bounds={x:[Math.min(a[0],b[0]),Math.max(a[0],b[0])],y:[Math.min(a[1],b[1]),Math.max(a[1],b[1])]};
     for(const layer of panel.layers){
+      const advanced=this.advanced.get(layer.id);
+      if(advanced){
+        let selected:number[];
+        let predicate:{layerId:string;ranges:Record<string,Domain>}|undefined;
+        if(layer.kind==='spectrogram'){
+          const times=source.registry.get(layer.data.y).values;selected=Array.from(times,(_,index)=>index).filter(index=>times[index]>=bounds.y[0]&&times[index]<=bounds.y[1]);
+        }else if(layer.kind==='parallelCoordinates'&&advanced.axes){
+          const index=Math.max(0,Math.min(advanced.axes.length-1,Math.round((bounds.x[0]+bounds.x[1])/2))),axis=advanced.axes[index],lo=Math.max(0,Math.min(1,bounds.y[0])),hi=Math.max(0,Math.min(1,bounds.y[1]));
+          const a=denormalize(axis.reverse?1-hi:lo,axis.domain,axis.scale),b=denormalize(axis.reverse?1-lo:hi,axis.domain,axis.scale);
+          const ranges={...this.parallelBrushes.get(layer.id),[axis.key]:[a,b] as Domain};this.parallelBrushes.set(layer.id,ranges);predicate={layerId:layer.id,ranges};
+          selected=advanced.items.filter(item=>advanced.axes!.every((axis,i)=>{const range=ranges[axis.key],value=(item.values as number[])[i];return !range||Number.isFinite(value)&&value>=range[0]&&value<=range[1];})).map(item=>item.index);
+        }else selected=selectAdvanced(advanced,bounds);
+        const committed=this.commitObservationSelection(layer.id,selected);
+        const result:Selection={kind:'points',layerId:layer.id,...this.panelMetadata(panel.id,source),indices:selected.slice(0,10000),count:selected.length,truncated:selected.length>10000,...({bounds,predicate,sourceRevision:source.acceptedRevision,mode:this.frozenFigure?'frozen':'live',observationGroupsCommitted:committed,sourceKind:layer.kind==='spectrogram'?'window':layer.kind==='contour'?'cell':'sample'} as {})};
+        this.figure.emit('selection',result);continue;
+      }
       if(source.spec.selectionLink?.scatter.includes(layer.id)){const target=this.interactionFigure;if(target.spec.selectionLink?.id===source.spec.selectionLink.id&&target.spec.selectionLink.scatter.includes(layer.id))target.selectLinked(layer.id,bounds,!!this.frozenFigure);continue;}
       const prepared=this.statistics.get(layer.id);
       if(prepared){
@@ -970,7 +1097,14 @@ export class FigureView {
       void this.scheduler.querySelection(`${layer.id}:selection`,layer.data.x,layer.data.y,bounds,source.registry,density?undefined:layer.data.color).then(selected=>{
         if(this.disposed||revision!==this.committedRevision||sequence!==this.selectionSequence)return;
         const indices=Array.from(selected.indices),rowSequences=stream?indices.map(index=>stream.nextSequence-stream.retained+index):undefined;
-        const result:Selection=density?{kind:'density',layerId:layer.id,...metadata,...identity,bounds,count:selected.count}:{kind:'points',layerId:layer.id,...metadata,...identity,...(rowSequences?{sequences:rowSequences}:{}),indices,count:selected.count,truncated:selected.truncated};this.figure.emit('selection',result);
+        let committed=false;
+        if(source.spec.observationGroups?.some(group=>group.members.some(member=>member.layerId===layer.id))){
+          const xs=source.registry.get(layer.data.x).values,ys=source.registry.get(layer.data.y).values,all:number[]=[];
+          for(let i=0;i<xs.length;i++)if(Number.isFinite(xs[i])&&Number.isFinite(ys[i])&&xs[i]>=bounds.x[0]&&xs[i]<=bounds.x[1]&&ys[i]>=bounds.y[0]&&ys[i]<=bounds.y[1])all.push(i);
+          committed=this.commitObservationSelection(layer.id,all);
+        }
+        const details={bounds,sourceRevision:source.acceptedRevision,mode:this.frozenFigure?'frozen' as const:'live' as const,observationGroupsCommitted:committed};
+        const result:Selection=density?{kind:'density',layerId:layer.id,...metadata,...identity,...details,count:selected.count}:{kind:'points',layerId:layer.id,...metadata,...identity,...details,...(rowSequences?{sequences:rowSequences}:{}),indices,count:selected.count,truncated:selected.truncated};this.figure.emit('selection',result);
       },error=>{if(!this.disposed&&revision===this.committedRevision&&error?.name!=='AbortError')this.figure.emit('error',{message:error instanceof Error?error.message:String(error)});});
     }
   }
@@ -1035,8 +1169,8 @@ export class FigureView {
     return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG encoding failed')),'image/png'));
   }
   dispose():void{
-    if(this.disposed)return;this.disposed=true;for(const reservation of this.exportReservations)reservation.abort();this.exportReservations.clear();if(this.raf)cancelAnimationFrame(this.raf);if(this.hoverRaf)cancelAnimationFrame(this.hoverRaf);this.selectionSequence++;this.observer.disconnect();this.scheduler.dispose();this.renderer.dispose();
-    for(const cleanup of this.cleanup)cleanup();this.root.remove();this.plans.clear();this.geometries.clear();this.extents.clear();this.statistics.clear();this.barCache.clear();this.statisticsRequests.clear();this.sources.clear();this.panels=[];
+    if(this.disposed)return;this.disposed=true;clearTimeout(this.offscreenTimer);this.visibilityObserver?.disconnect();for(const reservation of this.exportReservations)reservation.abort();this.exportReservations.clear();if(this.raf)cancelAnimationFrame(this.raf);if(this.hoverRaf)cancelAnimationFrame(this.hoverRaf);this.selectionSequence++;this.observer.disconnect();this.scheduler.dispose();this.renderer.dispose();
+    for(const cleanup of this.cleanup)cleanup();this.root.remove();this.plans.clear();this.geometries.clear();this.extents.clear();this.statistics.clear();this.advanced?.clear();this.preparingAdvanced?.clear();this.advancedRequests?.clear();this.parallelBrushes?.clear();this.barCache.clear();this.statisticsRequests.clear();this.sources.clear();this.panels=[];
     this.linkedResult=undefined;this.linkedSpec=undefined;this.selectedPlans.clear();
     this.renderingFigure=undefined;this.committedFigure=undefined;this.hoverIndices.clear();
     this.frozenFigure=undefined;this.frozenLease?.release();this.frozenLease=undefined;

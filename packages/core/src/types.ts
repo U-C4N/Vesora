@@ -6,6 +6,7 @@ export const PRESENTATION_PROTOCOL_VERSION = 5;
 export const QUALITY_PROTOCOL_VERSION = 6;
 export const SCENE3D_PROTOCOL_VERSION = 7;
 export const OBSERVATION_PROTOCOL_VERSION = 8;
+export const ADVANCED_PROTOCOL_VERSION = 9;
 export type NumericArray = Float64Array | Float32Array | Int32Array | Uint32Array | Int16Array | Uint16Array | Int8Array | Uint8Array;
 export type ScaleKind = "linear" | "log" | "time";
 export interface ThemeTokens {
@@ -46,7 +47,20 @@ export interface FigureEventMap {
   inspectionchange: InspectionState;
 }
 export type Domain = [number, number];
-export type LayerKind = "line" | "line3d" | "scatter" | "heatmap" | "surface" | "scatter3d" | "hist" | "bar" | "boxplot" | "band";
+export type AdvancedKind = 'ecdf' | 'spectrogram' | 'eventTimeline' | 'errorbar' | 'contour' | 'quiver' | 'parallelCoordinates' | 'paretoFront' | 'phasePortrait' | 'ternary';
+export type LayerKind = "line" | "line3d" | "scatter" | "heatmap" | "surface" | "scatter3d" | "hist" | "bar" | "boxplot" | "band" | AdvancedKind;
+export interface ECDFSpecOptions {complementary:boolean}
+export interface SpectrogramSpecOptions {maxRows:number;valueScale:'linear'|'db';dbReference:number;dbFloor:number;sequenceStart:number;sequenceEnd:number}
+export interface EventTimelineSpecOptions {lanes:string[];labels:string[];eventIds:string[]}
+export interface ErrorbarSpecOptions {capSize:number}
+export interface ContourSpecOptions {levels:number[];filled:boolean}
+export interface QuiverSpecOptions {scale:number;normalize:boolean;headSize:number}
+export interface ParallelAxisSpec {key:string;label:string;scale:'linear'|'log';reverse:boolean;domain?:Domain}
+export interface ParallelSpecOptions {axes:ParallelAxisSpec[]}
+export interface ParetoSpecOptions {objectives:['min'|'max','min'|'max'];showAll:boolean;connect:boolean}
+export interface PhaseSpecOptions {direction:boolean;closed:boolean}
+export interface TernarySpecOptions {sum:number;normalize:boolean;tolerance:number;labels:[string,string,string];connect:boolean}
+export type AdvancedSpecOptions = ECDFSpecOptions | SpectrogramSpecOptions | EventTimelineSpecOptions | ErrorbarSpecOptions | ContourSpecOptions | QuiverSpecOptions | ParallelSpecOptions | ParetoSpecOptions | PhaseSpecOptions | TernarySpecOptions;
 export type Orientation = 'vertical' | 'horizontal';
 export type BarMode = 'group' | 'stack' | 'overlay';
 export interface HistogramSpecOptions {bins: number | number[]; range?: Domain; density: boolean; cumulative: boolean}
@@ -72,9 +86,10 @@ export interface LayerSpec {
   id: string; kind: LayerKind; data: Record<string, string>; style: LayerStyle; visible: boolean;
   panelId?: string;
   categorical?: {x?: true; y?: true};
-  options?: StatisticalOptions;
+  options?: StatisticalOptions | AdvancedSpecOptions;
 }
 export interface ViewSpec {
+  projection?:'cartesian'|'parallel'|'ternary';
   equalAspect?:boolean;
   kind: "2d" | "3d"; xScale: ScaleKind; yScale: ScaleKind; zScale: ScaleKind;
   xDomain?: Domain; yDomain?: Domain; zDomain?: Domain;
@@ -100,6 +115,7 @@ export interface AnnotationSpec {
   x?: number; y?: number; text?: string; style: AnnotationStyle;
 }
 export interface FigureSpec {
+  observationGroups?: import('./analysis').ObservationGroupSpec[];
   semantics?: FigureSemantics;
   observation?: ObservationRecord;
   inspection?: {capturedAt:string;frameId:number;snapshotId?:string;selection?:HoverEvent};
@@ -138,7 +154,7 @@ export interface Query {
   pointBudget: number; mode: RepresentationMode; previous?: "points" | "density";
 }
 export interface RepresentationInfo {
-  kind: "points" | "density" | "line" | "grid" | "surface" | "hist" | "bar" | "boxplot" | "band";
+  kind: "points" | "density" | "line" | "grid" | "surface" | "hist" | "bar" | "boxplot" | "band" | AdvancedKind;
   total: number; visible: number; rendered: number; exact: boolean; method: string;
   valid?: number; omitted?: number; rangeExcluded?: number;
   /** Surface triangle counts; omitted vertices and omitted triangles are distinct. */
@@ -158,9 +174,9 @@ export interface SourceSemantics {
 export interface FigureSemantics {schemaVersion: 1; sources: Record<string, SourceSemantics>}
 export type ChannelSemanticsPatch = Record<string, SourceSemantics | null>;
 export interface ObservationRecord {
-  schemaVersion: 1; source: 'accepted' | 'displayed'; capturedAt: string;
+  schemaVersion: 1 | 2; source: 'accepted' | 'displayed'; capturedAt: string;
   sourceVersions: Array<{id: string; version: number}>;
-  streams: Array<{layerId: string; streamId: string; revision: number; sequenceStart: number; sequenceEndExclusive: number}>;
+  streams: Array<{layerId: string; streamId: string; revision: number; sequenceStart: number; sequenceEndExclusive: number;kind?:'rows'|'spectrogram';retainedAxis?:number;shape?:number[]}>;
   representation: {status: 'not-evaluated'} | {
     status: 'rendered'; frameId: number; snapshotId?: string;
     layers: Array<RepresentationInfo & {layerId: string; panelId?: string}>;

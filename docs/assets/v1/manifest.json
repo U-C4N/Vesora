@@ -1,0 +1,915 @@
+{
+  "kind": "vesora-real-engine-readme-figures",
+  "capturedAt": "2026-11-05T08:30:16.374Z",
+  "packageVersion": "1.0.0",
+  "synthetic": true,
+  "publicationClaim": false,
+  "performanceClaim": false,
+  "rendering": {
+    "engine": "Vesora WebGL2",
+    "browserVersion": "156.0.8078.80",
+    "backend": "Chrome ANGLE SwiftShader",
+    "deviceScaleFactor": 1
+  },
+  "reproduce": "npm run build && node scripts/capture-v1-readme.mjs",
+  "pageErrors": [],
+  "inputs": {
+    "examples/web/v1-tour-scenarios.js": "78da27d3b46109c8c38f12eaf5e3822db4657942fb113d74b3a127a97521a44c",
+    "scripts/capture-v1-readme.mjs": "7aeae3601b72aad97c660e90443b185cd2f39b8f0f01b8a33aee1e728fc35ad0",
+    "packages/core/package.json": "e349f01f116634e2171ba830d001921e20afa0489a3c7c5c7c49500110e41e2a",
+    "packages/core/dist/runtime.js": "7efabac6bcd5b06b84ab5fcd4072cf05ec6c0461f7fd27a3c7d0611a8cf398ec",
+    "packages/core/dist/worker.js": "d8cac2e9c9132c6ad6c2ff7e481dadea272fee82780fbc48fe172a3b1042c719"
+  },
+  "images": [
+    {
+      "slug": "ecdf",
+      "file": "docs/assets/v1/ecdf.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "7b1365a9183cc2e500f886ad83cfd7e9d6cae5608b3e9c4cfcf23544d87e3c01",
+      "bytes": 55572,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Kaynak istek",
+          "value": "1200"
+        },
+        {
+          "label": "Gözlenen p99",
+          "value": "392.2 ms"
+        },
+        {
+          "label": "200 ms üstünde",
+          "value": "20 istek"
+        }
+      ],
+      "caption": "Sentetik 1.200 isteğin gözlenen p99 eşiği 392.2 ms; 20 istek 200 ms eşiğini aşıyor.",
+      "representation": [
+        {
+          "kind": "ecdf",
+          "total": 1200,
+          "visible": 1200,
+          "valid": 1200,
+          "omitted": 0,
+          "rendered": 1032,
+          "exact": true,
+          "method": "exact empirical P(X <= x), tied samples grouped",
+          "layerId": "layer-2"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-2-samples",
+          "dtype": "float64",
+          "shape": [
+            1200
+          ],
+          "version": 1,
+          "byteLength": 9600,
+          "sha256": "522f81d0aee2f2c04a62cc7c1e52aeed6cb97c4192a4e1e7c5ffa188586b3b8a"
+        }
+      ]
+    },
+    {
+      "slug": "spectrogram",
+      "file": "docs/assets/v1/spectrogram.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "d8fbd0c4d11462f3ebb7133cf2df19eb7578a17634d24443699b2956731c6177",
+      "bytes": 103372,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Zaman adımı",
+          "value": "0,125 s"
+        },
+        {
+          "label": "Frekans sütunu",
+          "value": "64"
+        },
+        {
+          "label": "Açık veri boşluğu",
+          "value": "5,25 s"
+        }
+      ],
+      "caption": "Yükselen bant ve 7,25 s çevresindeki kısa olay, verilen sentetik güç matrisinde ayrı görünür. Boş sıra eksik ölçüm adımıdır.",
+      "representation": [
+        {
+          "kind": "spectrogram",
+          "total": 6144,
+          "visible": 6080,
+          "valid": 6080,
+          "omitted": 64,
+          "rendered": 6080,
+          "exact": true,
+          "method": "source-aware spectrogram",
+          "layerId": "layer-8"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-8-x",
+          "dtype": "float64",
+          "shape": [
+            64
+          ],
+          "version": 1,
+          "byteLength": 512,
+          "sha256": "3118f8a51bf1a76c270cc6a23cd42aa18dfca293ab636774bcea51362d5e01f5"
+        },
+        {
+          "id": "layer-8-y",
+          "dtype": "float64",
+          "shape": [
+            96
+          ],
+          "version": 1,
+          "byteLength": 768,
+          "sha256": "9c08b14d014d7babad597063a2afdaea91aeec14d5e40ee8f81e59e605e96d0e"
+        },
+        {
+          "id": "layer-8-z",
+          "dtype": "float64",
+          "shape": [
+            96,
+            64
+          ],
+          "version": 1,
+          "byteLength": 49152,
+          "sha256": "f612d3e55f07dabea876aec5f1c4275669bce33adb692ed07f0dc94c4689dc71"
+        }
+      ]
+    },
+    {
+      "slug": "timeline",
+      "file": "docs/assets/v1/timeline.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "d317b2123ff229f7d335267144f08a0ead4ee9d41c294e62e7857060478d2a83",
+      "bytes": 43142,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Olay / kontrol",
+          "value": "9"
+        },
+        {
+          "label": "Adlandırılmış şerit",
+          "value": "5"
+        },
+        {
+          "label": "İncelenen süre",
+          "value": "68 dk"
+        }
+      ],
+      "caption": "Sentetik canary, doğrulama, dağıtım ve toparlanma kayıtları; süreler ve anlık kontrol noktaları aynı zaman ekseninde.",
+      "representation": [
+        {
+          "kind": "eventTimeline",
+          "total": 9,
+          "visible": 9,
+          "valid": 9,
+          "omitted": 0,
+          "rendered": 9,
+          "exact": true,
+          "method": "source-aware eventTimeline",
+          "layerId": "layer-11"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-11-x",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "7f458a31f7dcf9e99be8b9b3d56fef2e2d7c9af8c1585dcc38eaf829543bd4ef"
+        },
+        {
+          "id": "layer-11-y",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "a95337e7cbf6649d6e6038732f7df00aaf7946064f1c44b3c25632a5b25aff72"
+        },
+        {
+          "id": "layer-11-end",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "818c80c03f082e35eb78288020e5aacd48907d5d180237f5efc4b58a29701326"
+        }
+      ]
+    },
+    {
+      "slug": "errorbar",
+      "file": "docs/assets/v1/errorbar.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "35bc380ba90a481766454e00d33def734c1c0aa1a39bcc6af48bc2045f2b4d13",
+      "bytes": 57261,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Kalibrasyon noktası",
+          "value": "11"
+        },
+        {
+          "label": "Referans sınırı",
+          "value": "±0,35 °C"
+        },
+        {
+          "label": "50 °C’de merkez farkı",
+          "value": "+1.97 °C"
+        }
+      ],
+      "caption": "Merkez ölçümler referansın üzerinde; alt ve üst sınırlar farklı uzunluktadır. Aralıklar sağlanan değerlerdir.",
+      "representation": [
+        {
+          "kind": "line",
+          "total": 2,
+          "visible": 2,
+          "rendered": 2,
+          "exact": true,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-16"
+        },
+        {
+          "kind": "errorbar",
+          "total": 11,
+          "visible": 11,
+          "valid": 11,
+          "omitted": 0,
+          "rendered": 11,
+          "exact": true,
+          "method": "source-aware errorbar",
+          "layerId": "layer-17"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-16-x",
+          "dtype": "float64",
+          "shape": [
+            2
+          ],
+          "version": 1,
+          "byteLength": 16,
+          "sha256": "11653b473ba2d2de00e5dc7145c3323254a6ee3232bd2ce017e325edd7cc435b"
+        },
+        {
+          "id": "layer-16-y",
+          "dtype": "float64",
+          "shape": [
+            2
+          ],
+          "version": 1,
+          "byteLength": 16,
+          "sha256": "11653b473ba2d2de00e5dc7145c3323254a6ee3232bd2ce017e325edd7cc435b"
+        },
+        {
+          "id": "layer-17-x",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "3c5e071970351e7b894027da1880869ff7a784370a752a10db2febfd88020d25"
+        },
+        {
+          "id": "layer-17-y",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "b8828e649eff851f4955928977bead4f3c6d51835f68d6e03bd5e48b05f681db"
+        },
+        {
+          "id": "layer-17-xLower",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "bc10c484991372d9e20519faa9c884a5a379f912f9a8db5de9a12895672e32d2"
+        },
+        {
+          "id": "layer-17-xUpper",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "e6145fd84a00fe1091038535667048933a47d29693706aa02a6e189ee88a1fe8"
+        },
+        {
+          "id": "layer-17-yLower",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "88387370be13b8f2120af3ec59cdf45dbb6f494cf9330aaccdba041d8f6afaaa"
+        },
+        {
+          "id": "layer-17-yUpper",
+          "dtype": "float64",
+          "shape": [
+            11
+          ],
+          "version": 1,
+          "byteLength": 88,
+          "sha256": "15f6781ee1503578cdede7b84b34f0a6f1c67d6c2cdbe339ae4209181732226d"
+        }
+      ]
+    },
+    {
+      "slug": "contour",
+      "file": "docs/assets/v1/contour.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "e7be12731d13e98d053a1a985192d2071f9a62d78324985ecf3308dc928b3526",
+      "bytes": 90199,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Kaynak ızgara",
+          "value": "61 × 41"
+        },
+        {
+          "label": "Eşik aralığı",
+          "value": "5 °C"
+        },
+        {
+          "label": "En yüksek örnek",
+          "value": "75.9 °C"
+        }
+      ],
+      "caption": "Sentetik kart sıcaklığında A ve B ısı bölgeleri; bantlar 30–75 °C arasındaki verilen eşiklerle oluşturuldu.",
+      "representation": [
+        {
+          "kind": "contour",
+          "total": 2501,
+          "visible": 2501,
+          "valid": 2501,
+          "omitted": 0,
+          "rendered": 6176,
+          "exact": false,
+          "method": "deterministic triangle-grid scalar interpolation; masked cells omitted",
+          "layerId": "layer-20"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-20-x",
+          "dtype": "float64",
+          "shape": [
+            61
+          ],
+          "version": 1,
+          "byteLength": 488,
+          "sha256": "2d32a0550efce7a582d91e1a32bf761f9da42f709b650c9ed78ae8334c09b66a"
+        },
+        {
+          "id": "layer-20-y",
+          "dtype": "float64",
+          "shape": [
+            41
+          ],
+          "version": 1,
+          "byteLength": 328,
+          "sha256": "7dc035af810e50a0385ee4e304fd499f9bac4d4950d1bf9cbacf328462511285"
+        },
+        {
+          "id": "layer-20-z",
+          "dtype": "float64",
+          "shape": [
+            41,
+            61
+          ],
+          "version": 1,
+          "byteLength": 20008,
+          "sha256": "aca8aa491696bfadb06851dd8951b16c8fa000c71f1ee762c76e9ffb669fe641"
+        }
+      ]
+    },
+    {
+      "slug": "quiver",
+      "file": "docs/assets/v1/quiver.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "68067227fc729cc36215c4350f9328c4c62ee202cfb297bc618bd9e69ef250a5",
+      "bytes": 59336,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Kaynak vektör",
+          "value": "143"
+        },
+        {
+          "label": "En büyük hız",
+          "value": "0.58 m/s"
+        },
+        {
+          "label": "Ok ölçeği",
+          "value": "0,55 s"
+        }
+      ],
+      "caption": "İki karşıt dönme bölgesi ve arka plan sürüklenmesi. Oklar normalize edilmediği için kaynak büyüklük farkları korunur.",
+      "representation": [
+        {
+          "kind": "quiver",
+          "total": 143,
+          "visible": 143,
+          "valid": 143,
+          "omitted": 0,
+          "rendered": 143,
+          "exact": true,
+          "method": "source-aware quiver",
+          "layerId": "layer-25"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-25-x",
+          "dtype": "float64",
+          "shape": [
+            143
+          ],
+          "version": 1,
+          "byteLength": 1144,
+          "sha256": "2422dba53d411b95aa084339f955fc36f230c106e54a6baa7ffff7766582b6b7"
+        },
+        {
+          "id": "layer-25-y",
+          "dtype": "float64",
+          "shape": [
+            143
+          ],
+          "version": 1,
+          "byteLength": 1144,
+          "sha256": "0d51304d50c41513818ebcb3c0ecd3d92b42fff32dfde0d270ddbec12f4732a7"
+        },
+        {
+          "id": "layer-25-u",
+          "dtype": "float64",
+          "shape": [
+            143
+          ],
+          "version": 1,
+          "byteLength": 1144,
+          "sha256": "7cf12b41b59e35e88f239bc141dfc5eb6bc827bd8c2387c110daec5f128db7b9"
+        },
+        {
+          "id": "layer-25-v",
+          "dtype": "float64",
+          "shape": [
+            143
+          ],
+          "version": 1,
+          "byteLength": 1144,
+          "sha256": "05860284e0b4146afcf07c05da52dad358d4eff01ff493bc365cca255d59a1c8"
+        }
+      ]
+    },
+    {
+      "slug": "parallel",
+      "file": "docs/assets/v1/parallel.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "05e0e23e241a44a64248b7aaeef6b5e4998facc1ab0becf8cf8797c949567447",
+      "bytes": 217297,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Model adayı",
+          "value": "32"
+        },
+        {
+          "label": "Birlikte incelenen eksen",
+          "value": "5"
+        },
+        {
+          "label": "İlk koşulu sağlayan",
+          "value": "21"
+        }
+      ],
+      "caption": "İlk vurgu loss ≤0,34 ve latency ≤22 ms koşullarını karşılayan adayları gösterir. Eksen fırçaları stable ID eşlemesini korur.",
+      "representation": [
+        {
+          "kind": "parallelCoordinates",
+          "total": 32,
+          "visible": 32,
+          "valid": 32,
+          "omitted": 0,
+          "rendered": 32,
+          "exact": true,
+          "method": "source-aware parallelCoordinates",
+          "layerId": "layer-28"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-28-c0",
+          "dtype": "float64",
+          "shape": [
+            32
+          ],
+          "version": 1,
+          "byteLength": 256,
+          "sha256": "5f4d465c360991a3d1d7be461caff328915374f244c312380284856d681cab4d"
+        },
+        {
+          "id": "layer-28-c1",
+          "dtype": "float64",
+          "shape": [
+            32
+          ],
+          "version": 1,
+          "byteLength": 256,
+          "sha256": "e2a71cbd4677ab09b2cd6a356756a0b76ffa52f5866338196881e67558d66c5f"
+        },
+        {
+          "id": "layer-28-c2",
+          "dtype": "float64",
+          "shape": [
+            32
+          ],
+          "version": 1,
+          "byteLength": 256,
+          "sha256": "505c82980c1ca811741d31b82ba0ad76cb342f8cb2629ac07dcfccd731efdef3"
+        },
+        {
+          "id": "layer-28-c3",
+          "dtype": "float64",
+          "shape": [
+            32
+          ],
+          "version": 1,
+          "byteLength": 256,
+          "sha256": "aa1f0bd8698999f751edd3ee8d08097f2d2dd2bebcd6a1f0b14658f6ea74a9d3"
+        },
+        {
+          "id": "layer-28-c4",
+          "dtype": "float64",
+          "shape": [
+            32
+          ],
+          "version": 1,
+          "byteLength": 256,
+          "sha256": "2181e7c72bf78acc5647fe053a620a93800d11f1072aaae0fc4fcde8acade4d2"
+        }
+      ]
+    },
+    {
+      "slug": "pareto",
+      "file": "docs/assets/v1/pareto.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "7ed7f9a270d6968e75c520dca7a0a875754b4d42f1ea9facb6e119f96aad7746",
+      "bytes": 52370,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Çıkarım adayı",
+          "value": "27"
+        },
+        {
+          "label": "Baskılanmayan aday",
+          "value": "14"
+        },
+        {
+          "label": "≥%85 kalite için en düşük",
+          "value": "$0.598"
+        }
+      ],
+      "caption": "Soluk noktalar iki amaç açısından başka adaylarca baskılanır; vurgulu sınır maliyet–kalite ödünleşimini korur.",
+      "representation": [
+        {
+          "kind": "paretoFront",
+          "total": 27,
+          "visible": 27,
+          "valid": 27,
+          "omitted": 0,
+          "rendered": 27,
+          "exact": true,
+          "method": "exact two-objective dominance; duplicate nondominated candidates retained",
+          "layerId": "layer-31"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-31-x",
+          "dtype": "float64",
+          "shape": [
+            27
+          ],
+          "version": 1,
+          "byteLength": 216,
+          "sha256": "7cb21f32f2affc3382b54305a878abcee3fcb2122753b5847f1a370fe2dbe032"
+        },
+        {
+          "id": "layer-31-y",
+          "dtype": "float64",
+          "shape": [
+            27
+          ],
+          "version": 1,
+          "byteLength": 216,
+          "sha256": "22c3a0ddc29f97dc1ed07af9fe168574a37030cbe993b65cf223675f8b128e87"
+        }
+      ]
+    },
+    {
+      "slug": "hysteresis",
+      "file": "docs/assets/v1/hysteresis.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "1eabea995eabe12602569df260b1b93b9a9c9c5bd73c36cd962feb1047e78d1c",
+      "bytes": 71600,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "keyStats": [
+        {
+          "label": "Sıralı kaynak örneği",
+          "value": "49"
+        },
+        {
+          "label": "Verilen temel faz gecikmesi",
+          "value": "40.1°"
+        },
+        {
+          "label": "Bir çevrim",
+          "value": "2,4 s"
+        }
+      ],
+      "caption": "Aynı sürüş geriliminde gidiş ve dönüş cevabı farklıdır. Oklar kaynak edinim sırasını gösterir; x’e göre sıralama yapılmaz.",
+      "representation": [
+        {
+          "kind": "line",
+          "total": 2,
+          "visible": 2,
+          "rendered": 2,
+          "exact": true,
+          "method": "ordered first/min/max/last per consecutive pixel column; gaps and crossing segments preserved",
+          "layerId": "layer-34"
+        },
+        {
+          "kind": "phasePortrait",
+          "total": 49,
+          "visible": 49,
+          "valid": 49,
+          "omitted": 0,
+          "rendered": 49,
+          "exact": true,
+          "method": "acquisition-order phase path; gaps retained",
+          "layerId": "layer-35"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-34-x",
+          "dtype": "float64",
+          "shape": [
+            2
+          ],
+          "version": 1,
+          "byteLength": 16,
+          "sha256": "671310f72681e844660f1e30be6da489c192f70c2a296b4e7938ef001d5ab8d3"
+        },
+        {
+          "id": "layer-34-y",
+          "dtype": "float64",
+          "shape": [
+            2
+          ],
+          "version": 1,
+          "byteLength": 16,
+          "sha256": "dbbdc17df15e86299e6eabb4ae4009605459655003d51ef06006ee7f60d79ec7"
+        },
+        {
+          "id": "layer-35-x",
+          "dtype": "float64",
+          "shape": [
+            49
+          ],
+          "version": 1,
+          "byteLength": 392,
+          "sha256": "ee7f204c17a81a839d27da6fd3672ad8d64e2bfdaa7af02c10812ac4a78d4043"
+        },
+        {
+          "id": "layer-35-y",
+          "dtype": "float64",
+          "shape": [
+            49
+          ],
+          "version": 1,
+          "byteLength": 392,
+          "sha256": "9f7191aacfc95538397c7f5d6d9057f2a930adfb9a4aaf389a295fcfbe14f318"
+        },
+        {
+          "id": "layer-35-time",
+          "dtype": "float64",
+          "shape": [
+            49
+          ],
+          "version": 1,
+          "byteLength": 392,
+          "sha256": "fa77ba0e81f6a6205ef4df2382457b95d188d5b033af26803fd5c9ddcf66b1b8"
+        }
+      ]
+    },
+    {
+      "slug": "ternary",
+      "file": "docs/assets/v1/ternary.png",
+      "width": 1200,
+      "height": 700,
+      "sha256": "bf0c394afeb425a097ecd8feaa1de2c227411e20bb8eb1d9b8392b102cbc1552",
+      "bytes": 67784,
+      "method": "Figure.savefig({width:1200,height:700,scale:1,source:displayed})",
+      "viewport": {
+        "xDomain": [
+          -0.55,
+          1.55
+        ],
+        "yDomain": [
+          -0.067,
+          0.933
+        ],
+        "reason": "Side padding for a near-equilateral simplex on the wide export canvas; raw fractions unchanged"
+      },
+      "keyStats": [
+        {
+          "label": "Kaynak formülasyon",
+          "value": "38"
+        },
+        {
+          "label": "Her karışımın toplamı",
+          "value": "1,00"
+        },
+        {
+          "label": "Otomatik normalizasyon",
+          "value": "Kapalı"
+        }
+      ],
+      "caption": "Her nokta reçine + sertleştirici + dolgu = 1 koşulunu sağlar. Renkler verilen dolgu oranı gruplarıdır; performans tahmini değildir.",
+      "representation": [
+        {
+          "kind": "ternary",
+          "total": 9,
+          "visible": 9,
+          "valid": 9,
+          "omitted": 0,
+          "rendered": 9,
+          "exact": true,
+          "method": "source-aware ternary",
+          "layerId": "layer-38"
+        },
+        {
+          "kind": "ternary",
+          "total": 19,
+          "visible": 19,
+          "valid": 19,
+          "omitted": 0,
+          "rendered": 19,
+          "exact": true,
+          "method": "source-aware ternary",
+          "layerId": "layer-39"
+        },
+        {
+          "kind": "ternary",
+          "total": 10,
+          "visible": 10,
+          "valid": 10,
+          "omitted": 0,
+          "rendered": 10,
+          "exact": true,
+          "method": "source-aware ternary",
+          "layerId": "layer-40"
+        }
+      ],
+      "sources": [
+        {
+          "id": "layer-38-a",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "ccd84207a59be6715eb2a952ac18462d467049dd2490b60fa0bba2babc8f0145"
+        },
+        {
+          "id": "layer-38-b",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "26423d14c80de6349bcf091dc69b45550069ee67ab19b10465ff2160af10de39"
+        },
+        {
+          "id": "layer-38-c",
+          "dtype": "float64",
+          "shape": [
+            9
+          ],
+          "version": 1,
+          "byteLength": 72,
+          "sha256": "3e8d038cc07bb95e7d5022ededbd75de63b1304c0759ad33b1a8f095741cc35e"
+        },
+        {
+          "id": "layer-39-a",
+          "dtype": "float64",
+          "shape": [
+            19
+          ],
+          "version": 1,
+          "byteLength": 152,
+          "sha256": "12337ec20b7defd1a2062b44c0bb0fef4cc40ee52ac4fbe552ba6f74befd3192"
+        },
+        {
+          "id": "layer-39-b",
+          "dtype": "float64",
+          "shape": [
+            19
+          ],
+          "version": 1,
+          "byteLength": 152,
+          "sha256": "1aec03b230f4a52333cfbbddd6a145b889ca736f76dd5c263a97f32e4e8e2afe"
+        },
+        {
+          "id": "layer-39-c",
+          "dtype": "float64",
+          "shape": [
+            19
+          ],
+          "version": 1,
+          "byteLength": 152,
+          "sha256": "7354ce1baa370dd5ade972b510d8a53813b47cfadb213e3c8fe51cb870fe3b03"
+        },
+        {
+          "id": "layer-40-a",
+          "dtype": "float64",
+          "shape": [
+            10
+          ],
+          "version": 1,
+          "byteLength": 80,
+          "sha256": "9b25c147b0cec299561f2ffc07b67d1f3e8cc13e6caf7fdd5dbac31239487d0b"
+        },
+        {
+          "id": "layer-40-b",
+          "dtype": "float64",
+          "shape": [
+            10
+          ],
+          "version": 1,
+          "byteLength": 80,
+          "sha256": "be1adc06a9887fc3c55bd5913d8f17ed302043bd5ada1a6a241509826c46ff21"
+        },
+        {
+          "id": "layer-40-c",
+          "dtype": "float64",
+          "shape": [
+            10
+          ],
+          "version": 1,
+          "byteLength": 80,
+          "sha256": "7e00fbfc13e107c3fe899cc3ccdfbbca9e84c37d4442e6392665088857e4b075"
+        }
+      ]
+    },
+    {
+      "slug": "hero",
+      "file": "docs/assets/v1/hero.png",
+      "width": 1600,
+      "height": 1120,
+      "sha256": "8a52aa331b97b24ce072611f59042419886458e06f1356205f00be941772c1c2",
+      "bytes": 461075,
+      "method": "Playwright screenshot of a DOM contact sheet containing the real figure PNGs",
+      "figures": [
+        "ecdf",
+        "spectrogram",
+        "contour",
+        "parallel",
+        "pareto",
+        "ternary"
+      ]
+    }
+  ]
+}

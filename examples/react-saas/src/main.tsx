@@ -13,6 +13,8 @@ const status=document.createElement('p');status.setAttribute('role','status');st
 // Keep each import inside its own loader so the bundler keeps its preload
 // dependencies local to that screen (including the dashboard-only fonts/CSS).
 const loaders={
+  tour:async()=>(await import('./ChartTour')).ChartTour,
+  v1:async()=>(await import('./V1Demo')).V1Demo,
   balance:async()=>(await import('./BalanceDemo')).BalanceDemo,
   workbench:async()=>(await import('./WorkbenchDemo')).WorkbenchDemo,
   streaming:async()=>(await import('./StreamingDemo')).StreamingDemo,

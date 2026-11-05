@@ -20,7 +20,7 @@ const projectedCache=new WeakMap<Geometry,{key:string;index:ProjectedIndex}>();
 // Orthographic trigonometry and barycentric interpolation add double precision
 // jitter to mathematically coplanar primitives; preserve their draw-order tie.
 const DEPTH_TIE_EPSILON=1e-12;
-export const picking3DStats={indexBuilds:0,queries:0,candidates:0,lastCandidates:0,lastPrimitiveCount:0,lastIndexBytes:0};
+export const picking3DStats={indexBuilds:0,indexBuildMs:0,lastIndexBuildMs:0,queries:0,candidates:0,lastCandidates:0,lastPrimitiveCount:0,lastIndexBytes:0};
 
 /** Project exactly the float32 geometry that WebGL receives, in CSS pixels. */
 export function project3D(position:ArrayLike<number>,matrix:Float32Array,rect:PlotRect):[number,number,number]{
@@ -34,8 +34,17 @@ export function project3D(position:ArrayLike<number>,matrix:Float32Array,rect:Pl
 function projectedIndex(g:Geometry,matrix:Float32Array,rect:PlotRect):ProjectedIndex{
   const key=`${Array.from(matrix)}|${rect.left},${rect.top},${rect.width},${rect.height}|${g.size},${g.width}`;
   const cached=projectedCache.get(g);if(cached?.key===key)return cached.index;
+  const started=performance.now();
   const line=!!g.lineDirections,vertexCount=line?g.positions.length/9:g.positions.length/3,projected=new Float64Array(vertexCount*3);
-  for(let i=0;i<vertexCount;i++){const source=line?Math.floor(i/2)*6+(i%2?2:0):i;projected.set(project3D(g.positions.subarray(source*3,source*3+3),matrix,rect),i*3);}
+  // Scalar projection avoids a subarray and a temporary result array per vertex.
+  // At 500K points those allocations dominated the first query after an orbit.
+  const positions=g.positions,halfW=rect.width/2,halfH=rect.height/2,cx=rect.left+halfW,cy=rect.top+halfH;
+  for(let i=0;i<vertexCount;i++){
+    const at=(line?Math.floor(i/2)*6+(i%2?2:0):i)*3,out=i*3,x=positions[at],y=positions[at+1],z=positions[at+2],w=matrix[3]*x+matrix[7]*y+matrix[11]*z+matrix[15];
+    projected[out]=cx+(matrix[0]*x+matrix[4]*y+matrix[8]*z+matrix[12])/w*halfW;
+    projected[out+1]=cy-(matrix[1]*x+matrix[5]*y+matrix[9]*z+matrix[13])/w*halfH;
+    projected[out+2]=(matrix[2]*x+matrix[6]*y+matrix[10]*z+matrix[14])/w;
+  }
   const columns=Math.max(1,Math.min(256,Math.ceil(rect.width/32))),rows=Math.max(1,Math.min(256,Math.ceil(rect.height/32))),heads=new Int32Array(columns*rows).fill(-1);
   let next=new Int32Array(1024),ids=new Uint32Array(1024),used=0;const overflow:number[]=[];
   const add=(id:number,minX:number,minY:number,maxX:number,maxY:number)=>{
@@ -53,7 +62,7 @@ function projectedIndex(g:Geometry,matrix:Float32Array,rect:PlotRect):ProjectedI
     else{const a=i*3,radius=(g.size??5)/2;if(projected[a+2]< -1||projected[a+2]>1)continue;add(i,projected[a]-radius,projected[a+1]-radius,projected[a]+radius,projected[a+1]+radius);}
   }
   const extra=Uint32Array.from(overflow),index={columns,rows,heads,next:next.subarray(0,used),ids:ids.subarray(0,used),overflow:extra,projected,primitiveCount,line,bytes:heads.byteLength+next.byteLength+ids.byteLength+extra.byteLength+projected.byteLength};
-  projectedCache.set(g,{key,index});picking3DStats.indexBuilds++;return index;
+  projectedCache.set(g,{key,index});picking3DStats.indexBuilds++;picking3DStats.lastIndexBuildMs=performance.now()-started;picking3DStats.indexBuildMs+=picking3DStats.lastIndexBuildMs;return index;
 }
 function* candidates(index:ProjectedIndex,rect:PlotRect,x:number,y:number):Generator<number>{
   const col=Math.min(index.columns-1,Math.floor((x-rect.left)/rect.width*index.columns)),row=Math.min(index.rows-1,Math.floor((y-rect.top)/rect.height*index.rows));

@@ -2,14 +2,16 @@
 
 A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; mixed 2D/3D grids; scientific text and reference lines; and 3D surfaces, lines and scatter with source-aware inspection. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
 
-**v0.9.0-rc.8 PRISM candidate, MIT licensed:** this checkout is not a completed public release. Existing scientific APIs remain available. Rendering requires a browser with WebGL2 support. Use the separate [`@vesora/react`](../react/README.md) package for declarative charts or an application-owned scientific viewer.
+**v1.0.0 local review source, MIT licensed:** local archives do not claim registry publication or completion of human/endurance acceptance. Rendering requires WebGL2. Use [`@vesora/react`](../react/README.md) for chart cards or an application-owned scientific viewer.
+
+Version 1 adds ECDF/CCDF, supplied spectrograms, event timelines, asymmetric error bars, contour/filled contour, quiver, parallel coordinates, Pareto frontiers, phase portraits/hysteresis and ternary composition. `createRunComparison` aligns declared runs; `linkObservations` shares stable row-ID cohorts. Read the [v1 contracts](../../docs/v1.md), [agent skill](../../skills/vesora/SKILL.md) and [bounded verification](../../docs/verification-v1.md).
 
 ## Installation
 
-From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v0.9.0-rc.8/vesora-core-0.9.0-rc.8.tgz` into your frontend project:
+From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v1.0.0/vesora-core-1.0.0.tgz` into your frontend project:
 
 ```bash
-npm install ./vesora-core-0.9.0-rc.8.tgz
+npm install ./vesora-core-1.0.0.tgz
 ```
 
 Both npm packages are prepared for public registry distribution. Local package generation does not publish them; see the [PRISM release gates](../../docs/releases/v0.9.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication. A publishable build requires a clean source commit and matching release tag.
@@ -135,7 +137,7 @@ downloadHTML(fig, 'measurements.html'); // Browser download.
 
 The file embeds the engine, worker, and original source data. It opens offline directly from disk and includes bookmarks, reset, PNG download, and a representation inspector. In a grid, bookmarks restore every panel view and PNG captures the whole layout. Bookmarks do not capture historical annotations, styles or data. The file does not include application callbacks or live connections. `removeBookmark(name)` removes a saved view. Reusing a bookmark name updates it in place.
 
-The v0.9 engine accepts scene protocols 1–7. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, links v4 and base presentation extensions v5. Bands, explicit hover mode, role typography and colorbar labels use v6. Mixed scientific scenes, 3D presentation/slices and displayed inspection metadata use v7. Streaming transport versions remain separate from scene protocols. HTML embeds its matching runtime and a static snapshot of retained source values. The package continues to have no runtime npm dependencies.
+The v1 engine accepts scene protocols 1–9. Existing single-panel scenes retain v1; grids/annotations use v2, statistics/categories v3, legacy links v4 and presentation v5. Bands, x inspection and typography use v6; mixed scientific scenes use v7; observations use v8; analysis layers and stable-ID groups use v9. Streaming transports remain separate. HTML embeds matching runtime and retained source values. The core has no runtime npm dependencies.
 
 ## Append live measurements
 

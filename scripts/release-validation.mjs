@@ -21,14 +21,14 @@ export function validateRuntimeHashes(hashes){
   assert.equal(Object.hasOwn(hashes,'runtime'),Object.hasOwn(hashes,'html-template'),'Split runtime hashes must include runtime and html-template together');
   return Object.keys(hashes);
 }
-export const sceneProtocolVersions=[1,2,3,4,5,6,7,8];
+export const sceneProtocolVersions=[1,2,3,4,5,6,7,8,9];
 export function validateSceneProtocolVersions(versions){
   // Fixed protocol-7 RC archives remain independently verifiable.
-  assert.ok(Array.isArray(versions)&&[7,8].includes(versions.length),'Release must declare legacy protocols 1–7, optionally including observation protocol 8');
+  assert.ok(Array.isArray(versions)&&[7,8,9].includes(versions.length),'Release must declare ordered legacy protocols 1–7, optionally including observation protocol 8 and analysis protocol 9');
   assert.deepEqual(versions,sceneProtocolVersions.slice(0,versions.length),'Scene protocol list must be complete and ordered');
 }
 export function releasePackageNames(version){const id=releaseIdentity(version);return [`vesora-core-${id.npm}.tgz`,`vesora-react-${id.npm}.tgz`,`vesora-${id.python}-py3-none-any.whl`];}
-export function releaseFileNames(version){return [...releasePackageNames(version),...['discovery','comparison','statistics','linked','saas','quality','streaming','prism-surface','prism-telemetry','prism-labs'].map(name=>`vesora-${name}-demo.html`)];}
+export function releaseFileNames(version){return [...releasePackageNames(version),...['discovery','comparison','statistics','linked','saas','quality','streaming','prism-surface','prism-telemetry','prism-labs',...(Number(version.split('.')[0])>=1?['advanced']:[])].map(name=>`vesora-${name}-demo.html`)];}
 
 export function validateReleaseManifest(manifest,{publishable=false}={}){
   assert.ok(manifest&&typeof manifest==='object','Release manifest must be an object');

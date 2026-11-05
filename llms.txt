@@ -1,0 +1,14 @@
+# Vesora 1.0.0
+
+> Shared-engine scientific visualization for Python, JavaScript, and React. WebGL2 rendering; scene protocols 1–9; local review packages, not a claim of registry publication.
+
+- [Agent skill](skills/vesora/SKILL.md): host selection, chart routing, lifecycle, streaming and export contracts.
+- [Analysis contracts](skills/vesora/references/analysis.md): ECDF/CCDF, supplied spectrograms, event timelines, error bars, contours, quiver, parallel coordinates, Pareto, phase portraits and ternary plots.
+- [JavaScript](skills/vesora/references/javascript.md): lightweight runtime, viewer mounting, source-aware exports.
+- [Python](skills/vesora/references/python.md): snake_case API, Qt/notebook hosts and offline export.
+- [React](skills/vesora/references/react.md): chart cards and application-owned analysis figures.
+- [Full API](docs/api.md): existing core chart and inspection contracts.
+- [Observations](docs/observation.md): accepted/displayed capture, retained sources and metadata.
+- [Streaming](docs/streaming.md): supported layers, bounded memory, epochs and backpressure.
+- [Version 1 guide](docs/v1.md): new APIs and compatibility boundaries.
+- [Bounded verification](docs/verification-v1.md): the single automated verification command, its 10-minute budget and explicit limits.

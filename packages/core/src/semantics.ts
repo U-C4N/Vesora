@@ -1,6 +1,7 @@
 import {toNumericArray} from './data';
 import {validateDomain} from './scales';
 import {validateInspectionX} from './inspection';
+import {isAdvancedLayer,validateAdvancedData} from './advanced';
 import type {BarSpecOptions, BoxplotSpecOptions, FigureSpec, HistogramSpecOptions, LayerKind, LayerSpec, NumericArray, StatisticalOptions, ViewSpec} from './types';
 
 export type AxisSeries = ArrayLike<number> | readonly string[];
@@ -117,6 +118,9 @@ export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Rec
     for (const [panel,mode] of Object.entries(spec.barModes)) if (!panels.some(item=>item.id===panel) || !['group','stack','overlay'].includes(mode)) throw new Error('Invalid panel bar mode');
   }
   for (const panel of panels) {
+    const projection=panel.view.projection??'cartesian';
+    if(projection!=='cartesian'&&(spec.layout?.shareX||spec.layout?.shareY))throw new Error('Special projections cannot share Cartesian axes');
+    if(projection!=='cartesian'&&spec.annotations?.some(a=>(a.panelId??'main')===panel.id))throw new Error('Cartesian annotations cannot be used on a special projection');
     if (spec.barModes?.[panel.id] !== undefined && panel.view.kind !== '2d') throw new Error('Bar modes require a 2D panel');
     for (const axis of ['x','y'] as const) if (axisCategories(spec,panel.id,axis) && (panel.view.kind !== '2d' || panel.view[`${axis}Scale`] !== 'linear')) throw new Error('Categorical axes require a linear 2D view');
     const layers = spec.layers.filter(layer=>(layer.panelId ?? 'main') === panel.id);
@@ -124,6 +128,16 @@ export function validateSemantics(spec: FigureSpec, read: (layer:LayerSpec)=>Rec
     for (const layer of layers) {
       const values=read(layer);
       if(layer.kind!=='surface'&&(layer.style.shading!==undefined||layer.style.wireframe!==undefined))throw new Error('Shading and wireframe require a surface');
+      if(isAdvancedLayer(layer)){
+        if(layer.categorical!==undefined||axisCategories(spec,panel.id,'x')||axisCategories(spec,panel.id,'y'))throw new Error('Advanced layers carry their own category/axis semantics');
+        validateAdvancedData(layer,values,panel.view);
+        for(const axis of ['x','y'] as const)if(panel.view[`${axis}Scale`]==='time'||panel.view[`${axis}Format`]?.kind==='date'){
+          const channels=axis==='x'&&layer.kind==='ecdf'?['samples']:axis==='x'&&layer.kind==='eventTimeline'?['x','end']:axis==='x'?['x','xLower','xUpper']:['y','yLower','yUpper'];
+          for(const key of channels)if(values[key]?.some(value=>Number.isFinite(value)&&Math.abs(value)>8.64e15))throw new RangeError('Time coordinates must be epoch milliseconds within the JavaScript Date range');
+        }
+        continue;
+      }
+      if(projection!=='cartesian')throw new Error('Cartesian layers cannot be used on a special projection');
       if(layer.kind==='band'&&(panel.view.kind!=='2d'||panel.view.yScale==='time'||panel.view.yFormat?.kind==='date'))throw new Error('Bands require 2D numeric y axes; x may use time');
       if(spec.hoverMode==='x'&&layer.kind==='line'&&layer.visible){
         if(panel.view.kind!=='2d'||layer.categorical?.x||layer.categorical?.y)throw new Error('X inspection requires numeric 2D line coordinates');

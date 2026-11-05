@@ -2,6 +2,8 @@ import {DataRegistry} from './data';
 import {lineSteps, runSteps, scatterSteps} from './planning';
 import {bandSteps} from './band';
 import {statisticsBytes, statisticsSteps} from './statistics';
+import {prepareAdvanced,advancedBytes} from './advanced';
+import type {PreparedAdvanced} from './advanced';
 import {linkedSteps, maskedScatterSteps} from './linked';
 import type {LinkedResult} from './linked';
 import type {PreparedStatistics} from './statistics';
@@ -15,7 +17,7 @@ import {LineIndexCache} from './line-index';
 import {ScatterIndexCache} from './scatter-index';
 
 type Plan = PointPlan | LineResult;
-type QueryResult = Plan | BandResult | PreparedStatistics | LinkedResult | SelectionResult;
+type QueryResult = Plan | BandResult | PreparedStatistics | LinkedResult | SelectionResult | PreparedAdvanced;
 let defaultWorkerURL: string | URL | undefined;
 /** Notebook hosts can supply a blob URL when the engine itself is an inline module. */
 export function setWorkerURL(url: string | URL | undefined): void {defaultWorkerURL = url;}
@@ -118,7 +120,15 @@ export class QueryScheduler {
   queryStatistics(key: string, layer: LayerSpec, registry: DataRegistry | DataStore): Promise<PreparedStatistics> {
     const snapshot = structuredClone(layer), ids = Object.values(snapshot.data);
     return this.submit<PreparedStatistics>(key, ids, ['statistics', snapshot.kind, snapshot.id, snapshot.data, snapshot.options], registry,
-      store => statisticsSteps(snapshot, store), requestId => ({type: 'statistics', requestId, key, layer: snapshot}));
+      store => statisticsSteps(snapshot as Parameters<typeof statisticsSteps>[0], store), requestId => ({type: 'statistics', requestId, key, layer: snapshot}));
+  }
+
+  /** Source-version keyed preparation; large charts run outside the UI thread. */
+  queryAdvanced(key:string,layer:LayerSpec,registry:DataRegistry|DataStore):Promise<PreparedAdvanced>{
+    const snapshot=structuredClone(layer),ids=Object.values(snapshot.data);
+    return this.submit<PreparedAdvanced>(key,ids,['advanced',snapshot.kind,snapshot.id,snapshot.data,snapshot.options],registry,
+      function*(store){yield;return prepareAdvanced(snapshot,store);},
+      requestId=>({type:'advanced',requestId,key,layer:snapshot}));
   }
 
   /** A selection depends on fixed sources, the rectangle and all-data bin edges. */
@@ -245,7 +255,7 @@ export class QueryScheduler {
     if (task.cancelled || this.disposed || this.keys.get(task.key) !== task.requestId) return;
     this.pending.delete(task.requestId); this.keys.delete(task.key);
     const bytes = result.kind==='selection'?256+result.indices.byteLength:result.kind === 'linked' ? 256 + result.mask.byteLength + result.preview.byteLength + statisticsBytes(result.histogram)
-      : 'marks' in result ? statisticsBytes(result) : 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
+      : 'marks' in result ? (['hist','bar','boxplot'].includes(result.kind)?statisticsBytes(result as PreparedStatistics):advancedBytes(result as PreparedAdvanced)) : 256 + (result.kind === 'points' ? result.indices.byteLength : result.kind === 'density' ? result.counts.byteLength : result.segments.reduce((sum, item) => sum + item.byteLength + 32, 0));
     if (bytes <= this.maxCacheBytes) {
       const previous = this.cache.get(task.cacheKey);
       if (previous) {this.cacheBytes -= previous.bytes; this.cache.delete(task.cacheKey);}

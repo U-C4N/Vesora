@@ -1,4 +1,6 @@
 import type {BackendCapabilities,CameraPreset,ViewSpec,Bounds,Domain} from './types';
+import {SpectrogramRenderer} from './spectrogram-renderer';
+import type {SpectrogramTexture} from './spectrogram-renderer';
 
 export interface Geometry {
   id: string; positions: Float32Array; colors: Float32Array;
@@ -7,8 +9,9 @@ export interface Geometry {
   lineDirections?: Float32Array; lineSides?: Float32Array; width?: number;
   /** Source row per point, segment start per line triangle, source cell triangle per surface triangle. */
   sourceIndices?: Uint32Array;
+  spectrogram?: SpectrogramTexture;
 }
-export function geometryByteLength(g:Geometry):number{return g.positions.byteLength+g.colors.byteLength+(g.indices?.byteLength??0)+(g.normals?.byteLength??0)+(g.wireframeIndices?.byteLength??0)+(g.lineDirections?.byteLength??0)+(g.lineSides?.byteLength??0);}
+export function geometryByteLength(g:Geometry):number{return g.positions.byteLength+g.colors.byteLength+(g.indices?.byteLength??0)+(g.normals?.byteLength??0)+(g.wireframeIndices?.byteLength??0)+(g.lineDirections?.byteLength??0)+(g.lineSides?.byteLength??0)+(g.spectrogram?g.spectrogram.frequencies.length*Math.max(g.spectrogram.capacity,g.spectrogram.times.length)*4:0);}
 export function geometryVertexCount(g:Geometry):number{return g.indices?.length??g.positions.length/3;}
 /** Inverse axis stretch keeps normals perpendicular after scientific aspect scaling. */
 export function normalAspectScale(boxAspect:readonly number[]=[1,1,1]):[number,number,number]{const minimum=Math.min(...boxAspect);return boxAspect.map(value=>minimum/value) as [number,number,number];}
@@ -43,11 +46,12 @@ export function cameraMatrix(azimuth: number, elevation: number, distance: numbe
 }
 export class WebGLRenderer {
   readonly capabilities: BackendCapabilities = {name:'WebGL2',supports3d:true,rasterExport:true,vectorExport:false};
-  readonly stats={uploadedBytes:0,uploadCalls:0,partialUploadCalls:0,bufferAllocations:0,bufferDeletes:0};
+  readonly stats={uploadedBytes:0,uploadCalls:0,partialUploadCalls:0,bufferAllocations:0,bufferDeletes:0,textureUploadedBytes:0,textureUploadCalls:0};
   readonly canvas: HTMLCanvasElement;
   readonly gl: WebGL2RenderingContext;
   private program: ShaderProgram;
   private scientificProgram?:ShaderProgram;
+  private spectrogramRenderer?:SpectrogramRenderer;
   private buffers = new Map<string,{vao:WebGLVertexArrayObject;p:WebGLBuffer;c:WebGLBuffer;positions:Float32Array;colors:Float32Array;extra:Map<string,{buffer:WebGLBuffer;data:Float32Array|Uint32Array}>}>();
   private lost: (event: Event)=>void;
   private restored: ()=>void;
@@ -71,7 +75,7 @@ export class WebGLRenderer {
       if(this.disposed)return;
       try{
         this.buffers.clear();this.framebuffer=undefined;this.colorTarget=undefined;this.depthTarget=undefined;this.multisampleColor=undefined;this.resolveFramebuffer=undefined;
-        this.program=this.createProgram();this.scientificProgram=undefined;onRestored?.();
+        this.program=this.createProgram();this.scientificProgram=undefined;this.spectrogramRenderer=undefined;onRestored?.();
       }catch(error){onError(error instanceof Error?error.message:String(error));}
     };
     canvas.addEventListener('webglcontextlost',this.lost);
@@ -181,6 +185,7 @@ export class WebGLRenderer {
     gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
     let active:ShaderProgram|undefined;
     for(const item of items){
+      if(item.spectrogram){this.frameItems.add(item.id);(this.spectrogramRenderer??=new SpectrogramRenderer(gl,this.stats)).draw(item.id,item.spectrogram);active=undefined;continue;}
       const program=item.normals||item.lineDirections||item.wireframeIndices?(this.scientificProgram??=this.createProgram(true)):this.program;
       const uniforms=program.uniforms;
       if(active!==program){
@@ -224,6 +229,7 @@ export class WebGLRenderer {
   }
   endFrame():void {
     const gl=this.gl;
+    this.spectrogramRenderer?.retain(this.frameItems);
     for(const [id,b] of this.buffers)if(!this.frameItems.has(id)){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);this.buffers.delete(id);}
     gl.bindVertexArray(null);gl.disable(gl.SCISSOR_TEST);
     if(gl.isContextLost())throw new Error('WebGL context lost. Waiting for the browser to restore GPU resources.');
@@ -250,7 +256,7 @@ export class WebGLRenderer {
   }
   dispose():void {
     if(this.disposed)return;this.disposed=true;
-    const gl=this.gl;for(const b of this.buffers.values()){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);}
+    const gl=this.gl;this.spectrogramRenderer?.dispose();for(const b of this.buffers.values()){this.deleteBuffer(b.p);this.deleteBuffer(b.c);for(const entry of b.extra.values())this.deleteBuffer(entry.buffer);gl.deleteVertexArray(b.vao);}
     this.buffers.clear();const current=gl.getParameter(gl.CURRENT_PROGRAM),programs=[this.program,this.scientificProgram].filter((program):program is ShaderProgram=>!!program);
     if(programs.some(program=>program.handle===current))gl.useProgram(null);for(const program of programs)gl.deleteProgram(program.handle);
     this.canvas.removeEventListener('webglcontextlost',this.lost);this.canvas.removeEventListener('webglcontextrestored',this.restored);

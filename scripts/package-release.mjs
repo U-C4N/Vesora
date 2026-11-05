@@ -104,6 +104,13 @@ try{
 }finally{streamingFigure.close();}
 for(const [name,html]of await prismReleaseScenes())await writeFile(resolve(output,name),html,'utf8');
 const files = [`vesora-${identity.python}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, 'vesora-discovery-demo.html', 'vesora-comparison-demo.html', 'vesora-statistics-demo.html', 'vesora-linked-demo.html', 'vesora-saas-demo.html', 'vesora-quality-demo.html','vesora-streaming-demo.html',...prismDemoNames];
+if(Number(version.split('.')[0])>=1){
+  const {makeFigure}=await import('../skills/vesora/scripts/example_js.mjs');
+  const advanced=makeFigure();
+  try{await writeFile(resolve(output,'vesora-advanced-demo.html'),toHTML(advanced,{observation:true}),'utf8');}
+  finally{advanced.close();}
+  files.push('vesora-advanced-demo.html');
+}
 const hash=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
 const manifest={version,pythonVersion:identity.python,tag:tags.includes(identity.tag)?identity.tag:null,candidate,commit,workingTreeDirty:dirty,createdAt:new Date().toISOString(),node:process.version,python:execFileSync(python,['--version'],{encoding:'utf8',windowsHide:true}).trim(),protocolVersions:sceneProtocolVersions,transportVersions:[2,3],runtime:Object.fromEntries(await Promise.all(runtimeEntryNames.map(async name=>[name,await hash(resolve(root,`packages/core/dist/${name}.js`))]))),files:await Promise.all(files.map(async name=>({name,sha256:await hash(resolve(output,name))})))};
 await writeFile(resolve(output,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n','utf8');files.push('release-manifest.json');

@@ -13,9 +13,13 @@ export interface SnapshotLease {
 }
 
 export function captureObservation(lease:SnapshotLease,source:'accepted'|'displayed',streams:ReadonlyMap<string,StreamState>,representation:ObservationRecord['representation']={status:'not-evaluated'}):void {
-  lease.observation={schemaVersion:1,source,capturedAt:lease.capturedAt,
+  const gridStreams=[...streams.keys()].some(id=>lease.snapshot.figure.layers.find(layer=>layer.id===id)?.kind==='spectrogram');
+  lease.observation={schemaVersion:gridStreams?2:1,source,capturedAt:lease.capturedAt,
     sourceVersions:lease.snapshot.sources.map(({id,version})=>({id,version})),
-    streams:[...streams].map(([layerId,state])=>({layerId,streamId:state.streamId,revision:state.revision,sequenceStart:state.nextSequence-state.retained,sequenceEndExclusive:state.nextSequence})),
+    streams:[...streams].map(([layerId,state])=>{
+      const layer=lease.snapshot.figure.layers.find(layer=>layer.id===layerId),grid=layer?.kind==='spectrogram',shape=grid?lease.snapshot.sources.find(source=>source.id===layer!.data.z)!.shape:undefined;
+      return {layerId,streamId:state.streamId,revision:state.revision,sequenceStart:state.nextSequence-state.retained,sequenceEndExclusive:state.nextSequence,...(gridStreams?{kind:grid?'spectrogram' as const:'rows' as const,...(grid?{retainedAxis:0,shape:[...shape!]}:{})}:{})};
+    }),
     representation:structuredClone(representation)};
 }
 

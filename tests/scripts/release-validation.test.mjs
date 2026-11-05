@@ -45,8 +45,9 @@ test('clean tagged review candidates are still unpublishable',()=>{
 });
 test('observation-capable manifests and fixed protocol-7 archives both validate',()=>{
   assert.doesNotThrow(()=>validateReleaseManifest({...manifest(),protocolVersions:[1,2,3,4,5,6,7,8]}));
+  assert.doesNotThrow(()=>validateReleaseManifest({...manifest(),protocolVersions:[1,2,3,4,5,6,7,8,9]}));
   assert.doesNotThrow(()=>validateReleaseManifest(manifest()));
-  for(const protocolVersions of [[1,2,3,4,5,6,8],[1,2,3,4,5,6,7,9],[1,2,3,4,5,6,7,8,9]])assert.throws(()=>validateReleaseManifest({...manifest(),protocolVersions}));
+  for(const protocolVersions of [[1,2,3,4,5,6,8],[1,2,3,4,5,6,7,9],[1,2,3,4,5,6,7,8,9,10]])assert.throws(()=>validateReleaseManifest({...manifest(),protocolVersions}));
 });
 test('manifest cannot omit, duplicate, rename or mis-hash a constructed publication filename',()=>{
   for(const mutate of [m=>m.files.shift(),m=>m.files.push(m.files[0]),m=>m.files[0].name='../core.tgz',m=>m.files[0].sha256='bad']){

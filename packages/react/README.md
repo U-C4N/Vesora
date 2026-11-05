@@ -2,13 +2,15 @@
 
 Declarative React + TypeScript charts for SaaS dashboards. `VesoraChart` supports line, bar and scatter charts, independent responsive cards, light/dark themes, date/currency/percent formatting, custom React tooltips, an accessible interactive legend, and loading/empty/error states.
 
-**v0.9.0-rc.8 candidate:** build from the Vesora checkout. Creating packages does not publish them to npm. With the generated release tarballs available locally:
+**v1.0.0 local review source:** creating archives does not publish to npm. With the generated release tarballs available locally:
 
 ```bash
-npm install react react-dom ./vesora-core-0.9.0-rc.8.tgz ./vesora-react-0.9.0-rc.8.tgz
+npm install react react-dom ./vesora-core-1.0.0.tgz ./vesora-react-1.0.0.tgz
 ```
 
-After this candidate is published, select it explicitly with `npm install @vesora/core@0.9.0-rc.8 @vesora/react@0.9.0-rc.8 react react-dom`; the candidate channel is `next`, not `latest`. Until publication, use the local archives above. React 18.3 and React 19 are supported peer ranges; React is not bundled into this package. Rendering requires browser APIs and WebGL2. For Next.js, use the component inside a client boundary (`'use client'`).
+Until registry publication is separately verified, use local archives above. React 18.3 and React 19 are supported peer ranges; React is not bundled. Browser APIs/WebGL2 are required. In Next.js use a client boundary (`'use client'`).
+
+Use `VesoraViewer` with an application-owned core figure for v1's ten analysis families, run comparison and stable-ID cohorts; these are not invented `VesoraChart` type strings. See the [React agent guide](../../skills/vesora/references/react.md) and the shared `?demo=v1` example.
 
 For scientific panels, import `VesoraViewer` from `@vesora/react/viewer` and pass an application-owned `Figure`. It borrows the figure, supplies Obsidian controls and unmounts without closing application data. See the [PRISM ownership and inspection guide](../../docs/prism.md). `VesoraChart` remains the simple chart entry point. Its `exportPNG` and `exportHTML` default to accepted data; `{source:'displayed'}` captures the inspected frame.
 

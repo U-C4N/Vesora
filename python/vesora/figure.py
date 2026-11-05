@@ -14,6 +14,7 @@ from .numeric import NumericData, ChunkedNumericData, as_numeric, numeric_range
 from . import statistics as _statistics
 from . import presentation as _presentation
 from . import observation as _observation
+from . import advanced as _advanced
 
 PROTOCOL_VERSION = 1
 EXTENDED_PROTOCOL_VERSION = 2
@@ -23,6 +24,7 @@ PRESENTATION_PROTOCOL_VERSION = _presentation.PRESENTATION_PROTOCOL_VERSION
 QUALITY_PROTOCOL_VERSION = _presentation.QUALITY_PROTOCOL_VERSION
 SCENE3D_PROTOCOL_VERSION = 7
 OBSERVATION_PROTOCOL_VERSION = _observation.OBSERVATION_PROTOCOL_VERSION
+ADVANCED_PROTOCOL_VERSION = _advanced.ADVANCED_PROTOCOL_VERSION
 _MAX_SAFE_SELECTION_SEQUENCE = 2**53 - 1
 _STYLES = {"color", "size", "width", "opacity", "label", "colormap", "representation", "colorDomain", "colorbarLabel", "shading", "wireframe"}
 _BAND_STYLES = {"color", "opacity", "label"}
@@ -65,6 +67,8 @@ def _view(value: Any, kind: str) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("kind") != kind:
         raise ValueError("View cannot change figure dimensionality")
     view = copy.deepcopy(value)
+    if view.get("projection", "cartesian") not in ("cartesian", "parallel", "ternary") or kind != "2d" and "projection" in view:
+        raise ValueError("Projection must be cartesian, parallel or ternary in a 2D view")
     for axis in "xyz":
         scale = view.get(f"{axis}Scale")
         if scale not in ("linear", "log", "time"):
@@ -314,6 +318,9 @@ class Layer:
             return {channel: copy.deepcopy(sources[data_id]) for channel, data_id in layer["data"].items() if data_id in sources}
 
     def set_data(self, *args: Any, **kwargs: Any) -> Layer:
+        if self._spec()["kind"] in _advanced.KINDS:
+            self.figure._update_advanced_data(self._spec(), args, kwargs)
+            return self
         if any(item["targetLayerId"] == self.id for item in self.figure._spec.get("slices", [])):
             raise ValueError("A bound surface slice is read-only; update the source or slice index")
         if self._spec()["kind"] in ("hist", "bar", "boxplot", "line", "scatter", "band"):
@@ -321,6 +328,7 @@ class Layer:
             return self
         with self.figure._lock:
             layer = self._spec()
+            self.figure._ensure_unlinked_data(self.id)
             current = {name: self.figure._sources[data_id][1] for name, data_id in layer["data"].items()}
             if not args:
                 if "values" in kwargs:
@@ -398,6 +406,7 @@ class Layer:
         """Prepare one append under the figure lock without changing canonical data."""
         with self.figure._lock:
             layer = self._spec()
+            self.figure._ensure_unlinked_data(self.id)
             state = self.figure._streams.get(self.id)
             if state is None:
                 raise RuntimeError("Call enable_streaming(max_points=...) before append_data()")
@@ -443,6 +452,33 @@ class Layer:
             return writes, change, next(reversed(tuple(arrays["x"])))
 
     def set_options(self, **options: Any) -> Layer:
+        if self._spec()["kind"] in _advanced.KINDS:
+            with self.figure._lock:
+                layer = self._spec()
+                self.figure._ensure_unlinked_data(self.id)
+                if layer["kind"] == "spectrogram" and ("sequenceStart" in options or "sequenceEnd" in options):
+                    raise ValueError("Spectrogram sequence metadata is owned by append_rows")
+                arrays = self.figure._layer_arrays(layer)
+                candidate = _advanced.options_for(layer["kind"], {**layer["options"], **_advanced.normalize_options(options)}, arrays)
+                if layer["kind"] == "parallelCoordinates" and [axis["key"] for axis in candidate["axes"]] != [axis["key"] for axis in layer["options"]["axes"]]:
+                    raise ValueError("Parallel axis keys/order cannot change; replace the layer to reorder columns")
+                resized = layer["kind"] == "spectrogram" and candidate["maxRows"] != layer["options"]["maxRows"]
+                if resized:
+                    rows, width = min(arrays["y"].size, candidate["maxRows"]), arrays["x"].size
+                    arrays = dict(arrays)
+                    for channel, shape in (("y", (rows,)), ("z", (rows,width))):
+                        count = math.prod(shape)*arrays[channel].dtype.itemsize
+                        arrays[channel] = NumericData(arrays[channel].dtype, shape, arrays[channel].tobytes()[-count:] if count else b"")
+                    candidate.update(sequenceStart=0, sequenceEnd=rows)
+                _advanced.validate(layer["kind"], arrays, candidate)
+                self.figure._validate_layer_candidate({**layer, "options": candidate}, arrays, self.figure._spec.get("categories", {}))
+                if resized:
+                    self.figure._commit_layer_arrays(layer,arrays,{"y","z"},self.figure._spec.get("categories", {}))
+                    self.figure._streams[self.id] = {"streamId": _id("stream"), "maxPoints": candidate["maxRows"],
+                        "nextSequence": candidate["sequenceEnd"], "revision": 0, "retained": candidate["sequenceEnd"], "evicted": 0}
+                layer["options"] = candidate
+            self.figure._publish()
+            return self
         with self.figure._lock:
             previous = self._spec()
             self.figure._ensure_unlinked_data(self.id)
@@ -459,6 +495,48 @@ class Layer:
             candidate = {**previous, "options": next_options}
             self.figure._validate_layer_candidate(candidate, self.figure._layer_arrays(previous), self.figure._spec.get("categories", {}))
             previous["options"] = next_options
+        self.figure._publish()
+        return self
+
+    def append_rows(self, time: Any, values: Any) -> Layer:
+        """Append precomputed spectrogram rows without modifying an earlier capture."""
+        with self.figure._lock:
+            layer = self._spec()
+            if layer["kind"] != "spectrogram":
+                raise TypeError("append_rows is supported by spectrogram layers")
+            self.figure._ensure_unlinked_data(self.id)
+            current = self.figure._layer_arrays(layer)
+            incoming = {"x": current["x"], "y": _advanced.vector(time, "time"), "z": _array(values, "values")}
+            if incoming["z"].ndim == 1 and incoming["z"].size == incoming["y"].size*current["x"].size:
+                incoming["z"] = NumericData(incoming["z"].dtype, (incoming["y"].size,current["x"].size), incoming["z"].tobytes())
+            incoming_options = {**layer["options"], "sequenceStart": 0, "sequenceEnd": incoming["y"].size,
+                                "maxRows": max(layer["options"]["maxRows"], incoming["y"].size)}
+            _advanced.validate("spectrogram", incoming, incoming_options)
+            if incoming["y"].dtype != current["y"].dtype or incoming["z"].dtype != current["z"].dtype:
+                raise TypeError("Spectrogram appends must preserve time/value dtypes")
+            count = incoming["y"].size
+            if not count:
+                return self
+            if current["y"].size and next(iter(incoming["y"])) <= next(reversed(tuple(current["y"]))):
+                raise ValueError("Spectrogram times must increase across batches")
+            _advanced.regular_cadence([*tuple(current["y"])[-2:], *incoming["y"]])
+            end = layer["options"]["sequenceEnd"] + count
+            if end > 2**53 - 1:
+                raise ValueError("Spectrogram sequence exceeds the safe integer range")
+            capacity, width = layer["options"]["maxRows"], current["x"].size
+            rows = min(capacity, current["y"].size + count)
+            arrays = dict(current)
+            for channel, shape in (("y", (rows,)), ("z", (rows, width))):
+                byte_limit = math.prod(shape) * current[channel].dtype.itemsize
+                raw = (current[channel].tobytes() + incoming[channel].tobytes())[-byte_limit:] if byte_limit else b""
+                arrays[channel] = NumericData(current[channel].dtype, shape, raw)
+            options = {**layer["options"], "sequenceStart": end - rows, "sequenceEnd": end}
+            _advanced.validate("spectrogram", arrays, options)
+            self.figure._validate_layer_candidate({**layer, "options": options}, arrays, self.figure._spec.get("categories", {}))
+            self.figure._commit_layer_arrays(layer, arrays, {"y", "z"}, self.figure._spec.get("categories", {}))
+            layer["options"] = options
+            state = self.figure._streams.setdefault(self.id, {"streamId": _id("stream"), "maxPoints": capacity, "revision": 0})
+            state.update(nextSequence=end, retained=rows, evicted=end-rows, revision=state["revision"]+1)
         self.figure._publish()
         return self
 
@@ -592,7 +670,7 @@ class Annotation:
         self.figure._publish()
 
 
-class Panel:
+class Panel(_advanced.AdvancedMethods):
     """A lightweight handle; data, hosts and exports belong to its figure."""
 
     def __init__(self, figure: Figure, panel_id: str):
@@ -682,7 +760,7 @@ class Panel:
         return self.figure._add_annotation("vline", {**style, "x": x}, self.id)
 
 
-class Figure:
+class Figure(_advanced.AdvancedMethods):
     def __init__(self, *, title: str = "", width: int = 800, height: int = 520, kind: str = "2d", theme: Any = None):
         if kind not in ("2d", "3d"):
             raise ValueError("kind must be '2d' or '3d'")
@@ -832,6 +910,22 @@ class Figure:
         with self._lock:
             self._ensure_open()
             return copy.deepcopy(self._spec.get("observation"))
+
+    def set_observation_groups(self, groups: Any) -> None:
+        from .analysis import validate_groups
+        with self._lock:
+            self._ensure_open()
+            canonical = validate_groups(self, groups)
+            if canonical:
+                self._spec["observationGroups"] = canonical
+            else:
+                self._spec.pop("observationGroups", None)
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], ADVANCED_PROTOCOL_VERSION)
+        self._publish()
+
+    def link_observations(self, *, dataset_id: str, row_ids: Any, members: Any, id: str | None = None) -> Any:
+        from .analysis import link_observations
+        return link_observations(self, dataset_id=dataset_id, row_ids=row_ids, members=members, id=id)
 
     def _release_source(self, data_id: str) -> None:
         if any(data_id in layer["data"].values() for layer in self._spec["layers"]):
@@ -1016,8 +1110,15 @@ class Figure:
         link = self._spec.get("selectionLink")
         if link is not None and layer_id in [*link["scatter"], link["histogram"]]:
             raise ValueError("Selection link member data/options are immutable; remove the link first")
+        if any(member["layerId"] == layer_id for group in self._spec.get("observationGroups", []) for member in group["members"]):
+            raise ValueError("Observation member data/options are immutable; remove the observation group first")
 
     def _unlink_member(self, layer_id: str) -> None:
+        groups = [group for group in self._spec.get("observationGroups", []) if all(member["layerId"] != layer_id for member in group["members"])]
+        if groups:
+            self._spec["observationGroups"] = groups
+        else:
+            self._spec.pop("observationGroups", None)
         link = self._spec.get("selectionLink")
         if link is not None and layer_id in [*link["scatter"], link["histogram"]]:
             self._spec.pop("selectionLink")
@@ -1074,6 +1175,29 @@ class Figure:
         for layer in layers:
             panel_id = layer.get("panelId", "main")
             view = views[panel_id]
+            projection = view.get("projection", "cartesian")
+            expected_projection = {"parallelCoordinates": "parallel", "ternary": "ternary"}.get(layer["kind"], "cartesian")
+            if projection != expected_projection:
+                raise ValueError("A panel cannot mix cartesian, parallel and ternary projections")
+            if layer["kind"] in _advanced.KINDS and view["kind"] != "2d":
+                raise ValueError("Advanced charts require a 2D panel")
+            if layer["kind"] == "eventTimeline" and (view["yScale"] != "linear" or view["xScale"] == "log"):
+                raise ValueError("Event timeline uses numeric/time x and linear lane y")
+            if layer["kind"] == "spectrogram" and view["yScale"] not in ("linear", "time"):
+                raise ValueError("Spectrogram time rows require a linear or time y axis")
+            if layer["kind"] == "quiver" and any(view[axis + "Scale"] != "linear" for axis in "xy"):
+                raise ValueError("Quiver requires linear numeric axes")
+            if layer["kind"] in ("contour", "spectrogram", "errorbar"):
+                arrays = (overrides or {}).get(layer["id"])
+                if arrays is None:
+                    arrays = self._layer_arrays(layer)
+                for axis in "xy":
+                    if view[axis + "Scale"] == "log":
+                        names = (axis, axis + "Lower", axis + "Upper") if layer["kind"] == "errorbar" else (axis,)
+                        if any(math.isfinite(value) and value <= 0 for name in names if name in arrays for value in arrays[name]):
+                            raise ValueError("Log coordinates and error bounds must be positive")
+            if projection != "cartesian" and any(view[axis + "Scale"] != "linear" for axis in "xy"):
+                raise ValueError("Projected charts require linear outer axes")
             calendar_axes = {axis for axis in "xy" if view[axis + "Scale"] == "time" or view.get(axis + "Format", {}).get("kind") == "date"}
             if layer["kind"] == "band" and (view["kind"] != "2d" or view["xScale"] not in ("linear", "log", "time") or view["yScale"] not in ("linear", "log") or "y" in calendar_axes):
                 raise ValueError("Bands require numeric 2D axes, with time allowed on x only")
@@ -1148,6 +1272,8 @@ class Figure:
                         raise ValueError("Stacked bars require zero baselines")
 
     def _validate_layer_candidate(self, layer: dict[str, Any], arrays: dict[str, NumericData], categories: dict[str, list[str]]) -> None:
+        if layer["kind"] in _advanced.KINDS:
+            _advanced.validate(layer["kind"], arrays, layer["options"])
         if layer["kind"] != "surface" and layer["style"].keys() & {"shading", "wireframe"}:
             raise ValueError("shading and wireframe are supported only on surfaces")
         if layer["kind"] == "bar":
@@ -1180,6 +1306,8 @@ class Figure:
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], QUALITY_PROTOCOL_VERSION)
         if layer["kind"] == "line3d" or layer["kind"] == "surface" and ("color" in arrays or layer["style"].keys() & {"shading", "wireframe"}):
             self._spec["protocolVersion"] = max(self._spec["protocolVersion"], SCENE3D_PROTOCOL_VERSION)
+        if layer["kind"] in _advanced.KINDS:
+            self._spec["protocolVersion"] = max(self._spec["protocolVersion"], ADVANCED_PROTOCOL_VERSION)
 
     def _set_categories(self, panel_id: str, axis: str, labels: Any) -> None:
         if axis not in ("x", "y"):
@@ -1279,6 +1407,101 @@ class Figure:
 
     def boxplot(self, groups: Any, **options: Any) -> Layer:
         return self._add_statistics("boxplot", (groups,), options)
+
+    def _add_advanced(self, kind: str, args: tuple[Any, ...], options: dict[str, Any], *, panel_id: str = "main") -> Layer:
+        supplied = dict(options)
+        if kind == "spectrogram" and ("sequenceStart" in supplied or "sequenceEnd" in supplied):
+            raise TypeError("Spectrogram sequence metadata is owned by append_rows")
+        style_names = _STYLES | {"color_domain", "colorbar_label"}
+        style = _style({name: supplied.pop(name) for name in list(supplied) if name in style_names})
+        if style.keys() & {"shading", "wireframe"}:
+            raise ValueError("shading and wireframe are surface-only styles")
+        arrays, canonical = _advanced.prepare(kind, args, supplied)
+        with self._lock:
+            self._ensure_open()
+            view = self._panel_view(panel_id)
+            if view["kind"] != "2d" and (self._spec.get("layout") or self._spec["layers"] or self._spec.get("bookmarks")):
+                raise ValueError("Advanced charts require a declared 2D panel")
+            projection = {"parallelCoordinates": "parallel", "ternary": "ternary"}.get(kind, "cartesian")
+            existing = [item for item in self._spec["layers"] if item.get("panelId", "main") == panel_id]
+            if existing and view.get("projection", "cartesian") != projection:
+                raise ValueError("A panel cannot mix cartesian, parallel and ternary projections")
+            views = copy.deepcopy(self._views())
+            views[panel_id]["kind"] = "2d"
+            if projection != "cartesian":
+                views[panel_id]["projection"] = projection
+            elif not existing:
+                views[panel_id].pop("projection", None)
+            layer_id = _id("layer")
+            layer = {"id": layer_id, "kind": kind, "data": {}, "style": style, "visible": True, "options": canonical}
+            if panel_id != "main":
+                layer["panelId"] = panel_id
+            self._validate_axis_contract([*self._spec["layers"], layer], self._spec.get("categories", {}), views,
+                                         {layer_id: arrays})
+            self._commit_layer_arrays(layer, arrays, set(arrays), self._spec.get("categories", {}))
+            view["kind"] = "2d"
+            if projection != "cartesian":
+                view["projection"] = projection
+            elif not existing:
+                view.pop("projection", None)
+            self._spec["layers"].append(layer)
+            if kind == "spectrogram":
+                self._streams[layer_id] = {"streamId": _id("stream"), "maxPoints": canonical["maxRows"],
+                    "nextSequence": canonical["sequenceEnd"], "revision": 0, "retained": arrays["y"].size,
+                    "evicted": canonical["sequenceStart"]}
+        self._publish()
+        return Layer(self, layer_id)
+
+    def _update_advanced_data(self, layer: dict[str, Any], args: tuple[Any, ...], values: dict[str, Any]) -> None:
+        with self._lock:
+            self._ensure_open()
+            self._ensure_unlinked_data(layer["id"])
+            kind = layer["kind"]
+            current, options = self._layer_arrays(layer), copy.deepcopy(layer["options"])
+            incoming = dict(values)
+            if kind == "eventTimeline" and "events" in incoming:
+                if args or len(incoming) != 1:
+                    raise TypeError("Supply events once")
+                args, incoming = (incoming["events"],), {}
+            if kind == "parallelCoordinates" and "columns" in incoming:
+                if args or len(incoming) != 1:
+                    raise TypeError("Supply columns once")
+                args, incoming = (incoming["columns"],), {}
+            if args:
+                if incoming:
+                    raise TypeError("Supply positional data or named channels")
+                for channel in ("xLower", "xUpper", "yLower", "yUpper", "time", "sequence"):
+                    if channel in current:
+                        options[channel] = current[channel]
+                if kind == "spectrogram":
+                    options.pop("sequenceStart", None); options.pop("sequenceEnd", None)
+                arrays, options = _advanced.prepare(kind, args, options)
+                changed = set(arrays)
+            else:
+                for alias, canonical in (("x_lower", "xLower"), ("x_upper", "xUpper"), ("y_lower", "yLower"), ("y_upper", "yUpper")):
+                    if alias in incoming:
+                        if canonical in incoming:
+                            raise TypeError("Duplicate bounds channel")
+                        incoming[canonical] = incoming.pop(alias)
+                optional = {"xLower", "xUpper", "yLower", "yUpper"} if kind == "errorbar" else {"time", "sequence"} if kind == "phasePortrait" else set()
+                if incoming.keys() - (current.keys() | optional):
+                    raise TypeError("Unknown advanced data channel; use the complete positional form to add channels")
+                arrays = {**current, **{key: _array(value, key) if key == "z" else _advanced.vector(value, key) for key, value in incoming.items()}}
+                changed = set(incoming)
+                if kind in ("spectrogram", "contour") and arrays["z"].ndim == 1 and arrays["z"].size == arrays["y"].size*arrays["x"].size:
+                    arrays["z"] = NumericData(arrays["z"].dtype, (arrays["y"].size, arrays["x"].size), arrays["z"].tobytes())
+                if kind == "spectrogram":
+                    options.update(sequenceStart=0, sequenceEnd=arrays["y"].size)
+                    arrays, options = _advanced.prepare(kind, (arrays["y"], arrays["x"], arrays["z"]), options)
+                    changed.update(("y", "z"))
+            self._validate_layer_candidate({**layer, "options": options}, arrays, self._spec.get("categories", {}))
+            self._commit_layer_arrays(layer, arrays, changed, self._spec.get("categories", {}))
+            layer["options"] = options
+            if kind == "spectrogram":
+                self._streams[layer["id"]] = {"streamId": _id("stream"), "maxPoints": options["maxRows"],
+                    "nextSequence": options["sequenceEnd"], "revision": 0, "retained": arrays["y"].size,
+                    "evicted": options["sequenceStart"]}
+        self._publish()
 
     def _add(self, kind: str, args: tuple[Any, ...], options: dict[str, Any], *, panel_id: str = "main") -> Layer:
         options = dict(options)

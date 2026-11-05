@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Vesora 1.0 · Analysis workspaces</title>
+<style>
+:root{font-family:Inter,system-ui,sans-serif;color-scheme:dark;background:#10151b;color:#e6edf5;--panel:#17212b;--border:#344352;--muted:#aabac9;--accent:#68d8c0}*{box-sizing:border-box}body{margin:0}body[data-theme=light]{color-scheme:light;background:#edf3f6;color:#182b3a;--panel:#fff;--border:#acbac7;--muted:#4d6476;--accent:#087d6c}main{max-width:1640px;margin:auto;padding:32px 24px}header{display:flex;justify-content:space-between;align-items:center;gap:20px}a{color:var(--accent)}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--accent)}h1{font-size:clamp(32px,4vw,58px);letter-spacing:-2px;margin:14px 0}p{color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:18px 0}.toolbar label{display:flex;align-items:center;gap:8px;font-size:13px}button,select{font:inherit;border:1px solid var(--border);border-radius:7px;padding:9px 12px;background:var(--panel);color:inherit}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}#plot{min-height:420px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--panel)}#status{font-size:13px;min-height:22px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}td,th{text-align:left;border-bottom:1px solid var(--border);padding:10px}#cohort{margin-top:24px}footer{font-size:12px;color:var(--muted);margin-top:22px}.error{color:#f99b8f}@media(max-width:600px){main{padding:20px 12px}.toolbar label{width:100%}}
+</style></head><body data-theme="dark"><main>
+<header><a href="./">vesora.</a><span class="eyebrow">1.0 · SYNTHETIC ANALYSIS LAB</span></header>
+<h1>Find the event.<br>Follow the observations.</h1>
+<p>Explore ten analysis families, inspect a retained signal, compare aligned runs, or follow a cohort across charts and a table. Every value is synthetic.</p>
+<div class="toolbar" aria-label="Workspace controls">
+<label>Workspace <select id="workspace"><option value="gallery">Ten-chart gallery</option><option value="signal">Signal inspection</option><option value="comparison">Run comparison</option><option value="cohort">Cohort explorer</option></select></label>
+<label>Dataset <select id="dataset"><option value="sensor">Synthetic sensor</option><option value="service">Synthetic service</option></select></label>
+<button id="theme">Use light theme</button><button id="freeze">Freeze view</button><button id="append" disabled>Append 8 samples</button>
+<button id="png">Export PNG</button><button id="html">Export displayed HTML</button>
+</div>
+<p id="summary"></p>
+<div class="toolbar"><label>Shared time-window end <input id="window" aria-label="Shared time-window end" type="range" min="0" max="31" value="31" disabled><output id="window-value">31 s</output></label><span id="retained">Signal history: maximum 32 time rows</span></div>
+<p id="status" role="status">Opening workspace…</p><div id="plot"></div>
+<section id="cohort" aria-label="Selected cohort" hidden><div class="toolbar"><button id="high">Select latency ≥75</button><button id="clear">Clear selection</button><button id="next">Next page</button><output id="count"></output></div><div class="table-wrap"><table><thead><tr><th>Stable ID</th><th>Group</th><th>Latency</th><th>Cost</th><th>Quality</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<footer>HTML captures the displayed retained scene and original values. It does not reconnect a producer. Time–frequency values are supplied, not computed from a real sensor. Short examples do not claim long-duration endurance.</footer>
+</main><script type="module">
+import * as core from '../../packages/core/dist/runtime.js';
+import {mountViewer} from '../../packages/core/dist/viewer.js';
+import {createWorkspace} from './v1-scenarios.js';
+const byId=id=>document.getElementById(id), controls=[...document.querySelectorAll('button,select,input')];
+let workspace,viewer,unsubscribe,theme='dark',frozen=false,busy=false,offset=0;
+function status(text,error=false){byId('status').textContent=text;byId('status').classList.toggle('error',error);byId('status').setAttribute('role',error?'alert':'status');}
+function table(){if(!workspace?.queryRows)return;const page=workspace.queryRows(offset);byId('rows').replaceChildren(...page.rows.map(row=>{const tr=document.createElement('tr');for(const value of [row.id,row.group,row.latency,row.cost,row.quality.toFixed(2)]){const td=document.createElement('td');td.textContent=String(value);tr.append(td);}return tr;}));byId('count').textContent=`${page.total} ${page.active?'selected':'total'} observations · page ${Math.floor(page.offset/12)+1}`;byId('next').disabled=page.nextOffset===null;}
+function enabled(){controls.forEach(element=>element.disabled=busy);byId('append').disabled=busy||!workspace?.append;byId('window').disabled=busy||!workspace?.setWindow;if(!busy&&workspace?.queryRows)table();}
+async function action(task){if(busy)return;busy=true;enabled();try{await task();}catch(error){status(error.message,true);}finally{busy=false;enabled();}}
+async function open(){await action(async()=>{unsubscribe?.();viewer?.dispose();workspace?.dispose();workspace=createWorkspace(core,byId('workspace').value,byId('dataset').value);workspace.figure.setTheme(theme);viewer=mountViewer(workspace.figure,byId('plot'),{mode:'embed',observation:true,exportSource:'displayed'});await workspace.figure.ready();frozen=false;byId('freeze').textContent='Freeze view';byId('summary').textContent=workspace.summary;byId('cohort').hidden=!workspace.queryRows;byId('window').max=String(workspace.timeMax);byId('window').value=String(workspace.timeMax);byId('window-value').textContent=`${workspace.timeMax} s`;offset=0;unsubscribe=workspace.figure.on('selection',()=>{offset=0;table();});table();status(`Ready · ${workspace.kind} · synthetic ${workspace.dataset} data`);window.vesoraV1={workspace,viewer};});}
+function download(blob,name){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+byId('workspace').addEventListener('change',open);byId('dataset').addEventListener('change',open);
+byId('theme').addEventListener('click',()=>action(async()=>{theme=theme==='dark'?'light':'dark';document.body.dataset.theme=theme;workspace.figure.setTheme(theme);byId('theme').textContent=theme==='dark'?'Use light theme':'Use dark theme';await workspace.figure.ready();}));
+byId('freeze').addEventListener('click',()=>action(async()=>{if(workspace.figure.getInspectionState().mode==='frozen'){await workspace.figure.resumeLive();frozen=false;}else{workspace.figure.freezeInspection();frozen=true;}byId('freeze').textContent=frozen?'Resume live view':'Freeze view';status(frozen?'Displayed observation frozen; appends may continue.':'Live displayed view resumed.');}));
+byId('append').addEventListener('click',()=>action(async()=>{const result=await workspace.append();byId('window').max=String(result.timeMax);byId('window').value=String(result.timeMax);byId('window-value').textContent=`${result.timeMax} s`;status(`Accepted through ${result.timeMax} s · ${result.retained}/32 retained rows${frozen?' · displayed observation remains frozen':''}`);}));
+byId('window').addEventListener('input',()=>{const end=Number(byId('window').value);workspace?.setWindow?.(end);byId('window-value').textContent=`${end} s`;});
+byId('png').addEventListener('click',()=>action(async()=>download(await workspace.figure.savefig({source:'displayed'}),'vesora-observation.png')));
+byId('html').addEventListener('click',()=>action(async()=>download(new Blob([await core.toHTMLAsync(workspace.figure,{source:'displayed',observation:true})],{type:'text/html'}),'vesora-observation.html')));
+byId('high').addEventListener('click',()=>action(async()=>{workspace.selectHigh();offset=0;table();await workspace.figure.ready();}));
+byId('clear').addEventListener('click',()=>action(async()=>{workspace.clear();offset=0;table();await workspace.figure.ready();}));
+byId('next').addEventListener('click',()=>{const page=workspace.queryRows(offset);if(page.nextOffset!==null){offset=page.nextOffset;table();}});
+window.addEventListener('pagehide',()=>{unsubscribe?.();viewer?.dispose();workspace?.dispose();});open();
+</script></body></html>

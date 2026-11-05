@@ -15,6 +15,10 @@ _SHORT_FIELDS = {"name", "quantity", "unit", "dimension"}
 _COUNTS = {"total", "visible", "rendered", "valid", "omitted", "rangeExcluded", "totalTriangles", "omittedTriangles"}
 _REPRESENTATIONS = {"line": {"line"}, "line3d": {"line"}, "scatter": {"points", "density"}, "scatter3d": {"points"},
                     "heatmap": {"grid"}, "surface": {"surface"}, "hist": {"hist"}, "bar": {"bar"}, "boxplot": {"boxplot"}, "band": {"band"}}
+_REPRESENTATIONS.update({kind: {kind} for kind in ("ecdf", "spectrogram", "eventTimeline", "errorbar", "contour", "quiver", "parallelCoordinates", "paretoFront", "phasePortrait", "ternary")})
+_REPRESENTATIONS["ecdf"].add("line")
+_REPRESENTATIONS["spectrogram"].add("grid")
+_REPRESENTATIONS["phasePortrait"].add("line")
 _JS_WHITESPACE = "\u0009\u000a\u000b\u000c\u000d \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 
 
@@ -137,8 +141,11 @@ def validate_semantics(value: Any, descriptors: list[dict[str, Any]]) -> dict[st
 def validate_observation(value: Any, spec: dict[str, Any], descriptors: list[dict[str, Any]]) -> dict[str, Any]:
     record = _object(value, {"schemaVersion", "source", "capturedAt", "sourceVersions", "streams", "representation"},
                      {"schemaVersion", "source", "capturedAt", "sourceVersions", "streams", "representation"})
-    if _integer(record["schemaVersion"]) != 1:
+    schema_version = _integer(record["schemaVersion"])
+    if schema_version not in (1, 2):
         raise ValueError("Unsupported observation schema version")
+    if schema_version == 2 and spec.get("protocolVersion") != 9:
+        raise ValueError("Observation schema 2 requires scene protocol 9")
     if type(record["source"]) is not str or record["source"] not in ("accepted", "displayed"):
         raise ValueError("Unknown observation capture source")
     sources = {item["id"]: item for item in descriptors}
@@ -162,21 +169,42 @@ def validate_observation(value: Any, spec: dict[str, Any], descriptors: list[dic
     streams, seen = [], set()
     for stream in _array(record["streams"], len(layers)):
         keys = {"layerId", "streamId", "revision", "sequenceStart", "sequenceEndExclusive"}
-        stream = _object(stream, keys, keys)
+        stream = _object(stream, keys | ({"kind", "retainedAxis", "shape"} if schema_version == 2 else set()), keys)
         layer_id, stream_id = _identifier(stream["layerId"]), _identifier(stream["streamId"])
         layer = layers.get(layer_id)
-        if layer_id in seen or layer is None or layer["kind"] not in ("line", "scatter") or layer.get("categorical"):
+        spectrogram = layer is not None and layer["kind"] == "spectrogram"
+        if layer_id in seen or layer is None or layer["kind"] not in ("line", "scatter", "spectrogram") or layer.get("categorical") or spectrogram and schema_version != 2:
             raise ValueError("Observation stream must reference a unique numeric 2D line or scatter layer")
         panel = panels.get(layer.get("panelId", "main"))
-        if panel is None or panel["kind"] != "2d" or not {"x", "y"} <= layer["data"].keys() or layer["data"].keys() - {"x", "y", "color"}:
+        if panel is None or panel["kind"] != "2d" or not {"x", "y"} <= layer["data"].keys() or layer["data"].keys() - ({"x", "y", "z"} if spectrogram else {"x", "y", "color"}):
             raise ValueError("Observation stream channels or panel are invalid")
         revision, start, end = (_integer(stream[key]) for key in ("revision", "sequenceStart", "sequenceEndExclusive"))
         if end < start:
             raise ValueError("Observation sequence interval is reversed")
-        for source_id in layer["data"].values():
-            if source_id not in sources or sources[source_id]["shape"] != [end - start]:
-                raise ValueError("Observation sequence interval does not match its captured source rows")
-        streams.append({"layerId": layer_id, "streamId": stream_id, "revision": revision, "sequenceStart": start, "sequenceEndExclusive": end})
+        extra = {}
+        if spectrogram:
+            if stream.get("kind") != "spectrogram" or type(stream.get("retainedAxis")) is not int or stream["retainedAxis"] != 0 or "z" not in layer["data"]:
+                raise ValueError("Spectrogram observations require kind, retainedAxis and grid shape")
+            shape = _array(stream.get("shape"), 2)
+            if len(shape) != 2:
+                raise ValueError("Spectrogram shape must contain two nonnegative safe integers")
+            for size in shape:
+                _integer(size)
+            x, y, z = (sources.get(layer["data"][axis]) for axis in "xyz")
+            if x is None or y is None or z is None or len(x["shape"]) != 1 or y["shape"] != [end-start] or z["shape"] != [end-start, x["shape"][0]] or stream.get("shape") != z["shape"]:
+                raise ValueError("Spectrogram observation shape does not match retained rows/frequencies")
+            if layer.get("options", {}).get("sequenceStart") != start or layer.get("options", {}).get("sequenceEnd") != end:
+                raise ValueError("Spectrogram observation sequence must match its retained layer interval")
+            extra = {"kind": "spectrogram", "retainedAxis": 0, "shape": list(z["shape"])}
+        else:
+            if schema_version == 2:
+                if stream.get("kind") != "rows" or "shape" in stream or "retainedAxis" in stream:
+                    raise ValueError("Row streams require kind rows without grid metadata")
+                extra = {"kind": "rows"}
+            for source_id in layer["data"].values():
+                if source_id not in sources or sources[source_id]["shape"] != [end - start]:
+                    raise ValueError("Observation sequence interval does not match its captured source rows")
+        streams.append({"layerId": layer_id, "streamId": stream_id, "revision": revision, "sequenceStart": start, "sequenceEndExclusive": end, **extra})
         seen.add(layer_id)
     representation = _object(record["representation"])
     status = representation.get("status")
@@ -210,14 +238,16 @@ def validate_observation(value: Any, spec: dict[str, Any], descriptors: list[dic
             seen.add(layer_id)
     else:
         raise ValueError("Unknown observation representation status")
-    return {"schemaVersion": 1, "source": record["source"], "capturedAt": _timestamp(record["capturedAt"]),
+    return {"schemaVersion": schema_version, "source": record["source"], "capturedAt": _timestamp(record["capturedAt"]),
             "sourceVersions": versions, "streams": streams, "representation": detached_representation}
 
 
 def validate_figure_metadata(spec: dict[str, Any], descriptors: list[dict[str, Any]]) -> None:
     """Validate optional protocol-8 metadata against a captured scene, without mutation."""
-    if ("semantics" in spec or "observation" in spec) and spec.get("protocolVersion") != OBSERVATION_PROTOCOL_VERSION:
-        raise ValueError("Observation metadata requires scene protocol 8")
+    if ("semantics" in spec or "observation" in spec) and spec.get("protocolVersion") not in (OBSERVATION_PROTOCOL_VERSION, 9):
+        raise ValueError("Observation metadata requires scene protocol 8 or 9")
+    if spec.get("observation", {}).get("schemaVersion") == 2 and spec.get("protocolVersion") != 9:
+        raise ValueError("Observation schema 2 requires scene protocol 9")
     if "semantics" in spec or "observation" in spec:
         if len({item["id"] for item in spec["layers"]}) != len(spec["layers"]):
             raise ValueError("Captured layer identities must be unique")
@@ -229,9 +259,17 @@ def validate_figure_metadata(spec: dict[str, Any], descriptors: list[dict[str, A
 
 def make_accepted_observation(spec: dict[str, Any], descriptors: list[dict[str, Any]], streams: dict[str, dict[str, Any]], captured_at: str) -> dict[str, Any]:
     """Use only scene/source/stream copies captured under one figure lock."""
-    record = {"schemaVersion": 1, "source": "accepted", "capturedAt": captured_at,
+    layers = {layer["id"]: layer for layer in spec["layers"]}
+    schema_version = 2 if any(layers[layer_id]["kind"] == "spectrogram" for layer_id in streams) else 1
+    source_map = {source["id"]: source for source in descriptors}
+    def details(layer_id: str) -> dict[str, Any]:
+        if schema_version == 1:
+            return {}
+        layer = layers[layer_id]
+        return {"kind": "spectrogram", "retainedAxis": 0, "shape": list(source_map[layer["data"]["z"]]["shape"])} if layer["kind"] == "spectrogram" else {"kind": "rows"}
+    record = {"schemaVersion": schema_version, "source": "accepted", "capturedAt": captured_at,
               "sourceVersions": [{"id": source["id"], "version": source["version"]} for source in descriptors],
               "streams": [{"layerId": layer_id, "streamId": state["streamId"], "revision": state["revision"],
-                           "sequenceStart": state["nextSequence"] - state["retained"], "sequenceEndExclusive": state["nextSequence"]}
+                           "sequenceStart": state["nextSequence"] - state["retained"], "sequenceEndExclusive": state["nextSequence"], **details(layer_id)}
                           for layer_id, state in streams.items()], "representation": {"status": "not-evaluated"}}
     return validate_observation(record, spec, descriptors)

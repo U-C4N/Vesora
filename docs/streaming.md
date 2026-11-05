@@ -89,7 +89,7 @@ monitored.close();
 
 Diagnostics report canonical source bytes, cache bytes, estimated geometry/GPU bytes, worker copies/transfer bytes, queued queries, `pendingExports`, completed frame revisions/timings and retained stream counts. `transferredBytes` measures cumulative worker traffic, not retained allocation. These are component-level counters, **not total process or GPU memory**. Source and geometry limits are opt-in; the query cache defaults to 32 MiB. Source bytes exclude frozen exports, frame copies, worker copies and application-held references. A failed geometry budget leaves the last completed frame available and reports an error.
 
-Only numeric 2D line/scatter streaming is supported. Bands, histograms, bars, boxplots, categorical/3D layers and dynamic linked-selection membership remain outside this release. Static versions of those features remain available. Streaming layers must be disabled before joining a selection link.
+Generic streaming supports numeric 2D line/scatter. Version 1's spectrogram has a separate bounded [`appendRows` / `append_rows` contract](v1.md), including accepted/rendered waits and retained sequence identity. Bands, histograms, bars, boxplots, categorical/3D layers and dynamic linked-selection membership remain outside generic streaming. Static versions remain available. Disable streaming before joining a selection link.
 
 ## Run the examples and measurements
 

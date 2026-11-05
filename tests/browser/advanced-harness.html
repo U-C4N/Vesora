@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Vesora v1 verification</title>
+<script type="importmap">{"imports":{"@vesora/core/runtime":"/packages/core/dist/runtime.js","@vesora/core":"/packages/core/dist/index.js"}}</script>
+<style>body{margin:0;background:#11131a}#chart{width:1200px}button{font:inherit}</style>
+<main id="chart"></main>
+<script type="module">
+import * as core from '/packages/core/dist/runtime.js';
+import {makeFigure} from '/skills/vesora/scripts/gallery.mjs';
+const host=document.querySelector('#chart');
+window.core=core;window.events={hover:[],selection:[],errors:[]};
+window.mount=async fig=>{
+  window.fig?.close();host.replaceChildren();window.fig=fig;window.events={hover:[],selection:[],errors:[]};
+  for(const event of ['hover','selection','error'])fig.on(event,value=>window.events[event==='error'?'errors':event].push(value));
+  fig.mount(host);await fig.ready();return fig.inspect();
+};
+window.gallery=()=>window.mount(makeFigure(core));
+window.single=async kind=>{
+  const fig=core.figure({width:800,height:500,title:kind,theme:'dark'});host.style.width='800px';let layer;
+  if(kind==='ecdf')layer=fig.ecdf([1,2,2,4]);
+  if(kind==='spectrogram')layer=fig.spectrogram([0,1,2,3],[10,20,30],[[1,2,3],[4,5,6],[7,8,9],[2,3,4]],{maxRows:4,colorDomain:[0,10]});
+  if(kind==='eventTimeline')layer=fig.eventTimeline([{start:0,end:2,lane:'A',id:'event-a',label:'Acquire'}]);
+  if(kind==='errorbar')layer=fig.errorbar([0,1,2],[2,3,2],{yLower:[1,2,1],yUpper:[3,4,3]});
+  if(kind==='contour')layer=fig.contour([0,1,2],[0,1,2],[[0,1,2],[1,2,3],[2,3,4]],{levels:[1,2,3]});
+  if(kind==='quiver')layer=fig.quiver([0,1],[0,1],[1,-1],[1,-1]);
+  if(kind==='parallelCoordinates')layer=fig.parallelCoordinates({cost:[1,2,3],quality:[1,2,3]});
+  if(kind==='paretoFront')layer=fig.paretoFront([1,2,3],[4,2,3]);
+  if(kind==='phasePortrait')layer=fig.phasePortrait([0,1,0,-1],[1,0,-1,0],{time:[0,1,2,3]});
+  if(kind==='ternary')layer=fig.ternary([.6,.2],[.2,.6],[.2,.2]);
+  window.layer=layer;return window.mount(fig);
+};
+// Coordinates follow the measured plot rectangle; assertions use supplied source values.
+window.screenPoint=(x,y,index=0)=>{const panel=window.fig.view.panels[index],r=panel.rect,b=panel.bounds,v=panel.view;return [r.left+core.normalize(x,b.x,v.xScale)*r.width,r.top+(1-core.normalize(y,b.y,v.yScale))*r.height];};
+window.createGroup=async()=>{
+  const fig=core.subplots({rows:1,cols:2,width:1000,height:400});host.style.width='1000px';
+  const scatter=fig.panel(0,0).scatter([1,2,3,4],[4,3,2,1]),distribution=fig.panel(0,1).ecdf([1,2,3,4]);
+  window.group=core.linkObservations(fig,{datasetId:'fixture',rowIds:['a','b','c','d'],members:[{layer:scatter},{layer:distribution}]});
+  await window.mount(fig);return {scatter:scatter.id,ecdf:distribution.id};
+};
+window.loaded=true;
+</script></html>

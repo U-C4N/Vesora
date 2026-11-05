@@ -20,7 +20,15 @@ Open the URL Vite prints. To build the standalone application:
 npm run build:example
 ```
 
-The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for the `0.9.0-rc.8` candidate; npm registry publication is a separate step.
+The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for local Vesora `1.0.0` builds; registry publication is a separate step.
+
+## Ten charts, one problem at a time
+
+Open the printed Vite URL with **`?demo=tour&chart=ecdf`** for the Turkish guided chart tour. Each of the ten families has one focused, real Vesora chart, a niche question, reading instructions, source-derived metrics, limitations and expandable JavaScript/Python examples. Use Previous/Next, numbered navigation or the mobile selector; `chart=` deep-links to a specific family.
+
+The tour covers `ecdf`, `spectrogram`, `timeline`, `errorbar`, `contour`, `quiver`, `parallel`, `pareto`, `hysteresis` and `ternary`. All data is deterministic and synthetic. Theme and PNG/portable HTML actions operate on the actual displayed figure. The [shared story fixtures](../web/v1-tour-scenarios.js) power both the [React tour](src/ChartTour.tsx) and [standalone browser tour](../web/v1-tour.html).
+
+For combined analysis flows, use **`?demo=v1`**: signal/event inspection, event-aligned run comparison and stable-ID cohort exploration with an application table. The existing dashboard remains the default route.
 
 For the PRISM viewer, open the Vite URL with `?demo=workbench`. Three bounded signals keep arriving while **Freeze view** holds the displayed snapshot. **Return to live** catches up; the viewer's PNG/HTML buttons export the displayed frame. The application owns the figure. See the [PRISM guide](../../docs/prism.md).
 

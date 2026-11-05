@@ -1,7 +1,7 @@
 import {OBSERVATION_PROTOCOL_VERSION} from './types';
 import type {ChannelSemanticsPatch,DataDescriptor,FigureSemantics,FigureSpec,LayerSpec,MetadataScalar,ObservationRecord,SourceSemantics} from './types';
 
-const REPRESENTATIONS:Record<LayerSpec['kind'],readonly string[]>={line:['line'],line3d:['line'],scatter:['points','density'],scatter3d:['points'],heatmap:['grid'],surface:['surface'],hist:['hist'],bar:['bar'],boxplot:['boxplot'],band:['band']};
+const REPRESENTATIONS:Record<string,readonly string[]>={line:['line'],line3d:['line'],scatter:['points','density'],scatter3d:['points'],heatmap:['grid'],surface:['surface'],hist:['hist'],bar:['bar'],boxplot:['boxplot'],band:['band'],ecdf:['ecdf','line'],spectrogram:['spectrogram','grid'],eventTimeline:['eventTimeline'],errorbar:['errorbar'],contour:['contour'],quiver:['quiver'],parallelCoordinates:['parallelCoordinates'],paretoFront:['paretoFront'],phasePortrait:['phasePortrait','line'],ternary:['ternary']};
 
 function require(condition:unknown,message:string):asserts condition{if(!condition)throw new TypeError(`Invalid observation metadata: ${message}`);}
 function object(value:unknown,keys:readonly string[]|undefined,label:string):Record<string,unknown>{
@@ -73,7 +73,7 @@ export function patchFigureSemantics(spec:FigureSpec,layer:LayerSpec,value:Chann
 export function validateObservationMetadata(spec:FigureSpec,sources:readonly DataDescriptor[]):void{
   const hasSemantics=Object.hasOwn(spec,'semantics'),hasObservation=Object.hasOwn(spec,'observation');
   if(!hasSemantics&&!hasObservation)return;
-  require(spec.protocolVersion===OBSERVATION_PROTOCOL_VERSION,'Semantics and observations require protocol version 8');
+  require(spec.protocolVersion===OBSERVATION_PROTOCOL_VERSION||spec.protocolVersion===9,'Semantics and observations require protocol version 8 or 9');
   require(Array.isArray(sources)&&Array.isArray(spec.layers),'Source and layer arrays are required');
   const descriptors=new Map(sources.map(source=>[source.id,source])),layers=new Map(spec.layers.map(layer=>[layer.id,layer]));
   require(descriptors.size===sources.length&&layers.size===spec.layers.length,'Source/layer identities must be unique');
@@ -84,7 +84,7 @@ export function validateObservationMetadata(spec:FigureSpec,sources:readonly Dat
   }
   if(!hasObservation)return;
   const observation=object(spec.observation,['schemaVersion','source','capturedAt','sourceVersions','streams','representation'],'observation');
-  require(observation.schemaVersion===1,'Unsupported observation schema');require(observation.source==='accepted'||observation.source==='displayed','Unknown observation source');
+  require(observation.schemaVersion===1||observation.schemaVersion===2&&spec.protocolVersion===9,'Unsupported observation schema');require(observation.source==='accepted'||observation.source==='displayed','Unknown observation source');
   require(typeof observation.capturedAt==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(observation.capturedAt)&&Number.isFinite(Date.parse(observation.capturedAt))&&new Date(observation.capturedAt).toISOString()===observation.capturedAt,'capturedAt must be a UTC ISO timestamp with milliseconds');
   const versions=array(observation.sourceVersions,sources.length,'sourceVersions'),seen=new Set<string>();
   require(versions.length===sources.length,'sourceVersions must cover every source exactly once');
@@ -94,9 +94,24 @@ export function validateObservationMetadata(spec:FigureSpec,sources:readonly Dat
   }
   const streams=array(observation.streams,spec.layers.length,'streams'),streamLayers=new Set<string>();
   for(const value of streams){
-    const stream=object(value,['layerId','streamId','revision','sequenceStart','sequenceEndExclusive'],'stream'),layerId=identifier(stream.layerId,'Stream layer ID'),layer=layers.get(layerId);
+    const stream=object(value,observation.schemaVersion===2?['layerId','streamId','revision','sequenceStart','sequenceEndExclusive','kind','retainedAxis','shape']:['layerId','streamId','revision','sequenceStart','sequenceEndExclusive'],'stream'),layerId=identifier(stream.layerId,'Stream layer ID'),layer=layers.get(layerId);
     require(layer&&!streamLayers.has(layerId),'Unknown or duplicate stream layer');streamLayers.add(layerId);identifier(stream.streamId,'Stream ID');integer(stream.revision,'Stream revision');
     const start=integer(stream.sequenceStart,'Sequence start'),end=integer(stream.sequenceEndExclusive,'Sequence end');require(end>=start,'Stream sequence interval is reversed');
+    if(observation.schemaVersion===2){
+      require(stream.kind==='rows'||stream.kind==='spectrogram','Unknown stream kind');
+      if(stream.kind==='spectrogram'){
+        require(layer.kind==='spectrogram'&&stream.retainedAxis===0,'Spectrogram retention axis must be 0');
+        require(Object.keys(layer.data).length===3&&['x','y','z'].every(channel=>Object.hasOwn(layer.data,channel)),'Spectrogram streams require exactly x/y/z channels');
+        const options=layer.options as {sequenceStart?:number;sequenceEnd?:number}|undefined;
+        require(options?.sequenceStart===start&&options?.sequenceEnd===end,'Spectrogram stream sequence differs from layer retention');
+        const x=descriptors.get(layer.data.x),y=descriptors.get(layer.data.y),z=descriptors.get(layer.data.z);
+        const shape=array(stream.shape,2,'stream shape');require(shape.length===2&&shape.every(value=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0),'Invalid spectrogram shape');
+        require(x?.shape.length===1&&y?.shape.length===1&&z?.shape.length===2&&z.shape[0]===end-start&&y.shape[0]===end-start&&z.shape[1]===x.shape[0]&&shape[0]===z.shape[0]&&shape[1]===z.shape[1],'Spectrogram stream shape differs from retained sources');
+        const panelId=layer.panelId??'main',view=panelId==='main'?spec.view:spec.panels?.find(panel=>panel.id===panelId)?.view;require(view?.kind==='2d','Spectrogram requires a 2D panel');
+        continue;
+      }
+      require(!Object.hasOwn(stream,'shape')&&!Object.hasOwn(stream,'retainedAxis'),'Row streams do not carry grid shape');
+    }
     require((layer.kind==='line'||layer.kind==='scatter')&&!layer.categorical,'Stream records require a numeric line/scatter layer');
     const panelId=layer.panelId??'main',view=panelId==='main'?spec.view:spec.panels?.find(panel=>panel.id===panelId)?.view;
     require(view?.kind==='2d','Stream records require a 2D panel');

@@ -1,5 +1,4 @@
-import {releaseIdentity} from './release-identity.mjs';
-import {validateSceneProtocolVersions,validateRuntimeHashes} from './release-validation.mjs';
+import {releaseFileNames,validateSceneProtocolVersions,validateRuntimeHashes} from './release-validation.mjs';
 // Verify the exact files that will be distributed, including offline demo exports.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -14,8 +13,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const {version} = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const directory = resolve(process.argv[2] ?? join(root, 'dist', `release-v${version}`));
 const evidence = resolve(root, 'artifacts', 'release');
-const demos = ['discovery', 'comparison', 'statistics', 'linked', 'saas', 'quality', 'streaming','prism-surface','prism-telemetry','prism-labs'].map(name => `vesora-${name}-demo.html`);
-const expected = [`vesora-${releaseIdentity(version).python}-py3-none-any.whl`, `vesora-core-${version}.tgz`, `vesora-react-${version}.tgz`, ...demos, 'release-manifest.json'];
+const demos = releaseFileNames(version).filter(name => name.endsWith('.html'));
+const expected = [...releaseFileNames(version), 'release-manifest.json'];
 const actual = await readdir(directory);
 const operational=new Set(['release-gates.json','publication-state.json','downloaded','evidence']);
 assert.deepEqual(actual.filter(name=>!operational.has(name)).sort(), [...expected, 'SHA256SUMS.txt'].sort(), 'Release directory must contain exactly the expected distributables and recognized verification state.');
@@ -61,7 +60,17 @@ try {
       await page.waitForSelector('#vesora-viewer[data-ready="ready"]', {timeout: 60_000});
       assert.equal(await page.locator('#vesora-error').isVisible(), false, `${name}: visible viewer error`);
       const payload=JSON.parse(await page.locator('#vesora-payload').textContent()),shared=page.locator('[data-vesora-viewer]');
-      if(name.startsWith('vesora-prism-')){
+      if(name==='vesora-advanced-demo.html'){
+        assert.equal(payload.snapshot.figure.protocolVersion,9,'Analysis demo requires scene protocol 9');
+        assert.deepEqual(new Set(payload.snapshot.figure.layers.map(layer=>layer.kind)),new Set(['ecdf','spectrogram','eventTimeline','errorbar','contour','quiver','parallelCoordinates','paretoFront','phasePortrait','ternary']),'All ten analysis families must survive the packaged offline import');
+        assert.equal(payload.snapshot.figure.layout.rows,5);assert.equal(payload.snapshot.figure.layout.cols,2);
+        assert.equal(await shared.count(),1,'Advanced demo must use the shared offline viewer');
+        assert.equal(payload.capture.source,'accepted','Packaged advanced gallery uses accepted source values');
+        assert.ok(payload.snapshot.figure.observation,'Advanced gallery must retain its observation record');
+        const spectrum=payload.snapshot.figure.layers.find(layer=>layer.kind==='spectrogram');
+        assert.deepEqual(payload.snapshot.sources.find(source=>source.id===spectrum.data.z).shape,[3,3]);
+        assert.ok(payload.buffers.every(buffer=>payload.snapshot.sources.some(source=>source.id===buffer.id)),'Offline source buffers must belong to the captured scene');
+      }else if(name.startsWith('vesora-prism-')){
         assert.equal(payload.snapshot.figure.protocolVersion,7,`${name}: PRISM capture needs protocol7`);assert.equal(await shared.count(),1,`${name}: shared viewer missing`);
         assert.equal(await shared.getByRole('button',{name:'Freeze view',exact:true}).isVisible(),false,`${name}: offline scenes must not present a live producer`);
         const layers=payload.snapshot.figure.layers,sources=payload.snapshot.sources;
@@ -89,7 +98,7 @@ try {
       assert.ok(width >= 200 && height >= 180, `${name}: invalid PNG dimensions`);
       assert.deepEqual(requests, [], `${name}: unexpected external HTTP requests`);
       assert.deepEqual(errors, [], `${name}: browser errors`);
-      if(name.startsWith('vesora-prism-'))await page.screenshot({path:join(evidence,name.replace(/\.html$/,'-viewer.png')),fullPage:true});
+      if(name.startsWith('vesora-prism-')||name==='vesora-advanced-demo.html')await page.screenshot({path:join(evidence,name.replace(/\.html$/,'-viewer.png')),fullPage:true});
       results.push({name, ready: true, offline: true,sharedViewer:await shared.count()===1,protocol:payload.snapshot.figure.protocolVersion,png: {width, height, bytes: png.length}});
       console.log(`${name}: verified checksum, offline render and ${width}×${height} PNG.`);
     } finally {await context.close();}
