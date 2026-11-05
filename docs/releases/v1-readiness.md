@@ -1,5 +1,7 @@
 # Work remaining before v1
 
+> Historical planning and v0.9 acceptance record. On 5 November 2026 the owner explicitly selected a separate [bounded automatic publication policy for major version 1](v1.0.0.md#approved-v1-publication-policy--5-november-2026). Its seven final-archive automatic gates remain required; long-duration endurance, human screen-reader/accessibility evaluation and the five-person pilot are openly unverified. That v1 decision does not change any v0.x/RC gate, erase its failure or mark its missing evidence passed. The older roadmap and acceptance requirements below are retained as history.
+
 PRISM is still a release candidate; the current review package is [RC8](v0.9.0-rc.8.md), whose acceptance evidence is independent of RC6. This list separates unfinished v0.9 acceptance work from decisions for v1; it does not turn missing release evidence into deferred optional work.
 
 | Item | Current state | Completion or decision required |

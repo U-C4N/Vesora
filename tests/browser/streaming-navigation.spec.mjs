@@ -30,6 +30,9 @@ const test = base.extend({
 
 // Playwright disables BFCache by default. Limit this override to this file.
 test.use({
+  // Full Chromium's new headless mode supports BFCache; the default headless
+  // shell disables it in its browser delegate even after removing the flag.
+  channel: 'chromium',
   launchOptions: {...configuration.use.launchOptions, ignoreDefaultArgs: ['--disable-back-forward-cache']},
   trace: 'off',
 });

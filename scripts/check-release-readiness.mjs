@@ -2,7 +2,7 @@
 import {readFile,realpath} from 'node:fs/promises';
 import {dirname,isAbsolute,relative,resolve} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {loadRelease,releaseGates,sha256,validateReleaseManifest} from './release-validation.mjs';
+import {loadRelease,releasePolicy,validateReleasePolicy,sha256,validateReleaseManifest} from './release-validation.mjs';
 
 const statuses=new Set(['pending','passed','failed']);
 const inside=(root,path)=>{const part=relative(root,path);return Boolean(part)&&!isAbsolute(part)&&part!=='..'&&!part.startsWith('../')&&!part.startsWith('..\\');};
@@ -15,7 +15,8 @@ export async function inspectReleaseReadiness(directory){
   try{release=await loadRelease(directory);}
   catch(error){result.issues.push(`Archive validation: ${message(error)}`);return result;}
   const {manifest,manifestSha256}=release;
-  Object.assign(result,{version:manifest.version,commit:manifest.commit,manifestSha256,archivesVerified:true});
+  const policy=releasePolicy(manifest.version);
+  Object.assign(result,{version:manifest.version,commit:manifest.commit,manifestSha256,archivesVerified:true,policy});
   try{validateReleaseManifest(manifest,{publishable:true});}
   catch(error){result.issues.push(`Publication identity: ${message(error)}`);}
   let gates;
@@ -24,8 +25,10 @@ export async function inspectReleaseReadiness(directory){
   for(const [key,expected] of Object.entries({version:manifest.version,commit:manifest.commit,manifestSha256})){
     if(gates?.[key]!==expected)result.issues.push(`Gate inventory ${key} does not match these archives`);
   }
+  try{validateReleasePolicy(gates,manifest.version);}
+  catch(error){result.issues.push(`Release policy: ${message(error)}`);}
   const realDirectory=await realpath(directory);
-  for(const name of releaseGates){
+  for(const name of policy.requiredGates){
     const entry=gates?.[name],gate={name,status:entry?.status??'missing',evidenceIntegrity:'pending',reports:[],issues:[]};
     if(!statuses.has(entry?.status))gate.issues.push('Missing or invalid gate status');
     if(!Array.isArray(entry?.evidence))gate.issues.push('Evidence list is required');
@@ -67,6 +70,10 @@ async function main(){
   else{
     console.log(`Release ${result.version??directory}: ${result.status}`);
     console.log(result.scope);
+    if(result.policy){
+      console.log(`Policy ${result.policy.id}: ${result.policy.scope}`);
+      for(const item of result.policy.unverifiedScopes)console.log(`${item.gate}: ${item.status}; ${item.scope}`);
+    }
     for(const gate of result.gates){console.log(`${gate.name}: ${gate.status}; evidence ${gate.evidenceIntegrity}`);for(const issue of gate.issues)console.log(`  ${issue}`);}
     for(const issue of result.issues)console.log(issue);
   }

@@ -177,9 +177,11 @@ def test_export_option_defaults_positive_fractional_scale_rounding_and_area_limi
         png_options(width=5000, height=6400, scale=1.0001)
 
 
-def test_sync_savefig_and_qt_forward_only_explicit_options(tmp_path, monkeypatch):
+def test_sync_savefig_uses_figure_dimensions_and_forwards_explicit_options(tmp_path, monkeypatch):
     qt = importlib.import_module("vesora.qt")
-    fig = vs.figure()
+    fig = vs.figure(width=920, height=560)
+    layer = fig.plot([0, 1], [1, 2])
+    captured = fig._frozen_transfer()
     calls = []
     def export(**options):
         calls.append(options)
@@ -190,10 +192,19 @@ def test_sync_savefig_and_qt_forward_only_explicit_options(tmp_path, monkeypatch
     monkeypatch.setattr(qt, "_ensure_window", lambda *_args, **_kwargs: None)
     fig.savefig(tmp_path / "explicit.png", width=800, height=600, scale=2)
     fig.savefig(tmp_path / "default.png")
+    fig.savefig(tmp_path / "scale-only.png", scale=.5)
     assert all(call["_frozen"][0] == fig.snapshot() for call in calls)
-    assert [{key: value for key, value in call.items() if key != "_frozen"} for call in calls] == [{"width": 800, "height": 600, "scale": 2}, {}]
+    assert [{key: value for key, value in call.items() if key != "_frozen"} for call in calls] == [
+        {"width": 800, "height": 600, "scale": 2},
+        {"width": 920, "height": 560},
+        {"width": 920, "height": 560, "scale": .5},
+    ]
     assert (tmp_path / "explicit.png").read_bytes() == b"PNG fixture"
     fig._host = None
+    layer.set_data(y=[3, 4])
+    assert all(call["_frozen"] == captured for call in calls)
+    assert fig._frozen_transfer() != captured
+    fig.close()
 
 
 def test_local_host_export_message_options_and_noarg_compatibility(monkeypatch):

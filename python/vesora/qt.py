@@ -92,6 +92,10 @@ def save_figure(figure: Any, path: Path, *, timeout: float, width: int | None = 
         raise ValueError("timeout must be positive")
     from .export import png_options
     options = png_options(width=width, height=height, scale=scale)
+    if width is None and height is None:
+        # Desktop chrome and scrollbars can narrow the mounted canvas. Figure
+        # dimensions remain the default export size regardless of window size.
+        options.update(width=figure._spec["width"], height=figure._spec["height"])
     # Python exports accepted data at invocation, including static scenes whose
     # viewer may be inspecting an older frozen frame.
     frozen = figure._frozen_transfer()

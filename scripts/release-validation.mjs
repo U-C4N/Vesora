@@ -6,6 +6,27 @@ import {resolve,relative,isAbsolute} from 'node:path';
 import {releaseIdentity} from './release-identity.mjs';
 
 export const releaseGates=['correctness','browser','qt','jupyter','reactConsumers','packages','performance','soak','accessibility','betaPilot'];
+// The owner explicitly approved a bounded automatic publication policy for v1.
+// Older releases retain every historical gate and their existing evidence format.
+export function releasePolicy(version){
+  const identity=releaseIdentity(version),v1=identity.canonical.split('.')[0]==='1';
+  return v1?{
+    id:'v1-bounded-automatic',
+    scope:'Final-archive bounded correctness, WebGL2/browser and real Qt/Jupyter workflows, independent package and React Vite/Next consumers, and short fixed performance probes.',
+    requiredGates:releaseGates.slice(0,7),
+    unverifiedScopes:[
+      {gate:'soak',status:'unverified',scope:'Long-duration endurance, including the historical two-hour soak; bounded stress checks do not establish it.'},
+      {gate:'accessibility',status:'unverified',scope:'Real screen-reader operation and human accessibility evaluation; automatic UI checks do not establish it.'},
+      {gate:'betaPilot',status:'unverified',scope:'The five-person unaided workflow pilot; automatic or simulated sessions do not establish it.'},
+    ],
+  }:{id:'legacy-all-gates',scope:'All historical automatic, endurance and human-observation release requirements.',requiredGates:[...releaseGates],unverifiedScopes:[]};
+}
+export function validateReleasePolicy(gates,version){
+  const policy=releasePolicy(version);
+  if(policy.id==='v1-bounded-automatic'||gates.policy!==undefined)assert.deepEqual(gates.policy,policy,'Release gate policy must match the version-derived requirements and unverified scopes');
+  for(const {gate}of policy.unverifiedScopes)assert.equal(Object.hasOwn(gates,gate),false,`Unverified ${gate} scope must not be represented as a publication gate`);
+  return policy;
+}
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const hashPattern=/^[a-f0-9]{64}$/;
 export const runtimeEntryNames=['index','worker','viewer','labs','runtime','html-template','balance'];
@@ -86,12 +107,16 @@ export function validateRemoteTagCommit(manifest,output){
 
 export function distributedArtifacts({manifest,manifestSha256,checksumBytes}){assert.ok(checksumBytes,'Validated checksum bytes are required');return [...manifest.files,{name:'release-manifest.json',sha256:manifestSha256},{name:'SHA256SUMS.txt',sha256:sha256(checksumBytes)}];}
 
-export function releaseGateSkeleton(manifest,manifestSha256){return {version:manifest.version,commit:manifest.commit,manifestSha256,...Object.fromEntries(releaseGates.map(gate=>[gate,{status:'pending',evidence:[]}]))};}
+export function releaseGateSkeleton(manifest,manifestSha256){
+  const policy=releasePolicy(manifest.version);
+  return {version:manifest.version,commit:manifest.commit,manifestSha256,...(policy.id==='v1-bounded-automatic'?{policy}:{}),...Object.fromEntries(policy.requiredGates.map(gate=>[gate,{status:'pending',evidence:[]}]))};
+}
 
 export async function validateReleaseGates(directory,gates,{manifest,manifestSha256},read=readFile){
   assert.equal(gates.version,manifest.version);assert.equal(gates.commit,manifest.commit);
   assert.equal(gates.manifestSha256,manifestSha256,'Gate evidence must refer to these exact archives');
-  for(const gate of releaseGates){
+  const policy=validateReleasePolicy(gates,manifest.version);
+  for(const gate of policy.requiredGates){
     const entry=gates[gate];assert.equal(entry?.status,'passed',`Release gate ${gate} has not passed`);
     assert.ok(Array.isArray(entry.evidence)&&entry.evidence.length,`Release gate ${gate} needs hashed evidence`);
     for(const evidence of entry.evidence){

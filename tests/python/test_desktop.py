@@ -44,6 +44,25 @@ def test_shared_engine_hidden_qt_png_and_window_reopen(tmp_path, kind):
         vs.process_events()
 
 
+def test_default_png_dimensions_are_independent_of_desktop_viewport(tmp_path):
+    from vesora.qt import _ensure_window
+
+    fig = vs.Figure(width=800, height=520)
+    fig.heatmap([0, 1], [0, 1], [[1, 2], [3, 4]])
+    try:
+        # Window chrome, scrollbars and user resizing must not change the
+        # Figure's declared export dimensions. Fix scale to isolate CSS pixels.
+        window = _ensure_window(fig, visible=False)
+        window.resize(460, 400)
+        default = fig.savefig(tmp_path / "default-size.png", scale=1).read_bytes()
+        assert struct.unpack(">II", default[16:24]) == (800, 520)
+        explicit = fig.savefig(tmp_path / "explicit-size.png", width=640, height=360, scale=1).read_bytes()
+        assert struct.unpack(">II", explicit[16:24]) == (640, 360)
+    finally:
+        fig.close()
+        vs.process_events()
+
+
 def test_immediate_scatter_update_moves_exported_pixels_and_render_errors_fail(tmp_path):
     from PySide6.QtGui import QImage
 

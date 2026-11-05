@@ -4,7 +4,7 @@ import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname} from 'node:path';
 import {releaseIdentity} from '../../scripts/release-identity.mjs';
-import {releaseFileNames,validateReleaseManifest,validateReleaseChecksums,loadRelease,validateTagCommit,validateRemoteTagCommit,releaseGateSkeleton,validateReleaseGates,recordPublicationVerification,sha256,releaseGates,distributedArtifacts} from '../../scripts/release-validation.mjs';
+import {releaseFileNames,validateReleaseManifest,validateReleaseChecksums,loadRelease,validateTagCommit,validateRemoteTagCommit,releaseGateSkeleton,validateReleaseGates,recordPublicationVerification,sha256,releaseGates,releasePolicy,distributedArtifacts} from '../../scripts/release-validation.mjs';
 
 const version='0.9.0-rc.1',commit='a'.repeat(40),hash='b'.repeat(64);
 const manifest=()=>({version,pythonVersion:'0.9.0rc1',commit,candidate:false,workingTreeDirty:false,tag:`v${version}`,protocolVersions:[1,2,3,4,5,6,7],transportVersions:[2,3],runtime:Object.fromEntries(['index','worker','viewer','labs'].map(key=>[key,hash])),files:releaseFileNames(version).map(name=>({name,sha256:sha256(Buffer.from(name))}))});
@@ -19,7 +19,7 @@ async function fixture(t,value=manifest()){
 }
 function gateFixture(value=manifest()){
   const context={manifest:value,manifestSha256:hash},gates=releaseGateSkeleton(value,hash),reports=new Map();
-  for(const gate of releaseGates){const path=`evidence/${gate}.json`,bytes=Buffer.from(JSON.stringify({gate,status:'passed',version,commit,manifestSha256:hash}));gates[gate]={status:'passed',evidence:[{path,sha256:sha256(bytes)}]};reports.set(gate,bytes);}
+  for(const gate of releasePolicy(value.version).requiredGates){const path=`evidence/${gate}.json`,bytes=Buffer.from(JSON.stringify({gate,status:'passed',version:value.version,commit:value.commit,manifestSha256:hash}));gates[gate]={status:'passed',evidence:[{path,sha256:sha256(bytes)}]};reports.set(gate,bytes);}
   const read=async path=>reports.get(path.replaceAll('\\','/').split('/').at(-1).replace('.json',''));
   return {context,gates,reports,read};
 }
@@ -101,6 +101,50 @@ test('changed or stale evidence reports cannot be relabelled by a fresh gate fil
   const bytes=Buffer.from(JSON.stringify({gate:'soak',status:'passed',version,commit,manifestSha256:'c'.repeat(64)}));reports.set('soak',bytes);gates.soak.evidence[0].sha256=sha256(bytes);
   await assert.rejects(validateReleaseGates(tmpdir(),gates,context,read),/stale archives/);
   gates.soak.evidence[0].path='../outside.json';await assert.rejects(validateReleaseGates(tmpdir(),gates,context,read),/inside the release directory/);
+});
+
+test('legacy publication still requires all ten gates, regardless of a declared v1 policy',async()=>{
+  const {context,gates,read}=gateFixture();
+  assert.deepEqual(releasePolicy(version).requiredGates,releaseGates);
+  for(const name of releaseGates){
+    const missing=structuredClone(gates);delete missing[name];
+    await assert.rejects(validateReleaseGates(tmpdir(),missing,context,read),new RegExp(`Release gate ${name} has not passed`));
+  }
+  await assert.rejects(validateReleaseGates(tmpdir(),{...gates,policy:releasePolicy('1.0.0')},context,read),/policy must match/);
+});
+
+test('v1 requires seven exact-archive automatic gates and explicitly unverified human/endurance scopes',async()=>{
+  const value={...manifest(),version:'1.0.0',pythonVersion:'1.0.0',tag:'v1.0.0'},policy=releasePolicy(value.version);
+  const {context,gates,read}=gateFixture(value);
+  assert.deepEqual(policy.requiredGates,releaseGates.slice(0,7));
+  assert.deepEqual(policy.unverifiedScopes.map(item=>[item.gate,item.status]),[['soak','unverified'],['accessibility','unverified'],['betaPilot','unverified']]);
+  assert.deepEqual(gates.policy,policy);
+  for(const {gate}of policy.unverifiedScopes)assert.equal(Object.hasOwn(gates,gate),false);
+  await validateReleaseGates(tmpdir(),gates,context,read);
+  for(const name of policy.requiredGates){
+    const missing=structuredClone(gates);delete missing[name];
+    await assert.rejects(validateReleaseGates(tmpdir(),missing,context,read),new RegExp(`Release gate ${name} has not passed`));
+    const unhashed=structuredClone(gates);unhashed[name].evidence=[];
+    await assert.rejects(validateReleaseGates(tmpdir(),unhashed,context,read),/needs hashed evidence/);
+  }
+  const noPolicy=structuredClone(gates);delete noPolicy.policy;
+  await assert.rejects(validateReleaseGates(tmpdir(),noPolicy,context,read),/policy must match/);
+  const hiddenScope=structuredClone(gates);hiddenScope.policy.unverifiedScopes=[];
+  await assert.rejects(validateReleaseGates(tmpdir(),hiddenScope,context,read),/policy must match/);
+  const fewerGates=structuredClone(gates);fewerGates.policy.requiredGates.pop();
+  await assert.rejects(validateReleaseGates(tmpdir(),fewerGates,context,read),/policy must match/);
+  for(const {gate}of policy.unverifiedScopes){
+    await assert.rejects(validateReleaseGates(tmpdir(),{...gates,[gate]:{status:'passed',evidence:[]}},context,read),/must not be represented as a publication gate/);
+  }
+});
+
+test('v1 evidence remains bound to final archive hashes and cannot relabel a failed report',async()=>{
+  const value={...manifest(),version:'1.0.0',pythonVersion:'1.0.0',tag:'v1.0.0'},f=gateFixture(value);
+  const report={gate:'qt',status:'failed',version:value.version,commit,manifestSha256:hash};
+  let bytes=Buffer.from(JSON.stringify(report));f.reports.set('qt',bytes);f.gates.qt.evidence[0].sha256=sha256(bytes);
+  await assert.rejects(validateReleaseGates(tmpdir(),f.gates,f.context,f.read),/report has not passed/);
+  bytes=Buffer.from(JSON.stringify({...report,status:'passed',manifestSha256:'c'.repeat(64)}));f.reports.set('qt',bytes);f.gates.qt.evidence[0].sha256=sha256(bytes);
+  await assert.rejects(validateReleaseGates(tmpdir(),f.gates,f.context,f.read),/stale archives/);
 });
 test('a failed re-verification always clears previously complete publication state',()=>{
   const state={channels:{}};for(const name of ['npm','pypi','github'])recordPublicationVerification(state,name,{status:'download-verified'});

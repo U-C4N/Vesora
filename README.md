@@ -202,9 +202,21 @@ export function LatencyCard() {
 
 For declarative line, bar and scatter cards, use `VesoraChart` with themes, formatting, legends, tooltips and loading states. React **18.3 and 19** are supported peer ranges. [React API](packages/react/README.md) · [Runnable React example](skills/vesora/scripts/example_react.tsx)
 
-## Install a local 1.0.0 build
+## Install Vesora 1.0.0
 
-This checkout provides **1.0.0 source and local review archives**. Registry publication is a separate step. Build the archives from the repository root:
+The release targets `vesora` on PyPI and `@vesora/core` / `@vesora/react` on npm. Use the matching versions together:
+
+```sh
+python -m pip install vesora==1.0.0
+# For Jupyter notebooks:
+python -m pip install "vesora[notebook]==1.0.0"
+
+npm install @vesora/core@1.0.0
+# For React applications:
+npm install @vesora/core@1.0.0 @vesora/react@1.0.0 react react-dom
+```
+
+Check the [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.0.0) for publication status and downloadable archives. To build local review archives from this checkout:
 
 ```sh
 npm run build

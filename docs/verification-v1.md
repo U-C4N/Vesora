@@ -21,9 +21,13 @@ Each run creates `artifacts/v1-verification/TIMESTAMP/` with `report.json`, per-
 
 Evidence covers automatic correctness, real rendering, integration and short cleanup. It does not establish hours of acquisition, universal performance, human screen-reader use or a five-participant pilot. Seeded/differential/metamorphic scenarios make rare transitions reproducible without waiting; they are not elapsed-duration soak evidence.
 
-## Historical gates
+## Publication policy and historical gates
 
-The verifier writes separate reports. It does not edit `release-gates.json`, mark `soak`/`betaPilot` passed, rebuild old RC directories, move tags or publish. The existing publisher retains exact-archive gate requirements. Protocol 9 manifests/the v1 advanced demo are recognized without weakening older protocol 7/8 archive verification.
+On 5 November 2026 the owner explicitly approved a v1 release using bounded automatic checks, with incomplete long-duration and human tests disclosed. Major version 1 therefore uses the `v1-bounded-automatic` publication policy: `correctness`, `browser`, `qt`, `jupyter`, `reactConsumers`, `packages` and `performance` must each have actual reviewed evidence bound to the final clean, tagged archives. Qt/Jupyter cover their real installed-wheel workflows; React consumers cover independent Vite/Next installs; performance covers short fixed probes. This does not claim the older long host/recovery or endurance criteria.
+
+The policy must explicitly retain three **unverified** scopes: long-duration endurance including the two-hour soak, real screen-reader/human accessibility evaluation, and the five-person unaided pilot. They are not represented as passed publication gates. Missing or altered policy metadata, any missing automatic gate, stale evidence and invented deferred gate entries fail validation.
+
+The verifier writes separate reports. It does not edit `release-gates.json`, mark any gate passed, rebuild old RC directories, move tags or publish. It also runs candidate packaging, so run it before final clean-tag packaging and verify the final archives directly afterward. Version 0.x retains all ten historical gates and its existing evidence format; no failed or missing historical evidence is changed. Protocol 9 manifests/the v1 advanced demo are recognized without weakening older protocol 7/8 archive verification. [v1 publication scope](releases/v1.0.0.md#approved-v1-publication-policy--5-november-2026)
 
 ## Recorded result
 

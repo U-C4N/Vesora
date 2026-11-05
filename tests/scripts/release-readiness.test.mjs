@@ -4,12 +4,13 @@ import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {inspectReleaseReadiness} from '../../scripts/check-release-readiness.mjs';
-import {releaseFileNames,releaseGateSkeleton,releaseGates,sha256} from '../../scripts/release-validation.mjs';
+import {releaseFileNames,releaseGateSkeleton,releasePolicy,sha256} from '../../scripts/release-validation.mjs';
+import {releaseIdentity} from '../../scripts/release-identity.mjs';
 
-async function fixture(t,{candidate=false}={}){
+async function fixture(t,{candidate=false,version='0.9.0-rc.6'}={}){
   const directory=await mkdtemp(join(tmpdir(),'vesora-readiness-'));
   t.after(async()=>{assert.equal(dirname(resolve(directory)),resolve(tmpdir()));assert.ok(directory.includes('vesora-readiness-'));await rm(directory,{recursive:true,force:true});});
-  const version='0.9.0-rc.6',manifest={version,pythonVersion:'0.9.0rc6',commit:'a'.repeat(40),candidate,workingTreeDirty:false,tag:`v${version}`,protocolVersions:[1,2,3,4,5,6,7],transportVersions:[2,3],runtime:Object.fromEntries(['index','worker','viewer','labs'].map(key=>[key,'b'.repeat(64)])),files:releaseFileNames(version).map(name=>({name,sha256:sha256(Buffer.from(name))}))};
+  const manifest={version,pythonVersion:releaseIdentity(version).python,commit:'a'.repeat(40),candidate,workingTreeDirty:false,tag:`v${version}`,protocolVersions:[1,2,3,4,5,6,7],transportVersions:[2,3],runtime:Object.fromEntries(['index','worker','viewer','labs'].map(key=>[key,'b'.repeat(64)])),files:releaseFileNames(version).map(name=>({name,sha256:sha256(Buffer.from(name))}))};
   for(const file of manifest.files)await writeFile(join(directory,file.name),file.name);
   const bytes=Buffer.from(JSON.stringify(manifest)),manifestSha256=sha256(bytes);
   await writeFile(join(directory,'release-manifest.json'),bytes);
@@ -20,7 +21,7 @@ async function fixture(t,{candidate=false}={}){
     const path=`evidence/${gate}.json`,bytes=Buffer.from(JSON.stringify({gate,status,version,commit:manifest.commit,manifestSha256,...overrides}));
     await writeFile(join(directory,path),bytes);gates[gate]={status,evidence:[{path,sha256:sha256(bytes)}]};
   }
-  for(const gate of releaseGates)await report(gate);
+  for(const gate of releasePolicy(version).requiredGates)await report(gate);
   const save=()=>writeFile(join(directory,'release-gates.json'),JSON.stringify(gates));await save();
   return {directory,manifest,gates,report,save};
 }
@@ -74,4 +75,24 @@ test('corrupted evidence and escaping paths are reported rather than treated as 
 test('review candidates never qualify for publication even when local reports are passed',async t=>{
   const f=await fixture(t,{candidate:true}),result=await inspectReleaseReadiness(f.directory);
   assert.equal(result.archivesVerified,true);assert.equal(result.status,'invalid');assert.equal(result.allLocalGatesPassed,false);assert.match(result.issues[0],/cannot be published/);
+});
+
+test('v1 readiness discloses three unverified scopes while requiring all seven automatic gates',async t=>{
+  const f=await fixture(t,{version:'1.0.0'}),before=await readFile(join(f.directory,'release-gates.json'));
+  let result=await inspectReleaseReadiness(f.directory);
+  assert.equal(result.status,'ready');assert.equal(result.counts.passed,7);assert.equal(result.gates.length,7);
+  assert.deepEqual(result.policy.unverifiedScopes.map(item=>item.status),['unverified','unverified','unverified']);
+  assert.deepEqual(await readFile(join(f.directory,'release-gates.json')),before);
+  f.gates.qt={status:'pending',evidence:[]};await f.save();
+  result=await inspectReleaseReadiness(f.directory);assert.equal(result.status,'blocked');assert.equal(result.counts.pending,1);
+});
+
+test('v1 readiness rejects missing policy, hidden exclusions and invented human passes',async t=>{
+  const f=await fixture(t,{version:'1.0.0'}),policy=structuredClone(f.gates.policy);
+  delete f.gates.policy;await f.save();
+  let result=await inspectReleaseReadiness(f.directory);assert.equal(result.status,'invalid');assert.match(result.issues.join('\n'),/Release policy/);
+  f.gates.policy={...policy,unverifiedScopes:[]};await f.save();
+  result=await inspectReleaseReadiness(f.directory);assert.equal(result.status,'invalid');
+  f.gates.policy=policy;f.gates.betaPilot={status:'passed',evidence:[]};await f.save();
+  result=await inspectReleaseReadiness(f.directory);assert.equal(result.status,'invalid');assert.match(result.issues.join('\n'),/must not be represented as a publication gate/);
 });
