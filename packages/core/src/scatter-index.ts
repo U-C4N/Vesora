@@ -2,12 +2,12 @@ import {numericReader} from './data';
 import {createNormalizer} from './scales';
 import type {DataEntry,PointPlan,Query} from './types';
 
-const CELLS=64,CHUNK=65_536,MIN_ROWS=4096,DEFAULT_BYTES=8*1024*1024;
+const CELL_CHOICES=[256,192,128,96,80,64],CHUNK=65_536,MIN_ROWS=4096,DEFAULT_BYTES=8*1024*1024;
 interface Grid {
-  xId:string;yId:string;length:number;bytes:number;indices:Uint32Array;offsets:Uint32Array;cursor?:Uint32Array;
+  xId:string;yId:string;length:number;bytes:number;cells:number;indices:Uint32Array;offsets:Uint32Array;cursor?:Uint32Array;
   minimumX:number;maximumX:number;minimumY:number;maximumY:number;phase:'bounds'|'counts'|'indices'|'ready';position:number;
 }
-const cell=(value:number,low:number,high:number)=>high===low?0:Math.max(0,Math.min(CELLS-1,Math.floor((value-low)/(high-low)*CELLS)));
+const cell=(value:number,low:number,high:number,cells:number)=>high===low?0:Math.max(0,Math.min(cells-1,Math.floor((value-low)/(high-low)*cells)));
 const owned=(entry:DataEntry)=>!!entry.chunks&&Object.isFrozen(entry.chunks)&&entry.chunks.every(chunk=>chunk.buffer instanceof ArrayBuffer);
 
 /** Exact raw-coordinate bins, bounded independently from result/line caches.
@@ -19,20 +19,25 @@ export class ScatterIndexCache {
   private identities=new WeakMap<DataEntry,number>();private serial=0;private epoch=0;
   private observed=new WeakMap<DataEntry,WeakMap<DataEntry,string>>();
   private bytes=0;private builds=0;private buildRows=0;private warmQueries=0;private scanQueries=0;private candidateRows=0;
-  private lastCandidateRows=0;private lastMode:'scan'|'cold-index'|'warm-index'='scan';
+  private lastCandidateRows=0;private lastGridCells=0;private lastMode:'scan'|'cold-index'|'warm-index'='scan';
   constructor(private readonly maximumBytes=DEFAULT_BYTES){if(!Number.isSafeInteger(maximumBytes)||maximumBytes<0)throw new RangeError('Scatter index budget must be a nonnegative safe integer.');}
-  diagnostics(){return {maximumBytes:this.maximumBytes,indexBytes:this.bytes,retainedBytes:0,entries:this.grids.size,builds:this.builds,buildRows:this.buildRows,warmQueries:this.warmQueries,scanQueries:this.scanQueries,candidateRows:this.candidateRows,lastCandidateRows:this.lastCandidateRows,lastMode:this.lastMode};}
+  diagnostics(){return {maximumBytes:this.maximumBytes,indexBytes:this.bytes,retainedBytes:0,entries:this.grids.size,builds:this.builds,buildRows:this.buildRows,warmQueries:this.warmQueries,scanQueries:this.scanQueries,candidateRows:this.candidateRows,lastCandidateRows:this.lastCandidateRows,lastGridCells:this.lastGridCells,lastMode:this.lastMode};}
   clear():void{this.epoch++;this.grids.clear();this.observed=new WeakMap();this.bytes=0;}
   release(id:string):void{this.epoch++;for(const [key,grid]of this.grids)if(grid.xId===id||grid.yId===id)this.remove(key);}
   private remove(key:string):void{const grid=this.grids.get(key);if(grid){this.bytes-=grid.bytes;this.grids.delete(key);}}
   private identity(entry:DataEntry):number{let id=this.identities.get(entry);if(id===undefined){id=++this.serial;this.identities.set(entry,id);}return id;}
   private scan():undefined{this.scanQueries++;this.lastMode='scan';this.lastCandidateRows=0;return undefined;}
+  private bytesFor(length:number,cells:number,key:string,x:DataEntry,y:DataEntry):number{
+    return length*4+(cells*cells+1)*8+256+2*(key.length+x.descriptor.id.length+y.descriptor.id.length);
+  }
   private reserve(key:string,x:DataEntry,y:DataEntry):boolean{
-    const length=x.descriptor.shape[0],bytes=length*4+(CELLS*CELLS+1)*8+256+2*(key.length+x.descriptor.id.length+y.descriptor.id.length);
-    if(bytes>this.maximumBytes)return false;
+    const length=x.descriptor.shape[0];
+    const cells=CELL_CHOICES.find(choice=>this.bytesFor(length,choice,key,x,y)<=this.maximumBytes);
+    if(cells===undefined)return false;
+    const bytes=this.bytesFor(length,cells,key,x,y);
     while(this.bytes+bytes>this.maximumBytes&&this.grids.size)this.remove(this.grids.keys().next().value!);
-    const grid:Grid={xId:x.descriptor.id,yId:y.descriptor.id,length,bytes,indices:new Uint32Array(length),offsets:new Uint32Array(CELLS*CELLS+1),cursor:new Uint32Array(CELLS*CELLS+1),minimumX:Infinity,maximumX:-Infinity,minimumY:Infinity,maximumY:-Infinity,phase:'bounds',position:0};
-    this.grids.set(key,grid);this.bytes+=bytes;this.builds++;return true;
+    const grid:Grid={xId:x.descriptor.id,yId:y.descriptor.id,length,bytes,cells,indices:new Uint32Array(length),offsets:new Uint32Array(cells*cells+1),cursor:new Uint32Array(cells*cells+1),minimumX:Infinity,maximumX:-Infinity,minimumY:Infinity,maximumY:-Infinity,phase:'bounds',position:0};
+    this.grids.set(key,grid);this.bytes+=bytes;this.builds++;this.lastGridCells=cells;return true;
   }
   /** No grid reference crosses a cooperative yield, so an evicted build releases its arrays. */
   private build(key:string,x:ReturnType<typeof numericReader>,y:ReturnType<typeof numericReader>):boolean|undefined{
@@ -45,7 +50,7 @@ export class ScatterIndexCache {
         if(a<grid.minimumX)grid.minimumX=a;if(a>grid.maximumX)grid.maximumX=a;
         if(b<grid.minimumY)grid.minimumY=b;if(b>grid.maximumY)grid.maximumY=b;
       }else{
-        const bin=cell(b,grid.minimumY,grid.maximumY)*CELLS+cell(a,grid.minimumX,grid.maximumX);
+        const bin=cell(b,grid.minimumY,grid.maximumY,grid.cells)*grid.cells+cell(a,grid.minimumX,grid.maximumX,grid.cells);
         if(grid.phase==='counts')grid.offsets[bin+1]++;
         else grid.indices[grid.cursor![bin]++]=i;
       }
@@ -65,10 +70,11 @@ export class ScatterIndexCache {
   private ranges(key:string,query:Query):{bins:number[];count:number}|undefined{
     const grid=this.grids.get(key);if(!grid||grid.phase!=='ready')return;
     // Include adjacent cells to preserve the baseline normalizer's rounding at viewport boundaries.
-    const x0=Math.max(0,cell(query.bounds.x[0],grid.minimumX,grid.maximumX)-1),x1=Math.min(CELLS-1,cell(query.bounds.x[1],grid.minimumX,grid.maximumX)+1);
-    const y0=Math.max(0,cell(query.bounds.y[0],grid.minimumY,grid.maximumY)-1),y1=Math.min(CELLS-1,cell(query.bounds.y[1],grid.minimumY,grid.maximumY)+1);
+    const cells=grid.cells;
+    const x0=Math.max(0,cell(query.bounds.x[0],grid.minimumX,grid.maximumX,cells)-1),x1=Math.min(cells-1,cell(query.bounds.x[1],grid.minimumX,grid.maximumX,cells)+1);
+    const y0=Math.max(0,cell(query.bounds.y[0],grid.minimumY,grid.maximumY,cells)-1),y1=Math.min(cells-1,cell(query.bounds.y[1],grid.minimumY,grid.maximumY,cells)+1);
     const bins:number[]=[];let count=0;
-    for(let row=y0;row<=y1;row++)for(let column=x0;column<=x1;column++){const bin=row*CELLS+column;bins.push(bin);count+=grid.offsets[bin+1]-grid.offsets[bin];}
+    for(let row=y0;row<=y1;row++)for(let column=x0;column<=x1;column++){const bin=row*cells+column;bins.push(bin);count+=grid.offsets[bin+1]-grid.offsets[bin];}
     return {bins,count};
   }
   private visit(key:string,bins:number[],state:{bin:number;offset:number},callback:(index:number)=>void):boolean|undefined{
@@ -87,8 +93,9 @@ export class ScatterIndexCache {
     if(x.descriptor.shape.length!==1||y.descriptor.shape.length!==1||length!==y.descriptor.shape[0]||length<MIN_ROWS||length>0xffff_ffff||!workerOwned&&(!owned(x)||!owned(y)))return this.scan();
     const versions=`${x.descriptor.version}:${y.descriptor.version}`,key=`${this.identity(x)}:${this.identity(y)}:${versions}:${length}`;
     let seen=this.observed.get(x);if(!seen){seen=new WeakMap();this.observed.set(x,seen);}
-    // One-off/full-scene queries keep the existing scan. Build only after this version pair is queried again.
-    if(seen.get(y)!==versions){seen.set(y,versions);return this.scan();}
+    // Mutable caller storage still scans on the first query. A worker-owned copy,
+    // including its frozen chunks, builds immediately so the cold index is not an interaction.
+    if(seen.get(y)!==versions){seen.set(y,versions);if(!workerOwned)return this.scan();}
     const cold=!this.grids.has(key);if(cold&&!this.reserve(key,x,y))return this.scan();
     const xs=numericReader(x),ys=numericReader(y);
     if(this.grids.get(key)?.phase!=='ready')while(true){

@@ -2,19 +2,19 @@
 
 Declarative React + TypeScript charts for SaaS dashboards. `VesoraChart` supports line, bar and scatter charts, independent responsive cards, light/dark themes, date/currency/percent formatting, custom React tooltips, an accessible interactive legend, and loading/empty/error states.
 
-**Vesora 1.0.0.** Install the adapter with its matching core:
+**Vesora 1.1.0.** Install the adapter with its matching core:
 
 ```bash
-npm install react react-dom @vesora/core@1.0.0 @vesora/react@1.0.0
+npm install react react-dom @vesora/core@1.1.0 @vesora/react@1.1.0
 ```
 
-The [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.0.0) records publication status and matching downloadable archives. To use generated release tarballs locally:
+The [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.1.0) records publication status and matching downloadable archives. To use generated release tarballs locally:
 
 ```bash
-npm install react react-dom ./vesora-core-1.0.0.tgz ./vesora-react-1.0.0.tgz
+npm install react react-dom ./vesora-core-1.1.0.tgz ./vesora-react-1.1.0.tgz
 ```
 
-React 18.3 and React 19 are supported peer ranges; React is not bundled. Browser APIs/WebGL2 are required. In Next.js use a client boundary (`'use client'`). Long-duration acquisition, real screen-reader operation and human pilot acceptance remain unverified; see the [v1 release scope](../../docs/releases/v1.0.0.md).
+React 18.3 and React 19 are supported peer ranges; React is not bundled. Browser APIs/WebGL2 are required. In Next.js use a client boundary (`'use client'`). Long-duration acquisition, real screen-reader operation and human pilot acceptance remain unverified; see the [1.1.0 notes](../../docs/releases/v1.1.0.md).
 
 Use `VesoraViewer` with an application-owned core figure for v1's ten analysis families, run comparison and stable-ID cohorts; these are not invented `VesoraChart` type strings. See the [React agent guide](../../skills/vesora/references/react.md) and the shared `?demo=v1` example.
 

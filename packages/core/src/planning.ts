@@ -57,7 +57,14 @@ export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArr
   const columns = Math.max(1, Math.min(1024, Math.ceil(query.width / 4)));
   const rows = Math.max(1, Math.min(1024, Math.ceil(query.height / 4)));
   const counts = new Uint32Array(columns * rows);
-  let count = 0, max = 0;
+  const threshold = Math.max(1, Math.min(query.pointBudget, query.width * query.height / 8));
+  const factor = query.previous === 'density' ? 0.6 : 1;
+  // Record original indices during the count pass. A second scan is unnecessary
+  // once the visible count is known to fit the exact point result.
+  const pointCeiling = query.mode === 'points' ? query.pointBudget : query.mode === 'auto' ? Math.min(query.pointBudget, threshold * factor) : 0;
+  const capacity = pointCeiling > 0 ? Math.min(x.length, Math.floor(pointCeiling)) : 0;
+  const recorded = capacity > 0 ? new Uint32Array(capacity) : undefined;
+  let count = 0, max = 0, truncated = false;
   const aggregation=new AlignedCoordinates(x,y);
   for (let start = 0; start < x.length; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, x.length);
@@ -66,6 +73,8 @@ export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArr
       for(let j=0;j<span.length;j++){
         const px = normalizeX(xs[xOffset+j]), py = normalizeY(ys[yOffset+j]);
         if (!visible(px, py)) continue;
+        if (recorded && count < recorded.length) recorded[count] = offset+j;
+        else if (recorded) truncated = true;
         count++;
         const column = Math.min(columns - 1, Math.floor(px * columns)), row = Math.min(rows - 1, Math.floor(py * rows));
         const cellCount = ++counts[row * columns + column];
@@ -75,8 +84,7 @@ export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArr
     }
     yield;
   }
-  const threshold = Math.max(1, Math.min(query.pointBudget, query.width * query.height / 8));
-  const density = query.mode === 'density' || (query.mode === 'auto' && (count > query.pointBudget || count > threshold * (query.previous === 'density' ? 0.6 : 1)));
+  const density = query.mode === 'density' || (query.mode === 'auto' && (count > query.pointBudget || count > threshold * factor));
   if (density) {
     let occupied = 0;
     for (let i = 0; i < counts.length; i++) if (counts[i]) occupied++;
@@ -87,20 +95,9 @@ export function* scatterSteps(xInput: NumericArray|DataEntry, yInput: NumericArr
     return result;
   }
   if (count > query.pointBudget) throw new RangeError(`Exact point rendering requires ${count} points, exceeding the point budget of ${query.pointBudget}. Use auto/density or raise the budget.`);
-  const indices = new Uint32Array(count);
-  let cursor = 0;
-  const extraction=new AlignedCoordinates(x,y);
-  for (let start = 0; start < x.length; start += CHUNK_SIZE) {
-    const end = Math.min(start + CHUNK_SIZE, x.length);
-    for(let offset=start;offset<end;){
-      const span=extraction.span(offset,end),xs=span.x,ys=span.y,xOffset=span.xOffset,yOffset=span.yOffset;
-      for(let j=0;j<span.length;j++){
-        if (visible(normalizeX(xs[xOffset+j]), normalizeY(ys[yOffset+j]))) indices[cursor++] = offset+j;
-      }
-      offset+=span.length;
-    }
-    yield;
-  }
+  if (count === 0) return {kind: 'points', indices: new Uint32Array(0), info: {kind: 'points', total: x.length, visible: 0, rendered: 0, exact: true, method: 'original points'}};
+  if (!recorded || truncated) throw new RangeError('Exact point indices were not retained with the visibility count.');
+  const indices = count === recorded.length ? recorded : recorded.slice(0, count);
   return {kind: 'points', indices, info: {kind: 'points', total: x.length, visible: count, rendered: count, exact: true, method: 'original points'}};
 }
 

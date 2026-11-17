@@ -1,9 +1,11 @@
 import {describe,expect,it,vi} from 'vitest';
 import {Figure,Layer,subplots} from '../../packages/core/src/figure';
-import {appendEntry,streamEntry} from '../../packages/core/src/streaming';
+import {appendEntry,dirtyRange,streamEntry} from '../../packages/core/src/streaming';
+import {buildGeometry} from '../../packages/core/src/geometry';
 import {describeData} from '../../packages/core/src/data';
 import {ascending,entryExtent} from '../../packages/core/src/source-metadata';
 import {lineSteps} from '../../packages/core/src/planning';
+import type {LineResult} from '../../packages/core/src/types';
 import type {NumericArray} from '../../packages/core/src/types';
 
 const values=(figure:Figure,id:string)=>Array.from(figure.registry.get(id).values);
@@ -120,6 +122,29 @@ it('cached chunk metadata updates exactly when retained extrema leave the window
   expect(entryExtent(entry,'linear')).toEqual([-10,3]);expect(entryExtent(entry,'log')).toEqual([2,3]);expect(ascending(entry)).toBe(true);
   const next=appendEntry(entry,[4],3).entry;expect(entryExtent(next,'linear')).toEqual([2,4]);expect(ascending(next)).toBe(true);
   const unordered=appendEntry(next,[0],3).entry;expect(ascending(unordered)).toBe(false);expect(entryExtent(entry,'linear')).toEqual([-10,3]);
+});
+
+it('records a tail append and the whole window after eviction',()=>{
+  const array=Float64Array.of(0,1,2),entry=streamEntry({descriptor:describeData('x',array),values:array},8);
+  const tail=appendEntry(entry,Float64Array.of(3),8);
+  expect(tail.dirty).toEqual({start:3,end:4});expect(dirtyRange(tail.entry)).toEqual({start:3,end:4});
+  const evicted=appendEntry(tail.entry,Float64Array.of(4,5,6,7,8,9),8);
+  expect(evicted.dirty).toEqual({start:0,end:8});expect(dirtyRange(evicted.entry)).toEqual(evicted.dirty);
+});
+
+it('threads a point-aligned append into geometry without remapping a reduced line',async()=>{
+  const figure=new Figure(),layer=figure.scatter([0,1,2],[0,1,2]).enableStreaming({maxPoints:8});
+  await layer.appendData({x:[3],y:[3]});
+  const geometry=buildGeometry(layer.spec,figure.registry,{x:[0,3],y:[0,3]},[0,1],figure.spec.view,100,100);
+  expect(geometry.dirtyVertices).toEqual({start:3,end:4});
+  const line=figure.plot([0,1,2],[0,1,2]).enableStreaming({maxPoints:8});
+  await line.appendData({x:[3],y:[3]});
+  const lx=figure.registry.get(line.spec.data.x),ly=figure.registry.get(line.spec.data.y);
+  const steps=lineSteps(lx,ly,{bounds:{x:[0,3],y:[0,3]},width:100,height:100,xScale:'linear',yScale:'linear',pointBudget:1000,mode:'points'});
+  let planned:LineResult|undefined;while(true){const step=steps.next();if(step.done){planned=step.value;break;}}
+  const reduced=buildGeometry(line.spec,figure.registry,{x:[0,3],y:[0,3]},[0,1],figure.spec.view,100,100,planned);
+  expect(reduced.primitive).toBe('triangles');expect(reduced.positions.length).toBeGreaterThan(4);expect(reduced.dirtyVertices).toBeUndefined();
+  figure.close();
 });
 
 it('monotone viewport queries retain identical crossing geometry and missing-data gaps',()=>{

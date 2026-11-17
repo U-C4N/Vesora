@@ -62,7 +62,13 @@ describe('borrowed scientific viewer',()=>{
     const {figure,mock}=fixture(),viewer=mountViewer(figure,document.body,{observation:true});figure.freezeInspection();
     const source=viewer.element.querySelector<HTMLSelectElement>('[aria-label="Export source"]')!;
     source.value='accepted';source.dispatchEvent(new Event('change'));
-    expect(viewer.element.querySelector('.vv-export-options')!.textContent).toContain('may differ from a frozen view');
+    const menu=viewer.element.querySelector('.vv-export')!;
+    expect(viewer.element.querySelector('.vv-export-options')).toBeNull();
+    expect(viewer.element.querySelector('style')!.textContent).not.toContain('flex:0 0 100%');
+    expect(menu.textContent).toContain('Export PNG');expect(menu.textContent).toContain('Export HTML');
+    expect(menu.querySelector('[aria-label="Export source"]')).not.toBeNull();
+    expect(menu.textContent).toContain('Include observation record in HTML');
+    expect(menu.textContent).toContain('may differ from a frozen view');
     // An unrelated React-style presentation update must not reset the user's export choice.
     viewer.updateOptions({chrome:{status:false}});expect(source.value).toBe('accepted');
     const button=(label:string)=>[...viewer.element.querySelectorAll('button')].find(button=>button.textContent===label)!;
@@ -126,7 +132,9 @@ describe('borrowed scientific viewer',()=>{
   });
   it('defers programmatic scene theme changes until frozen inspection returns to live',async()=>{
     const {figure,mock}=fixture(),viewer=mountViewer(figure,document.body);
-    mock.setTheme.mockClear();figure.freezeInspection();viewer.setTheme('light');
+    mock.setTheme.mockClear();figure.freezeInspection();
+    const themeButton=[...viewer.element.querySelectorAll('button')].find(button=>button.textContent==='Light theme')!;
+    expect(themeButton.disabled).toBe(false);themeButton.click();
     expect(viewer.element.dataset.theme).toBe('light');expect(mock.setTheme).not.toHaveBeenCalled();
     await figure.resumeLive();expect(mock.setTheme).toHaveBeenCalledOnce();
     expect(mock.setTheme.mock.calls[0][0]).toMatchObject({background:'#fbfcfd'});
@@ -136,7 +144,7 @@ describe('borrowed scientific viewer',()=>{
     const {figure,mock}=fixture(),viewer=mountViewer(figure,document.body);
     mock.emit('xhover',{cursorX:2,items:[{layerId:'line',x:2,y:7,sequence:42}]});
     const inspector=viewer.element.querySelector('.vv-inspection')!;
-    expect(inspector.textContent).toContain('Measurement');expect(inspector.textContent).toContain('x: 2 · y: 7 · sample 42');
+    expect(inspector.textContent).toContain('Measurement');expect(inspector.textContent).toContain('x: 2');expect(inspector.textContent).toContain('y: 7');expect(inspector.textContent).toContain('Sequence: 42');
     mock.emit('xhover',null);expect(inspector.textContent).toContain('Select or hover');viewer.dispose();
   });
   it('routes 3D aspect, fit and focus through displayed inspection controls',()=>{
@@ -156,7 +164,8 @@ describe('borrowed scientific viewer',()=>{
     first.mock.emit('click',selection);first.mock.emit('hover',null);first.mock.emit('xhover',null);
     expect(inspectorDetails.open).toBe(true);expect(viewer.element.querySelector('.vv-statusbar')!.textContent).not.toContain('Frame');
     const detail=viewer.element.querySelector('.vv-inspection')!.textContent;
-    expect(detail).toContain('Selected interpolated value');expect(detail).toContain('Cell row, column: 1, 2');expect(detail).toContain('Frame: 8');expect(detail).toContain('x: 1e-8');
+    expect(detail).toContain('Selected interpolated value');expect(detail).toContain('Cell row, column: 1, 2');expect(detail).toContain('x: 1e-8');expect(detail).not.toContain('Frame:');
+    expect(viewer.element.querySelector('.vv-sample-raw')!.textContent).toContain('Frame: 8');expect(viewer.element.querySelector('.vv-details')!.open).toBe(false);
     first.mock.emit('frame',first.mock.getInspectionState());expect(viewer.element.querySelector('.vv-inspection')!.textContent).toBe(detail);
     first.mock.getInspectionSelection=()=>undefined;first.mock.emit('frame',first.mock.getInspectionState());first.mock.emit('hover',null);
     expect(viewer.element.querySelector('.vv-inspection')!.textContent).toContain('Select or hover');
@@ -165,5 +174,97 @@ describe('borrowed scientific viewer',()=>{
     const offline=mountViewer(second.figure,document.body,{live:false});expect(offline.element.querySelector('.vv-inspection')!.textContent).toBe(detail);
     expect(offline.element.querySelector('.vv-inspection')!.closest('details')!.open).toBe(true);
     expect(offline.element.textContent).toContain('Captured 2026-10-15T10:00:00Z');expect(offline.element.textContent).toContain('Source frame 8');offline.dispose();
+  });
+  it('shows a focusable sample card with units and representation, and keeps raw diagnostics collapsed',()=>{
+    const {figure,mock}=fixture();
+    mock.spec.layers[0].data={x:'time',y:'temperature'};
+    mock.spec.semantics={schemaVersion:1,sources:{time:{unit:'s'},temperature:{unit:'K'}}};
+    mock.inspect=()=>[{kind:'line',layerId:'line',total:4,visible:4,rendered:2,exact:false,method:'ordered first/min/max/last per consecutive pixel column'}];
+    const viewer=mountViewer(figure,document.body),card=viewer.element.querySelector('.vv-sample')!;
+    expect(card.tabIndex).toBe(0);
+    mock.emit('click',{kind:'point',layerId:'line',x:1.5,y:290,index:3,pointerPosition:{x:0,y:0,clientX:0,clientY:0}});
+    expect(card.textContent).toContain('Measurement');expect(card.textContent).toContain('x: 1.5 s');expect(card.textContent).toContain('y: 290 K');
+    expect(card.textContent).toContain('Source index: 3');expect(card.textContent).toContain('Representation: reduced line');
+    expect(card.textContent).not.toContain('Worker');expect(viewer.element.querySelector('.vv-diagnostics')!.textContent).toContain('Worker: active');
+    mock.inspect=()=>[{kind:'density',layerId:'line',total:4,visible:4,rendered:1,exact:true,method:'count aggregation (screen-space cells)'}];
+    mock.emit('hover',{kind:'density',layerId:'line',count:12,pointerPosition:{x:0,y:0,clientX:0,clientY:0}});
+    expect(card.textContent).toContain('Representation: density');
+    mock.inspect=()=>[{kind:'line',layerId:'line',total:4,visible:4,rendered:4,exact:true,method:'ordered first/min/max/last per consecutive pixel column'}];
+    mock.emit('hover',{kind:'point',layerId:'line',x:2,y:3,pointerPosition:{x:0,y:0,clientX:0,clientY:0}});
+    expect(card.textContent).toContain('Representation: exact');
+    expect(viewer.element.querySelector('.vv-camera')!.hidden).toBe(true);expect(viewer.element.querySelector('.vv-slices')!.hidden).toBe(true);
+    viewer.dispose();
+  });
+  it('sets the shared x domain from the overview and leaves double-click reset available',()=>{
+    const {figure,mock}=fixture();
+    Object.assign(mock.spec.view,{xScale:'linear',yScale:'linear',zScale:'linear',xLabel:'',yLabel:'',zLabel:''});
+    mock.spec.layers[0].data={x:'x',y:'y'};
+    const series:Record<string,Float64Array>={x:Float64Array.from([0,1,2,3,4]),y:Float64Array.from([1,2,3,4,5])};
+    mock.registry={has:(id:string)=>id in series,get:(id:string)=>({values:series[id]})};
+    mock.setView=vi.fn();mock.setPanelView=vi.fn();
+    const viewer=mountViewer(figure,document.body),track=viewer.element.querySelector<HTMLElement>('.vv-overview-track')!;
+    expect(viewer.element.querySelector<HTMLElement>('.vv-overview')!.hidden).toBe(false);
+    track.getBoundingClientRect=()=>({x:0,y:0,left:0,top:0,right:100,bottom:28,width:100,height:28,toJSON(){return {};}});
+    const point=(type:string,clientX:number)=>track.dispatchEvent(new PointerEvent(type,{bubbles:true,button:0,pointerId:1,clientX,clientY:10}));
+    point('pointerdown',10);point('pointermove',60);point('pointerup',60);
+    expect(mock.setView).toHaveBeenCalledOnce();
+    const domain=mock.setView.mock.calls[0][0].xDomain as [number,number];
+    expect(domain[0]).toBeCloseTo(0.4);expect(domain[1]).toBeCloseTo(2.4);
+    track.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+    expect(mock.setView).toHaveBeenLastCalledWith({xDomain:undefined});
+    [...viewer.element.querySelectorAll('button')].find(button=>button.textContent==='Reset view')!.click();
+    expect(mock.restoreViews).toHaveBeenCalledOnce();
+    mock.spec.layout={rows:1,cols:2,shareX:false,shareY:false};
+    mock.spec.panels=[{id:'panel-2',row:0,col:1,title:'Other',view:{...mock.spec.view}}];
+    mock.spec.layers.push({id:'line-2',kind:'line',visible:true,panelId:'panel-2',data:{x:'x',y:'y'},style:{label:'Other'}});
+    mock.emit('frame',mock.getInspectionState());
+    expect(viewer.element.querySelector<HTMLElement>('.vv-overview')!.hidden).toBe(true);
+    mock.spec.layout.shareX=true;mock.emit('frame',mock.getInspectionState());
+    expect(viewer.element.querySelector<HTMLElement>('.vv-overview')!.hidden).toBe(false);
+    viewer.dispose();
+  });
+  it('shows the nearest xhover sample and only a hover cell that already includes its index',()=>{
+    const {figure,mock}=fixture();
+    Object.assign(mock.spec.view,{xScale:'linear',yScale:'linear',zScale:'linear'});
+    mock.spec.layout={rows:2,cols:1,shareX:true,shareY:false};
+    const viewer=mountViewer(figure,document.body),card=viewer.element.querySelector('.vv-sample')!;
+    mock.emit('xhover',{cursorX:2,pointerPosition:{x:8,y:8,clientX:8,clientY:8},items:[{layerId:'line',index:3,x:2,y:7}]});
+    expect(card.textContent).toContain('Shared cursor');expect(card.textContent).toContain('Source index: 3');expect(card.textContent).toContain('y: 7');
+    mock.emit('hover',{kind:'cell',layerId:'heat',value:9,pointerPosition:{x:0,y:0,clientX:0,clientY:0}});
+    expect(card.textContent).not.toContain('Cell row');
+    mock.emit('hover',{kind:'cell',layerId:'heat',row:1,column:2,value:9,pointerPosition:{x:0,y:0,clientX:0,clientY:0}});
+    expect(card.textContent).toContain('Cell row, column: 1, 2');expect(card.textContent).toContain('value: 9');
+    viewer.dispose();
+  });
+  it('pages the selection preview without rendering every source row',()=>{
+    const {figure,mock}=fixture();
+    mock.spec.layers=[
+      {id:'a',kind:'scatter',visible:true,data:{x:'ax',y:'ay'},style:{label:'Left'}},
+      {id:'b',kind:'scatter',visible:true,data:{x:'bx',y:'by'},style:{label:'Right'}},
+      {id:'h',kind:'hist',visible:true,data:{samples:'samples'},style:{label:'Counts'}},
+    ];
+    mock.spec.selectionLink={id:'link',scatter:['a','b'],histogram:'h',generation:1,sequence:1};
+    const indices=Array.from({length:25},(_,index)=>index);
+    const series:Record<string,Float64Array>={
+      ax:Float64Array.from(indices,index=>index),ay:Float64Array.from(indices,index=>index+100),
+      bx:Float64Array.from(indices,index=>index+200),by:Float64Array.from(indices,index=>index+300),
+      samples:Float64Array.from(indices,index=>index+400),
+    };
+    mock.registry={has:(id:string)=>id in series,get:(id:string)=>({values:series[id]})};
+    mock.selectLinked=vi.fn();
+    const viewer=mountViewer(figure,document.body);
+    mock.emit('selection',{kind:'linked',linkId:'link',generation:1,sequence:1,layerId:'a',active:true,count:80,total:80,fraction:1,indices,truncated:true});
+    const body=viewer.element.querySelector('tbody')!,note=viewer.element.querySelector('.vv-selection .vv-notice')!;
+    expect(note.textContent).toContain('This page is a preview.');
+    expect(body.querySelectorAll('tr')).toHaveLength(20);
+    expect(body.textContent).toContain('100');expect(body.textContent).toContain('200');expect(body.textContent).toContain('400');
+    expect(mock.selectLinked).not.toHaveBeenCalled();
+    [...viewer.element.querySelectorAll('button')].find(button=>button.textContent==='Next')!.click();
+    expect(body.querySelectorAll('tr')).toHaveLength(5);
+    expect(body.querySelector('td')!.textContent).toBe('20');
+    mock.emit('selection',{kind:'density',layerId:'a',bounds:{x:[0,1],y:[0,1]},count:80});
+    expect(viewer.element.querySelector('.vv-selection .vv-notice')!.textContent).toContain('No row preview');
+    expect(viewer.element.querySelector('tbody')!.querySelectorAll('tr')).toHaveLength(0);
+    viewer.dispose();
   });
 });

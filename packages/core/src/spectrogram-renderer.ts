@@ -1,11 +1,11 @@
-import {colorMap} from './color';
+import {colorMap, type ColormapName} from './color';
 import {gridEdges} from './geometry';
 import {createNormalizer} from './scales';
 import type {Bounds,Domain,NumericArray,ViewSpec} from './types';
 
 export interface SpectrogramTexture {
   frequencies:NumericArray; times:NumericArray; values:NumericArray;
-  bounds:Bounds; view:ViewSpec; domain:Domain; colormap:'viridis'|'magma'; opacity:number;
+  bounds:Bounds; view:ViewSpec; domain:Domain; colormap:ColormapName; opacity:number;
   capacity:number; sequenceStart:number; sequenceEnd:number; epoch:string; version:number;
   valueScale:'linear'|'db';dbReference:number;dbFloor:number;
 }

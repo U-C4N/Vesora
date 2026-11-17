@@ -2,6 +2,7 @@ import type {BackendCapabilities,CameraPreset,ViewSpec,Bounds,Domain} from './ty
 import {SpectrogramRenderer} from './spectrogram-renderer';
 import type {SpectrogramTexture} from './spectrogram-renderer';
 
+export interface BufferDirtySpan {start:number;end:number}
 export interface Geometry {
   id: string; positions: Float32Array; colors: Float32Array;
   primitive: 'points' | 'lines' | 'triangles'; size?: number;
@@ -9,7 +10,23 @@ export interface Geometry {
   lineDirections?: Float32Array; lineSides?: Float32Array; width?: number;
   /** Source row per point, segment start per line triangle, source cell triangle per surface triangle. */
   sourceIndices?: Uint32Array;
+  /** Vertex span invalidated by the latest streaming append. End is exclusive. */
+  dirtyVertices?: BufferDirtySpan;
   spectrogram?: SpectrogramTexture;
+}
+/** Choose a GPU upload without scanning when the caller already knows the dirty element span. */
+export function selectBufferUpload(data:Float32Array|Uint32Array, previous?:Float32Array|Uint32Array, dirty?:BufferDirtySpan): {kind:'skip'}|{kind:'full'}|{kind:'partial';start:number;end:number} {
+  if(!previous||previous.constructor!==data.constructor||previous.length!==data.length)return {kind:'full'};
+  if(dirty&&Number.isInteger(dirty.start)&&Number.isInteger(dirty.end)&&dirty.start>=0&&dirty.end<=data.length&&dirty.start<=dirty.end){
+    if(dirty.start===dirty.end)return {kind:'skip'};
+    if(dirty.end-dirty.start<data.length*.75)return {kind:'partial',start:dirty.start,end:dirty.end};
+    return {kind:'full'};
+  }
+  let first=0;while(first<data.length&&data[first]===previous[first])first++;
+  if(first===data.length)return {kind:'skip'};
+  let end=data.length;while(end>first&&data[end-1]===previous[end-1])end--;
+  if(end-first<data.length*.75)return {kind:'partial',start:first,end};
+  return {kind:'full'};
 }
 export function geometryByteLength(g:Geometry):number{return g.positions.byteLength+g.colors.byteLength+(g.indices?.byteLength??0)+(g.normals?.byteLength??0)+(g.wireframeIndices?.byteLength??0)+(g.lineDirections?.byteLength??0)+(g.lineSides?.byteLength??0)+(g.spectrogram?g.spectrogram.frequencies.length*Math.max(g.spectrogram.capacity,g.spectrogram.times.length)*4:0);}
 export function geometryVertexCount(g:Geometry):number{return g.indices?.length??g.positions.length/3;}
@@ -122,15 +139,17 @@ export class WebGLRenderer {
   }
   private createBuffer():WebGLBuffer{const buffer=this.gl.createBuffer();if(!buffer)throw new Error('GPU buffer allocation failed');this.stats.bufferAllocations++;return buffer;}
   private deleteBuffer(buffer:WebGLBuffer):void{this.gl.deleteBuffer(buffer);this.stats.bufferDeletes++;}
-  private uploadBuffer(target:number,data:Float32Array|Uint32Array,previous?:Float32Array|Uint32Array):void{
-    // A change in topology or capacity requires a full allocation. For a stable
-    // attribute layout, upload only the changed span, including interior edits.
-    if(previous?.constructor===data.constructor&&previous.length===data.length){
-      let first=0;while(first<data.length&&data[first]===previous[first])first++;
-      if(first===data.length)return;
-      let end=data.length;while(end>first&&data[end-1]===previous[end-1])end--;
-      if(end-first<data.length*.75){const changed=data.subarray(first,end);this.gl.bufferSubData(target,first*data.BYTES_PER_ELEMENT,changed);this.stats.uploadedBytes+=changed.byteLength;this.stats.uploadCalls++;this.stats.partialUploadCalls++;return;}
-    }
+  private dirtySpan(item:Geometry,components:number,length:number):BufferDirtySpan|undefined{
+    const dirty=item.dirtyVertices;if(!dirty||length===0)return;
+    const vertices=item.positions.length/3;
+    if(Number.isFinite(vertices)&&dirty.start===0&&dirty.end===vertices)return {start:0,end:length};
+    if(components>0){const start=dirty.start*components,end=dirty.end*components;if(start>=0&&end===length&&start<=end)return {start,end};}
+  }
+  private uploadBuffer(target:number,data:Float32Array|Uint32Array,previous?:Float32Array|Uint32Array,dirty?:BufferDirtySpan):void{
+    // Length or topology changes keep a full allocation. A known dirty span skips the endpoint scan.
+    const choice=selectBufferUpload(data,previous,dirty);
+    if(choice.kind==='skip')return;
+    if(choice.kind==='partial'){const changed=data.subarray(choice.start,choice.end);this.gl.bufferSubData(target,choice.start*data.BYTES_PER_ELEMENT,changed);this.stats.uploadedBytes+=changed.byteLength;this.stats.uploadCalls++;this.stats.partialUploadCalls++;return;}
     this.gl.bufferData(target,data,this.gl.DYNAMIC_DRAW);this.stats.uploadedBytes+=data.byteLength;this.stats.uploadCalls++;
   }
   /** Clear once for the whole figure; resources survive between panel draws. */
@@ -202,14 +221,15 @@ export class WebGLRenderer {
         gl.bindBuffer(gl.ARRAY_BUFFER,c);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,4,gl.FLOAT,false,0,0);
       }
       gl.bindVertexArray(buffer.vao);
-      if(buffer.positions!==item.positions){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.p);this.uploadBuffer(gl.ARRAY_BUFFER,item.positions,buffer.positions);buffer.positions=item.positions;}
-      if(buffer.colors!==item.colors){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.c);this.uploadBuffer(gl.ARRAY_BUFFER,item.colors,buffer.colors);buffer.colors=item.colors;}
-      const upload=(key:string,data:Float32Array|Uint32Array,target:number)=>{
-        let entry=buffer!.extra.get(key);if(!entry){entry={buffer:this.createBuffer(),data};buffer!.extra.set(key,entry);gl.bindBuffer(target,entry.buffer);this.uploadBuffer(target,data);}
-        else{gl.bindBuffer(target,entry.buffer);if(entry.data!==data){this.uploadBuffer(target,data,entry.data);entry.data=data;}}return entry;
+      if(buffer.positions!==item.positions){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.p);this.uploadBuffer(gl.ARRAY_BUFFER,item.positions,buffer.positions,this.dirtySpan(item,3,item.positions.length));buffer.positions=item.positions;}
+      if(buffer.colors!==item.colors){gl.bindBuffer(gl.ARRAY_BUFFER,buffer.c);this.uploadBuffer(gl.ARRAY_BUFFER,item.colors,buffer.colors,this.dirtySpan(item,4,item.colors.length));buffer.colors=item.colors;}
+      const upload=(key:string,data:Float32Array|Uint32Array,target:number,components:number)=>{
+        const span=this.dirtySpan(item,components,data.length);
+        let entry=buffer!.extra.get(key);if(!entry){entry={buffer:this.createBuffer(),data};buffer!.extra.set(key,entry);gl.bindBuffer(target,entry.buffer);this.uploadBuffer(target,data,undefined,span);}
+        else{gl.bindBuffer(target,entry.buffer);if(entry.data!==data){this.uploadBuffer(target,data,entry.data,span);entry.data=data;}}return entry;
       };
       if(program.scientific)for(const [name,data,size,location]of [['aNormal',item.normals,3,2],['aLineDirection',item.lineDirections,3,3],['aLineSide',item.lineSides,1,4]] as const){
-        if(data){upload(name,data,gl.ARRAY_BUFFER);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,0,0);}else{gl.disableVertexAttribArray(location);if(size===1)gl.vertexAttrib1f(location,0);else gl.vertexAttrib3f(location,0,0,1);}
+        if(data){upload(name,data,gl.ARRAY_BUFFER,size);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,size,gl.FLOAT,false,0,0);}else{gl.disableVertexAttribArray(location);if(size===1)gl.vertexAttrib1f(location,0);else gl.vertexAttrib3f(location,0,0,1);}
       }
       else for(const [name,location]of [['aNormal',2],['aLineDirection',3],['aLineSide',4]] as const)if(buffer.extra.has(name))gl.disableVertexAttribArray(location);
       const liveExtras=new Set(['aNormal','aLineDirection','aLineSide'].filter(name=>name==='aNormal'?!!item.normals:name==='aLineDirection'?!!item.lineDirections:!!item.lineSides));if(item.indices)liveExtras.add('indices');if(item.wireframeIndices)liveExtras.add('wire');
@@ -221,10 +241,10 @@ export class WebGLRenderer {
         gl.uniform1i(uniforms.lit,item.normals?1:0);gl.uniform1i(uniforms.wire,0);
       }
       const mode=item.primitive==='points'?gl.POINTS:item.primitive==='lines'?gl.LINES:gl.TRIANGLES;
-      if(item.indices){upload('indices',item.indices,gl.ELEMENT_ARRAY_BUFFER);gl.drawElements(mode,item.indices.length,gl.UNSIGNED_INT,0);}else gl.drawArrays(mode,0,item.positions.length/3);
+      if(item.indices){upload('indices',item.indices,gl.ELEMENT_ARRAY_BUFFER,0);gl.drawElements(mode,item.indices.length,gl.UNSIGNED_INT,0);}else gl.drawArrays(mode,0,item.positions.length/3);
       // Unbiased filled depth preserves the same coplanar tie rule as CPU picking.
       // Only the matching surface edges may pass equal depth; later layers use LESS.
-      if(item.wireframeIndices){upload('wire',item.wireframeIndices,gl.ELEMENT_ARRAY_BUFFER);gl.uniform1i(uniforms.wire,1);gl.uniform1i(uniforms.lit,0);gl.depthFunc(gl.LEQUAL);gl.drawElements(gl.LINES,item.wireframeIndices.length,gl.UNSIGNED_INT,0);gl.depthFunc(gl.LESS);}
+      if(item.wireframeIndices){upload('wire',item.wireframeIndices,gl.ELEMENT_ARRAY_BUFFER,0);gl.uniform1i(uniforms.wire,1);gl.uniform1i(uniforms.lit,0);gl.depthFunc(gl.LEQUAL);gl.drawElements(gl.LINES,item.wireframeIndices.length,gl.UNSIGNED_INT,0);gl.depthFunc(gl.LESS);}
     }
   }
   endFrame():void {

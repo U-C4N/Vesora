@@ -11,13 +11,13 @@ const root = resolve('.'), directory = resolve(process.argv[2]);
 const output = process.env.VESORA_V1_OUTPUT ?? resolve('artifacts/v1-verification/manual');
 await mkdir(output, {recursive: true});
 const release = await loadRelease(directory);
-assert.equal(release.identity.canonical, '1.0.0');
+assert.equal(release.identity.canonical, '1.1.0');
 const installed = resolve(output, 'installed-js');
 for (const [name, archive] of [['core', `vesora-core-${release.identity.npm}.tgz`], ['react', `vesora-react-${release.identity.npm}.tgz`]]) {
   const target = resolve(installed, 'node_modules/@vesora', name); await mkdir(target, {recursive: true});
   execFileSync('tar', ['-xzf', resolve(directory, archive), '--strip-components=1', '-C', target], {windowsHide: true, timeout: 30000});
   const pkg = JSON.parse(await readFile(resolve(target, 'package.json'), 'utf8'));
-  assert.equal(pkg.version, '1.0.0');
+  assert.equal(pkg.version, '1.1.0');
 }
 for (const name of validateRuntimeHashes(release.manifest.runtime)) {
   assert.equal(sha256(await readFile(resolve(installed, 'node_modules/@vesora/core/dist', `${name}.js`))), release.manifest.runtime[name]);

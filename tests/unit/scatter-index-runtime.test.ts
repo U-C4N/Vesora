@@ -28,7 +28,7 @@ it('reports owned static worker indexing and reset on release/fallback/dispose',
     await import('../../packages/core/src/worker');receive=(globalThis as unknown as {onmessage:(event:{data:WorkerRequest})=>void}).onmessage;
     scheduler=new QueryScheduler({workerFactory:()=>fake as unknown as Worker,maxCacheBytes:0});const registry=sources(false);
     for(let i=0;i<3;i++){const options={...query,width:200+i};expect(await scheduler.query('scatter','scatter','x','y',options,registry)).toEqual(expected(registry,options));}
-    expect(scheduler.stats.scatterIndex.worker).toMatchObject({builds:1,warmQueries:1,lastMode:'warm-index',retainedBytes:0});
+    expect(scheduler.stats.scatterIndex.worker).toMatchObject({builds:1,warmQueries:2,lastMode:'warm-index',retainedBytes:0});
     expect(scheduler.stats.scatterIndex.fallback.indexBytes).toBe(0);scheduler.release('x');
     await vi.waitFor(()=>expect(scheduler!.stats.scatterIndex.worker.indexBytes).toBe(0));
     expect(sent.some(message=>message.type==='error'||message.type==='sync-error')).toBe(false);

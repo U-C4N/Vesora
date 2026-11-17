@@ -10,7 +10,7 @@ target = Path(os.environ["VESORA_INSTALL_TARGET"]).resolve()
 sys.path.insert(0, str(target))
 import vesora as vs
 assert Path(vs.__file__).resolve().is_relative_to(target), vs.__file__
-assert vs.__version__ == "1.0.0"
+assert vs.__version__ == "1.1.0"
 root = Path(__file__).resolve().parents[1]
 output = Path(os.environ["VESORA_V1_OUTPUT"])
 gallery = runpy.run_path(str(root / "skills/vesora/scripts/example_python.py"))

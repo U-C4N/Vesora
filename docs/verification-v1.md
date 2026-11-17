@@ -1,4 +1,4 @@
-# Bounded automatic verification for Vesora 1.0.0
+# Bounded automatic verification for Vesora 1.1.0
 
 Run `npm run verify:next`. This is one verification of this version, not a daily/nightly testing policy. Its default and maximum wall-clock budget is **600,000 milliseconds**, beginning before environment validation and including build/local packaging. A smaller budget is available with `-- --budget-ms NUMBER`.
 
@@ -31,4 +31,4 @@ The verifier writes separate reports. It does not edit `release-gates.json`, mar
 
 ## Recorded result
 
-The completed local run on 5 November 2026 passed every required stage in **45.528 seconds**, including build, packaging, production React/browser workspaces, offline archives and the exact installed wheel's real Qt/Jupyter checks. See the [report](../artifacts/v1-verification/2026-11-05T07-57-14-862Z/report.json) and [release evidence summary](releases/v1.0.0.md). Setup/download time is excluded as defined above; earlier failed reports remain preserved.
+The completed local run on 5 November 2026 is the **1.0.0** result: it passed every required stage in **45.528 seconds**, including build, packaging, production React/browser workspaces, offline archives and the exact installed wheel's real Qt/Jupyter checks. See the [report](../artifacts/v1-verification/2026-11-05T07-57-14-862Z/report.json) and [1.0.0 evidence summary](releases/v1.0.0.md). That run is not a 1.1.0 publication record. Setup/download time is excluded as defined above; earlier failed reports remain preserved. [1.1.0 notes](releases/v1.1.0.md)

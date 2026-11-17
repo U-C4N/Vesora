@@ -45,6 +45,7 @@ describe('bounded exact scatter spatial index',()=>{
     expect(index.diagnostics().builds).toBe(0);registry.get('x').values.fill(40);registry.get('y').values.fill(60);
     expect(plan(registry,query,index)).toEqual(plan(registry));expect(index.diagnostics().indexBytes).toBe(0);
     const worker=sources(10000,false);plan(worker,query,index,true);expect(plan(worker,query,index,true)).toEqual(plan(worker));expect(index.diagnostics().builds).toBe(1);
+    expect(index.diagnostics().scanQueries).toBeGreaterThan(0);
   });
   it('uses object identity and versions, even for a replacement with the same descriptor version',()=>{
     const registry=sources(),index=new ScatterIndexCache();plan(registry,query,index);plan(registry,query,index);
@@ -71,6 +72,15 @@ describe('bounded exact scatter spatial index',()=>{
     const first=scatterSteps(registry.get('x'),registry.get('y'),query,index);expect(first.next().done).toBe(false);
     const pan={...query,bounds:{x:[40,50] as [number,number],y:[50,60] as [number,number]}};
     expect(plan(registry,pan,index)).toEqual(plan(registry,pan));expect(finish(first)).toEqual(plan(registry));expect(index.diagnostics().builds).toBe(1);
+  });
+  it('builds a finer grid for a worker-owned frozen copy on the first query',()=>{
+    const registry=sources(65_536),index=new ScatterIndexCache(),expected=plan(registry);
+    expect(plan(registry,query,index,true)).toEqual(expected);
+    expect(index.diagnostics()).toMatchObject({builds:1,scanQueries:0,lastMode:'cold-index'});
+    expect(index.diagnostics().lastGridCells).toBeGreaterThan(64);
+    const caller=sources(10_000,false),plain=new ScatterIndexCache();
+    plan(caller,query,plain);plan(caller,query,plain);
+    expect(plain.diagnostics().builds).toBe(0);expect(plain.diagnostics().scanQueries).toBeGreaterThan(0);
   });
   it('handles constant axes, invalid coordinates and overflowing extents through exact fallback',()=>{
     const registry=sources(10000,false),index=new ScatterIndexCache();registry.get('x').values.fill(40);

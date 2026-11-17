@@ -74,7 +74,7 @@ export interface DataDescriptor {
 }
 export interface LayerStyle {
   color?: string; size?: number; width?: number; opacity?: number; label?: string;
-  colormap?: "viridis" | "magma"; representation?: RepresentationMode;
+  colormap?: "viridis" | "magma" | "coolwarm"; representation?: RepresentationMode;
   colorDomain?: Domain;
   colorbarLabel?: string;
   shading?: 'unlit' | 'smooth';

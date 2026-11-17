@@ -61,7 +61,7 @@ it.each([65_535,65_536,65_537])('yields by logical blocks, not storage spans, fo
   expect(line.result).toEqual(finish(lineSteps(x,y,options)).result);
   expect(finish(scatterSteps(xe,ye,{...options,mode:'density'})).yields).toBe(expected);
   const points=finish(scatterSteps(xe,ye,options));
-  expect(points.yields).toBe(expected*2);
+  expect(points.yields).toBe(expected);
   if(points.result.kind!=='points')throw new Error('Expected exact original points');
   expect(points.result.indices.length).toBe(count);
   expect(points.result.indices[count-1]).toBe(count-1);

@@ -2,25 +2,25 @@
 
 A TypeScript scientific visualization engine shared by Python and JavaScript. It provides WebGL2 rendering for 2D lines, interval bands, scatter, and heatmaps; mixed 2D/3D grids; scientific text and reference lines; and 3D surfaces, lines and scatter with source-aware inspection. Sized PNG and self-contained interactive HTML export include the whole layout. TypeScript types are included.
 
-**Vesora 1.0.0, MIT licensed.** Rendering requires WebGL2. Use [`@vesora/react`](../react/README.md) for chart cards or an application-owned scientific viewer. Long-duration acquisition, real screen-reader operation and human pilot acceptance remain unverified; see the [v1 release scope](../../docs/releases/v1.0.0.md).
+**Vesora 1.1.0, MIT licensed.** Rendering requires WebGL2. Use [`@vesora/react`](../react/README.md) for chart cards or an application-owned scientific viewer. Long-duration acquisition, real screen-reader operation and human pilot acceptance remain unverified; see the [1.1.0 notes](../../docs/releases/v1.1.0.md) and the [v1 publication policy](../../docs/releases/v1.0.0.md#approved-v1-publication-policy--5-november-2026).
 
 Version 1 adds ECDF/CCDF, supplied spectrograms, event timelines, asymmetric error bars, contour/filled contour, quiver, parallel coordinates, Pareto frontiers, phase portraits/hysteresis and ternary composition. `createRunComparison` aligns declared runs; `linkObservations` shares stable row-ID cohorts. Read the [v1 contracts](../../docs/v1.md), [agent skill](../../skills/vesora/SKILL.md) and [bounded verification](../../docs/verification-v1.md).
 
 ## Installation
 
 ```bash
-npm install @vesora/core@1.0.0
+npm install @vesora/core@1.1.0
 ```
 
-The [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.0.0) records publication status and matching downloadable archives.
+The [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.1.0) records publication status and matching downloadable archives.
 
-From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v1.0.0/vesora-core-1.0.0.tgz` into your frontend project:
+From a repository checkout, run `npm ci`, `npm run build`, and `npm run package:release -- --candidate` after preparing the Python build dependencies described in the [development guide](../../docs/development.md#validate-a-release-package). This creates local review archives. Copy `dist/release-v1.1.0/vesora-core-1.1.0.tgz` into your frontend project:
 
 ```bash
-npm install ./vesora-core-1.0.0.tgz
+npm install ./vesora-core-1.1.0.tgz
 ```
 
-Local package generation does not publish either package; see the [v1 release policy](../../docs/releases/v1.0.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication. A publishable build requires a clean source commit and matching release tag.
+Local package generation does not publish either package; see the [1.1.0 notes](../../docs/releases/v1.1.0.md) and the [development guide](../../docs/development.md) for verification and authenticated publication. A publishable build requires a clean source commit and matching release tag.
 
 ## Match your application theme and metrics
 

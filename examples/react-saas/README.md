@@ -20,7 +20,7 @@ Open the URL Vite prints. To build the standalone application:
 npm run build:example
 ```
 
-The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for local Vesora `1.0.0` builds; registry publication is a separate step.
+The output is `examples/react-saas/dist`. Charts require WebGL2. This is a source-checkout example for local Vesora `1.1.0` builds; registry publication is a separate step.
 
 ## Ten charts, one problem at a time
 

@@ -177,7 +177,7 @@ export function validateStyle(style:LayerStyle):void{
   for(const key of ['width','size'] as const)if(style[key]!==undefined&&(!Number.isFinite(style[key])||style[key]!<=0))throw new RangeError(`${key} must be finite and positive`);
   if(style.opacity!==undefined&&(!Number.isFinite(style.opacity)||style.opacity<0||style.opacity>1))throw new RangeError('opacity must be between 0 and 1');
   if(style.representation!==undefined&&!['auto','points','density'].includes(style.representation))throw new Error('Invalid representation');
-  if(style.colormap!==undefined&&!['viridis','magma'].includes(style.colormap))throw new Error('Invalid colormap');
+  if(style.colormap!==undefined&&!['viridis','magma','coolwarm'].includes(style.colormap))throw new Error('Invalid colormap');
   if(style.colorDomain)validateDomain(style.colorDomain,'linear');
   if(style.shading!==undefined&&!['unlit','smooth'].includes(style.shading))throw new TypeError('Surface shading must be unlit or smooth');
   if(style.wireframe!==undefined&&typeof style.wireframe!=='boolean')throw new TypeError('Surface wireframe must be boolean');

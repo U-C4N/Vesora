@@ -3,6 +3,7 @@ import type {DataRegistry} from './data';
 import {entryExtent} from './source-metadata';
 import {createNormalizer, extent} from './scales';
 import {parseColor, colorMap} from './color';
+import {dirtyRange} from './streaming';
 import type {Bounds, LayerSpec, NumericArray, PointPlan, LineResult, BandResult, ViewSpec, Domain} from './types';
 import type {Geometry} from './renderer';
 
@@ -75,6 +76,17 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
   const nY=(v:number)=>normalizeY(v)*2-1;
   const nZ=(v:number)=>normalizeZ(v)*2-1;
   const color=(v?:number)=>v===undefined?base:colorMap(v,scalarDomain,layer.style.colormap).map((c,i)=>i===3?(layer.style.opacity??1):c);
+  const streamed=[xe,ye];if(layer.data.z)streamed.push(registry.get(layer.data.z));if(scalarEntry)streamed.push(scalarEntry);
+  const sampleLength=xe.descriptor.shape[0];
+  const finish=(geometry:Geometry,pointAligned=false):Geometry=>{
+    let start=Infinity,end=-Infinity,seen=false;
+    for(const entry of streamed){const dirty=dirtyRange(entry);if(!dirty)continue;seen=true;if(dirty.start<start)start=dirty.start;if(dirty.end>end)end=dirty.end;}
+    if(!seen)return geometry;
+    const vertices=geometry.positions.length/3;
+    if(start===0&&end>=sampleLength)return {...geometry,dirtyVertices:{start:0,end:vertices}};
+    if(pointAligned&&vertices===sampleLength&&start>=0&&end===vertices)return {...geometry,dirtyVertices:{start,end}};
+    return geometry;
+  };
   const push=(a:number,b:number,c:number,rgba:number[])=>{
     if(!Number.isFinite(a)||!Number.isFinite(b)||!Number.isFinite(c)||Math.max(Math.abs(a),Math.abs(b),Math.abs(c))>3.4028234663852886e38)throw new RangeError('Geometry exceeds float32 coordinates after projection. Narrow the data domain.');
     if(count===vertexBudget)throw new RangeError('Layer exceeds the renderer geometry budget of 2,000,000 vertices. Reduce the grid or viewport.');
@@ -138,7 +150,7 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
       for(const [end,side]of [[0,1],[0,-1],[1,-1],[0,1],[1,-1],[1,1]]){const v=end?q:p;push(v[0],v[1],v[2],color(scalar?.get(end?b:a)));directions.push(...direction);sides.push(side);}
       sources.push(a);
     }
-    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',lineDirections:Float32Array.from(directions),lineSides:Float32Array.from(sides),width:layer.style.width??1.5,sourceIndices:Uint32Array.from(sources)};
+    return finish({id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',lineDirections:Float32Array.from(directions),lineSides:Float32Array.from(sides),width:layer.style.width??1.5,sourceIndices:Uint32Array.from(sources)});
   }else if(layer.kind==='heatmap'){
     const xe=gridEdges(x,view.xScale),ye=gridEdges(y,view.yScale);
     for(let r=0;r<yr.length;r++)for(let c=0;c<xr.length;c++){
@@ -171,7 +183,7 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
       for(let i=0;i<normals.length;i+=3){const length=Math.hypot(normals[i],normals[i+1],normals[i+2]);if(length)for(let k=0;k<3;k++)normals[i+k]/=length;else normals[i+2]=1;}
     }
     if(layer.style.wireframe){const edges=new Set<number>(),wire:number[]=[];for(let i=0;i<indices.length;i+=3)for(const [a,b]of [[indices[i],indices[i+1]],[indices[i+1],indices[i+2]],[indices[i+2],indices[i]]]){const key=Math.min(a,b)*count+Math.max(a,b);if(!edges.has(key)){edges.add(key);wire.push(a,b);}}wireframeIndices=Uint32Array.from(wire);}
-    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',indices,...(normals?{normals}:{}),...(wireframeIndices?{wireframeIndices}:{}),sourceIndices:sourceTriangles.subarray(0,indexCount/3)};
+    return finish({id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',indices,...(normals?{normals}:{}),...(wireframeIndices?{wireframeIndices}:{}),sourceIndices:sourceTriangles.subarray(0,indexCount/3)});
   }else{
     const sourceIndices:number[]=[];
     const indices=plan?.kind==='points'?plan.indices:undefined;
@@ -182,7 +194,7 @@ export function buildGeometry(layer:LayerSpec, registry:DataRegistry, bounds:Bou
       push(a,b,c,color(scalar?.get(i)));
       sourceIndices.push(i);
     }
-    return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'points',size:layer.style.size??5,sourceIndices:Uint32Array.from(sourceIndices)};
+    return finish({id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'points',size:layer.style.size??5,sourceIndices:Uint32Array.from(sourceIndices)},true);
   }
-  return {id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',size:layer.style.size??5};
+  return finish({id:layer.id,positions:positions.subarray(0,count*3),colors:colors.subarray(0,count*4),primitive:'triangles',size:layer.style.size??5});
 }

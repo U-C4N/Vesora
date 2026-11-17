@@ -132,6 +132,16 @@ Open the React URL with **`?demo=v1`** to try workflows that connect several vie
 
 **Studio** provides inspection and export controls. **Embed** fits the same viewer into an application-owned card. Both retain the distinction between latest accepted data and the completed displayed frame. [Workflow contracts](skills/vesora/references/workflows.md) · [Runnable workspace source](examples/web/v1-scenarios.js)
 
+## Inspect the sample
+
+The shared viewer command bar holds the view actions, a status pill, and one Export menu. The pill reads Live, Frozen snapshot, or Ready. While frozen, it includes the capture time. Export writes PNG or HTML from the displayed frame or the latest accepted data, with a checkbox for the observation record. The full-width Export options row is gone.
+
+The sample card can take keyboard focus. It shows the layer, coordinates, the unit when one is declared, the source index, and the representation method when available. Revision, byte, and worker details stay in a collapsed Details disclosure. A theme change while frozen updates the chrome immediately and applies the plot theme when the view returns to live.
+
+Line, band, and spectrogram panels that share a linear or time x axis, and a single panel of those kinds, show an x-range strip under the plot. Dragging sets the x domain, and a double-click clears it. When axes share x, the cursor shows each line's nearest recorded sample from x inspection, with no interpolated value. A heatmap or spectrogram cell appears only when the event already includes cell indices. The selection table pages the event's indices, 20 rows at a time. Linked selection is still two scatters and one histogram.
+
+Viridis and magma use the 256 Matplotlib 3.10.7 stops. Coolwarm is available. `colorMap` accepts under, over, and bad colors. Scatter interaction on worker-owned data replans from a spatial grid, and the first query may build that grid. Mutable caller buffers still scan. An unindexed point query records indices during the visibility pass. 3D picking builds its projected index in chunks and keeps a hit only when it passes the existing hit test.
+
 ## Start with your language
 
 ### Python
@@ -202,21 +212,21 @@ export function LatencyCard() {
 
 For declarative line, bar and scatter cards, use `VesoraChart` with themes, formatting, legends, tooltips and loading states. React **18.3 and 19** are supported peer ranges. [React API](packages/react/README.md) · [Runnable React example](skills/vesora/scripts/example_react.tsx)
 
-## Install Vesora 1.0.0
+## Install Vesora 1.1.0
 
 The release targets `vesora` on PyPI and `@vesora/core` / `@vesora/react` on npm. Use the matching versions together:
 
 ```sh
-python -m pip install vesora==1.0.0
+python -m pip install vesora==1.1.0
 # For Jupyter notebooks:
-python -m pip install "vesora[notebook]==1.0.0"
+python -m pip install "vesora[notebook]==1.1.0"
 
-npm install @vesora/core@1.0.0
+npm install @vesora/core@1.1.0
 # For React applications:
-npm install @vesora/core@1.0.0 @vesora/react@1.0.0 react react-dom
+npm install @vesora/core@1.1.0 @vesora/react@1.1.0 react react-dom
 ```
 
-Check the [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.0.0) for publication status and downloadable archives. To build local review archives from this checkout:
+Check the [GitHub release](https://github.com/U-C4N/Vesora/releases/tag/v1.1.0) for publication status and downloadable archives. Registry publication is a separate step from this source tag. To build local review archives from this checkout:
 
 ```sh
 npm run build
@@ -224,14 +234,14 @@ python -m pip install "setuptools>=77" wheel
 npm run package:release -- --candidate
 ```
 
-The output is `dist/release-v1.0.0/`. These install commands use paths relative to the repository root; another application can point to the same archive files:
+The output is `dist/release-v1.1.0/`. These install commands use paths relative to the repository root; another application can point to the same archive files:
 
 ```sh
-npm install ./dist/release-v1.0.0/vesora-core-1.0.0.tgz ./dist/release-v1.0.0/vesora-react-1.0.0.tgz react react-dom
-python -m pip install ./dist/release-v1.0.0/vesora-1.0.0-py3-none-any.whl
+npm install ./dist/release-v1.1.0/vesora-core-1.1.0.tgz ./dist/release-v1.1.0/vesora-react-1.1.0.tgz react react-dom
+python -m pip install ./dist/release-v1.1.0/vesora-1.1.0-py3-none-any.whl
 ```
 
-The Python wheel includes matching renderer and desktop assets. For widgets, install the wheel with its `notebook` extra. [Packaging and release status](docs/releases/v1.0.0.md)
+The Python wheel includes matching renderer and desktop assets. For widgets, install the wheel with its `notebook` extra. [1.1.0 notes](docs/releases/v1.1.0.md) · [1.0.0 notes](docs/releases/v1.0.0.md)
 
 ## Keep the data behind the view
 
@@ -262,7 +272,9 @@ Short fixed Windows Chromium/WebGL2 probes with configured ANGLE recorded:
 | Same size, cold pick after camera rotation | **24.4 ms** |
 | Three retained 100,000-row lines; 32 atomic batches of 100 rows | **16.2 ms p95 / 31.0 ms p99** append-to-completed-frame |
 
-These are short local workloads, with frame completion distinct from physical display time. [Conditions, archive identity and results](docs/releases/v1.0.0.md) accompany the measurements; long-duration endurance and human accessibility evaluation are separate evidence.
+These are the 1.0.0 short local workloads, with frame completion distinct from physical display time. [Conditions, archive identity and results](docs/releases/v1.0.0.md) accompany those measurements; long-duration endurance and human accessibility evaluation are separate evidence.
+
+On 17 November 2026, one machine (Intel Core Ultra 9 275HX, Chrome 157 headless, ANGLE Intel Graphics, 1000×700) remeasured a 1,000,000-point scatter. Interaction p95 went from 317.4 ms to 75.5 ms. First render went from 215.8 ms to 460.5 ms because the spatial grid is built on the first query. Other panel cases on that machine were mixed. A separate SwiftShader streaming run is not a hardware frame rate. This is not a claim that the product is faster overall. [1.1.0 notes](docs/releases/v1.1.0.md)
 
 ## Use Vesora with an agent
 
@@ -276,4 +288,4 @@ Generic streaming covers numeric 2D line/scatter, with a separate bounded-row sp
 
 ## Find the details
 
-[Analysis API](docs/v1.md) · [Core API](docs/api.md) · [React API](packages/react/README.md) · [Architecture](docs/architecture.md) · [Image provenance](docs/assets/README.md) · [Release notes](docs/releases/v1.0.0.md) · [MIT license](LICENSE)
+[Analysis API](docs/v1.md) · [Core API](docs/api.md) · [React API](packages/react/README.md) · [Architecture](docs/architecture.md) · [Image provenance](docs/assets/README.md) · [Release notes](docs/releases/v1.1.0.md) · [MIT license](LICENSE)

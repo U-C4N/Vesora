@@ -5,7 +5,7 @@ description: Build or update scientific visualizations and embedded charts with 
 
 # Vesora
 
-Use the installed Vesora API, preserve source meaning, and produce a working chart in the user's chosen host. These examples target **Vesora 1.0.0**, scene protocols 1–9. Check the actual package version before using the new analysis APIs; do not silently assume an older version supports them.
+Use the installed Vesora API, preserve source meaning, and produce a working chart in the user's chosen host. These examples target **Vesora 1.1.0**, scene protocols 1–9. Check the actual package version before using the new analysis APIs; do not silently assume an older version supports them.
 
 ## Choose the host and chart
 

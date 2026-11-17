@@ -1,4 +1,4 @@
-# Vesora 1.0.0
+# Vesora 1.1.0
 
 > Shared-engine scientific visualization for Python, JavaScript, and React. WebGL2 rendering; scene protocols 1–9; local review packages, not a claim of registry publication.
 

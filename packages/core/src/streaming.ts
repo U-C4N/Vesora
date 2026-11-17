@@ -1,6 +1,11 @@
 import {chunkEntry, retainChunks, streamValues} from './data';
 import type {DataEntry, NumericArray, StreamState, StreamingOptions} from './types';
 
+export interface StreamDirtyRange {start:number;end:number}
+const dirtyRanges=new WeakMap<DataEntry,StreamDirtyRange>();
+/** Element span of the retained window changed by the latest append. End is exclusive. */
+export function dirtyRange(entry:DataEntry):StreamDirtyRange|undefined{return dirtyRanges.get(entry);}
+
 const BLOCK = 4096;
 export function validateStreamingOptions(options: StreamingOptions): void {
   if (!options || !Number.isSafeInteger(options.maxPoints) || options.maxPoints < 1 || options.maxPoints > 0xffff_ffff)
@@ -19,8 +24,9 @@ export function streamEntry(entry: DataEntry, maxPoints: number, version = entry
   const descriptor = {...entry.descriptor, version, shape: [length], byteLength: length * entry.values.BYTES_PER_ELEMENT};
   return chunkEntry(descriptor, ownChunks(entry.values, maxPoints));
 }
-export function appendEntry(entry: DataEntry, input: ArrayLike<number>, maxPoints: number): {entry: DataEntry; added: NumericArray} {
+export function appendEntry(entry: DataEntry, input: ArrayLike<number>, maxPoints: number): {entry: DataEntry; added: NumericArray; dirty: StreamDirtyRange} {
   const added = streamValues(input, entry.descriptor.dtype);
+  const previousLength = entry.descriptor.shape[0];
   const chunks = [...(entry.chunks ?? ownChunks(entry.values, maxPoints))];
   const incoming = ownChunks(added, maxPoints);
   // Preserve append deltas instead of repeatedly retransmitting an expanding
@@ -31,8 +37,12 @@ export function appendEntry(entry: DataEntry, input: ArrayLike<number>, maxPoint
     joined.set(last); joined.set(first, last.length); chunks[chunks.length - 1] = joined; incoming.shift();
   }
   const retained = retainChunks([...chunks, ...incoming], maxPoints);
-  const length = Math.min(maxPoints, entry.descriptor.shape[0] + added.length);
-  return {entry: chunkEntry({...entry.descriptor, version: entry.descriptor.version + 1, shape: [length], byteLength: length * added.BYTES_PER_ELEMENT}, retained), added};
+  const length = Math.min(maxPoints, previousLength + added.length);
+  // A sliding window moves every retained index. A pure tail leaves the prefix untouched.
+  const dirty: StreamDirtyRange = previousLength + added.length > length ? {start: 0, end: length} : {start: previousLength, end: length};
+  const next = chunkEntry({...entry.descriptor, version: entry.descriptor.version + 1, shape: [length], byteLength: length * added.BYTES_PER_ELEMENT}, retained);
+  dirtyRanges.set(next, dirty);
+  return {entry: next, added, dirty};
 }
 export function lastValue(entry: DataEntry): number | undefined {
   const chunks = entry.chunks;

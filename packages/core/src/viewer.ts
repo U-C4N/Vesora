@@ -1,6 +1,6 @@
 import type {Figure} from './figure';
 import {toHTMLAsync} from './html-export-async';
-import type {HoverEvent, ThemeInput, ViewState} from './types';
+import type {Domain, HoverEvent, LayerSpec, Selection, ThemeInput, ViewSpec, ViewState, XHoverEvent} from './types';
 import {VIEWER_STYLE} from './viewer-style';
 
 export type ViewerTheme = 'dark' | 'light';
@@ -62,6 +62,8 @@ const text = (node:HTMLElement, value:string) => {if(node.textContent!==value)no
 const formatter = new Intl.NumberFormat('en-US',{maximumFractionDigits:4});
 const number = (value:number) => formatter.format(value);
 const inspectionHint='Select or hover a sample to inspect its coordinates.';
+const PAGE_SIZE=20;
+const OVERVIEW_KINDS=new Set(['line','band','spectrogram']);
 const tokenProperties:Record<keyof ViewerChromeTokens,string>={background:'bg',panel:'panel',text:'text',muted:'muted',border:'line',control:'control',accent:'accent',error:'error'};
 function presentationPatch(input:ViewerPresentationOptions,document:Document):ViewerPresentationOptions {
   if(!input||typeof input!=='object')throw new TypeError('Viewer options must be an object.');
@@ -104,21 +106,34 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
   const toolbar=create('header','vv-toolbar');
   const title=create('h2','vv-title',toolbar);title.textContent=(options.title??figure.spec.title)||'Vesora';
   const actions=create('div','vv-toolbar-actions',toolbar);actions.setAttribute('role','group');actions.setAttribute('aria-label','Figure actions');
-  const exportDetails=create('details','vv-export-options',toolbar);create('summary','',exportDetails).textContent='Export options';
-  const exportSourceField=create('label','vv-field',exportDetails);exportSourceField.append(document.createTextNode('Export source'));
+  const pill=create('span','vv-status vv-pill',toolbar);pill.setAttribute('role','status');pill.setAttribute('aria-live','polite');
+  const pillDot=create('span','vv-state-dot',pill);pillDot.setAttribute('aria-hidden','true');
+  const status=create('span','vv-status-text',pill);
+  const exportDetails=create('details','vv-export',toolbar);exportDetails.open=true;create('summary','',exportDetails).textContent='Export';
+  const exportPanel=create('div','vv-export-panel',exportDetails);
+  const exportSourceField=create('label','vv-field',exportPanel);exportSourceField.append(document.createTextNode('Export source'));
   const exportSource=create('select','',exportSourceField);exportSource.setAttribute('aria-label','Export source');
   for(const [value,label] of [['displayed','Displayed frame'],['accepted','Latest accepted data']]){const item=document.createElement('option');item.value=value;item.textContent=label;exportSource.append(item);}
-  const observationField=create('label','vv-checkbox',exportDetails);const observation=create('input','',observationField);observation.type='checkbox';observationField.append(document.createTextNode('Include observation record in HTML'));observationField.hidden=options.exportHTML===false;
-  const exportHint=create('p','vv-notice',exportDetails);
+  const observationField=create('label','vv-checkbox',exportPanel);const observation=create('input','',observationField);observation.type='checkbox';observationField.append(document.createTextNode('Include observation record in HTML'));observationField.hidden=options.exportHTML===false;
+  const exportHint=create('p','vv-notice',exportPanel);
   const errorPanel=create('div','vv-error');errorPanel.hidden=true;errorPanel.setAttribute('role','alert');
   const errorText=create('p','',errorPanel);
   const body=create('div','vv-body');const plot=create('div','vv-plot',body);const chart=create('div','vv-chart',plot);
+  const overview=create('div','vv-overview',plot);overview.hidden=true;
+  const overviewTrack=create('div','vv-overview-track',overview);overviewTrack.tabIndex=0;overviewTrack.setAttribute('role','slider');overviewTrack.setAttribute('aria-label','Visible x range');
+  const overviewWindow=create('div','vv-overview-window',overviewTrack);
+  const cursorGuide=create('div','vv-cursor-guide',plot);cursorGuide.hidden=true;cursorGuide.setAttribute('aria-hidden','true');
   const help=create('p','vv-help',plot);help.textContent='Drag to explore · wheel to zoom · double-click to reset';
   const sidebar=create('aside','vv-sidebar',body);sidebar.setAttribute('aria-label','Figure inspector');
   const layerDetails=create('details','',sidebar);layerDetails.open=true;create('summary','',layerDetails).textContent='Layers';
   const layerList=create('div','vv-layers',layerDetails);
   const inspectDetails=create('details','',sidebar);inspectDetails.open=options.inspector===true||!!figure.spec.inspection?.selection;create('summary','',inspectDetails).textContent='Inspector';
-  const inspection=create('p','vv-inspection',inspectDetails);inspection.textContent=inspectionHint;
+  const sampleCard=create('article','vv-sample vv-inspection',inspectDetails);sampleCard.tabIndex=0;sampleCard.setAttribute('aria-label','Sample');
+  const sampleBody=create('div','vv-sample-body',sampleCard);
+  const sharedCursor=create('div','vv-shared',sampleCard);sharedCursor.hidden=true;
+  const sampleDetails=create('details','vv-details',inspectDetails);create('summary','',sampleDetails).textContent='Details';
+  const sampleRaw=create('div','vv-sample-raw',sampleDetails);
+  const diagnostics=create('p','vv-inspection vv-diagnostics',sampleDetails);
   const surfaceQuality=create('p','vv-notice',inspectDetails);surfaceQuality.hidden=true;
   const captureNotice=create('p','vv-notice',inspectDetails);
   const camera=create('div','vv-camera',inspectDetails);const cameraField=create('label','vv-field',camera);cameraField.append(document.createTextNode('3D panel'));
@@ -131,10 +146,20 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
   const semantics=create('div','vv-semantics',metadataDetails);
   const recordDetails=create('details','vv-record',sidebar);create('summary','',recordDetails).textContent='Observation record';
   const record=create('div','vv-record-body',recordDetails);
-  const diagnosticDetails=create('details','',sidebar);create('summary','',diagnosticDetails).textContent='Diagnostics';const diagnostics=create('p','vv-inspection',diagnosticDetails);
-  const statusbar=create('footer','vv-statusbar');const status=create('span','vv-status',statusbar);status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const selectionDetails=create('details','vv-selection',sidebar);selectionDetails.hidden=true;
+  const selectionSummary=create('summary','',selectionDetails);selectionSummary.textContent='Selection';
+  const selectionNote=create('p','vv-notice',selectionDetails);
+  const tableWrap=create('div','vv-table-wrap',selectionDetails);const selectionTable=create('table','vv-rows',tableWrap);const tableHead=create('thead','',selectionTable);const tableBody=create('tbody','',selectionTable);
+  const pager=create('div','vv-pager',selectionDetails);
+  const pagePrev=create('button','',pager);pagePrev.type='button';pagePrev.textContent='Previous';
+  const pageLabel=create('span','vv-page',pager);
+  const pageNext=create('button','',pager);pageNext.type='button';pageNext.textContent='Next';
+  const statusbar=create('footer','vv-statusbar');statusbar.hidden=true;
   let disposed=false,mounted=false,exporting=false,pendingTheme=false,theme:ViewerTheme=options.theme??'dark',layerKey='',panelKey='',sliceKey='',metadataLayerKey='',metadataKey='',recordKey='';
   let selectedObservation:HoverEvent|undefined=figure.spec.inspection?.selection?structuredClone(figure.spec.inspection.selection):undefined;
+  let lastXHover:XHoverEvent|null=null,lastCell:HoverEvent|undefined,selectionPage=0,selectionEvent:Selection|undefined;
+  let overviewState:{panelId:string;full:Domain;domain?:Domain}|undefined;
+  let overviewDrag:{pointerId:number;originClient:number;origin:number;full:Domain;panelId:string;moved:boolean}|undefined;
   const initialViews:ViewState=figure.captureViews();
   const removers:Array<()=>void>=[];const downloads=new Set<string>();
   const fail=(caught:unknown)=>{if(disposed)return;const error=message(caught);errorText.textContent=/webgl/i.test(error.message)?'WebGL2 could not start. Use a WebGL2-capable browser to open this interactive figure.':error.message;errorPanel.hidden=false;text(status,'Unable to display the current view');try{options.onError?.(error);}catch{/* Consumer errors do not interrupt viewer cleanup. */}};
@@ -154,7 +179,8 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
       setTimeout(()=>{URL.revokeObjectURL(url);downloads.delete(url);},1000);
     }finally{exporting=false;if(!disposed)refresh();}
   };
-  const png=button('Export PNG',actions,()=>exportFile('png'));const html=button('Export HTML',actions,()=>exportFile('html'));
+  const png=button('Export PNG',exportPanel,()=>exportFile('png'));const html=button('Export HTML',exportPanel,()=>exportFile('html'));
+  exportPanel.insertBefore(png,exportSourceField);exportPanel.insertBefore(html,exportSourceField);
   html.hidden=options.exportHTML===false;
   const syncExportHint=()=>text(exportHint,exportSource.value==='accepted'?'Exports the latest accepted data. This may differ from a frozen view. PNG is an image; observation records are included only in HTML.':'Exports the frame you are inspecting. PNG is an image; observation records are included only in HTML.');
   exportSource.addEventListener('change',syncExportHint);
@@ -162,7 +188,7 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
     presentation={...presentation,...patch};
     const mode=presentation.mode??'studio',chrome={toolbar:true,inspector:mode==='studio',status:true,help:mode==='studio',...presentation.chrome};
     // Undefined individual flags retain the mode default.
-    toolbar.hidden=chrome.toolbar===false;sidebar.hidden=chrome.inspector===false;statusbar.hidden=chrome.status===false;help.hidden=chrome.help===false;
+    toolbar.hidden=chrome.toolbar===false;sidebar.hidden=chrome.inspector===false;pill.hidden=chrome.status===false;statusbar.hidden=true;help.hidden=chrome.help===false;
     if(presentation.chrome?.inspector===undefined)sidebar.hidden=mode==='embed';
     if(presentation.chrome?.help===undefined)help.hidden=mode==='embed';
     root.dataset.mode=mode;root.dataset.inspector=sidebar.hidden?'hidden':'visible';
@@ -201,6 +227,7 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
     const relations=shown.slices??[];const nextKey=JSON.stringify(relations.map(relation=>[relation.sourceLayerId,relation.targetLayerId,relation.axis]));
     if(nextKey!==sliceKey){sliceKey=nextKey;slices.replaceChildren();for(const relation of relations){const source=shown.layers.find(layer=>layer.id===relation.sourceLayerId);if(!source)continue;const label=create('label','vv-field',slices);label.append(document.createTextNode(''));const input=create('input','',label);input.dataset.target=relation.targetLayerId;input.type='range';input.min='0';input.step='1';input.setAttribute('aria-label',`${source.style.label??'Surface'} ${relation.axis.toUpperCase()} slice`);input.addEventListener('input',()=>run(()=>figure.setInspectionSlice(relation.targetLayerId,Number(input.value))));}}
     for(const input of slices.querySelectorAll<HTMLInputElement>('input')){const relation=relations.find(item=>item.targetLayerId===input.dataset.target),source=relation&&shown.layers.find(layer=>layer.id===relation.sourceLayerId);if(!relation||!source)continue;const count=captured?captured.sources.find(item=>item.id===source.data[relation.axis])?.shape[0]??0:figure.registry.get(source.data[relation.axis]).values.length;input.max=String(Math.max(0,count-1));input.value=String(relation.index);input.parentElement!.firstChild!.textContent=`${relation.axis.toUpperCase()} slice · ${relation.index+1} / ${count}`;}
+    slices.hidden=!relations.length;
   };
   const pairs=(parent:HTMLElement,values:Array<[string,string]>)=>{const list=create('dl','vv-properties',parent);for(const [name,value] of values){create('dt','',list).textContent=name;create('dd','',list).textContent=value;}};
   const syncMetadata=(shown:Figure['spec'],preferredLayer?:string)=>{
@@ -234,7 +261,7 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
     const rendered=representation?.status==='rendered'?representation.layers.filter(info=>info.layerId===layer?.id):[];
     const nextRecordKey=JSON.stringify([layer?.id,observationRecord?.source,observationRecord?.capturedAt,observationRecord?.sourceVersions.length,versions,streams,representation?.status,representation?.status==='rendered'?[representation.frameId,representation.snapshotId,rendered]:undefined]);
     if(nextRecordKey!==recordKey){recordKey=nextRecordKey;record.replaceChildren();
-      if(!observationRecord)create('p','vv-notice',record).textContent='No observation record is attached to this scene. Enable it in Export options to include one in HTML.';
+      if(!observationRecord)create('p','vv-notice',record).textContent='No observation record is attached to this scene. Enable it in Export to include one in HTML.';
       else{
         const values:Array<[string,string]>=[['Capture source',observationRecord.source],['Captured',observationRecord.capturedAt],['Recorded sources',String(observationRecord.sourceVersions.length)]];
         for(const source of versions??[])values.push(['Source version',`${source.id} · ${source.version}`]);
@@ -258,43 +285,129 @@ export function mountViewer(figure:Figure, container:HTMLElement, options:Viewer
     text(surfaceQuality,omitted.map(info=>`${shown.layers.find(layer=>layer.id===info.layerId)?.style.label??'Surface'}: ${number(info.omittedTriangles!)} / ${number(info.totalTriangles!)} triangles omitted because coordinates or scalar values are not finite.`).join('\n'));
     if(pendingTheme&&state.mode==='live'){pendingTheme=false;figure.setTheme(theme==='dark'?OBSIDIAN_DARK:OBSIDIAN_LIGHT);}
     for(const control of layerList.querySelectorAll<HTMLButtonElement>('button')){control.disabled=state.mode==='frozen';control.title=state.mode==='frozen'?'Return to live before changing layers.':'';}
-    themeButton.disabled=state.mode==='frozen';themeButton.title=state.mode==='frozen'?'Return to live before changing the theme.':'';
+    themeButton.title='';
     const focusResume=document.activeElement===freeze&&state.mode==='frozen',focusFreeze=document.activeElement===resume&&state.mode==='live';
     freeze.hidden=!inspectionEnabled||state.mode==='frozen';resume.hidden=!inspectionEnabled||state.mode!=='frozen';freeze.disabled=!mounted||state.frameId===0;
     if(inspectionEnabled){if(focusResume)resume.focus();else if(focusFreeze)freeze.focus();}
+    pill.dataset.mode=state.mode==='frozen'?'frozen':live?'live':'ready';
     text(status,state.mode==='frozen'?`Frozen snapshot${state.capturedAt?` · ${new Date(state.capturedAt).toLocaleTimeString()}`:''}`:live?'Live':'Ready');
+    syncOverview();
     const capture=figure.spec.inspection,capturedAt=state.capturedAt??capture?.capturedAt;
     captureNotice.hidden=!capturedAt;
     text(captureNotice,capturedAt?`Captured ${capturedAt}${state.snapshotId??capture?.snapshotId?` · Snapshot ${state.snapshotId??capture?.snapshotId}`:''}${capture?` · Source frame ${capture.frameId}`:''}`:'');
     text(diagnostics,`Backend: ${stats.backend??'unmounted'}\nWorker: ${stats.worker?'active':'cooperative fallback'}\nSource: ${number(stats.sourceBytes)} bytes\nFrame: ${state.frameId}\nSnapshot: ${number(state.snapshotBytes)} / ${number(state.maxSnapshotBytes)} bytes\nAccepted / displayed revision: ${state.acceptedRevision} / ${state.displayedRevision}${streams.length?`\nRetained: ${number(streams.reduce((sum,stream)=>sum+stream.retained,0))}\nEvicted: ${number(streams.reduce((sum,stream)=>sum+stream.evicted,0))}`:''}`);
     png.disabled=html.disabled=exporting||!mounted;reset.disabled=!mounted;
   };
+  const shownSpec=()=>figure.getInspectionState().mode==='frozen'?figure.getInspectionSnapshot().figure:figure.spec;
+  const sourceValues=(id?:string):ArrayLike<number>|undefined=>{if(!id||!figure.registry?.has(id))return;try{return figure.registry.get(id).values;}catch{return;}};
+  const finiteExtent=(values:ArrayLike<number>):Domain|undefined=>{let min=Infinity,max=-Infinity;for(let i=0;i<values.length;i++){const value=values[i];if(!Number.isFinite(value))continue;if(value<min)min=value;if(value>max)max=value;}return min<max?[min,max]:undefined;};
+  const addLine=(parent:HTMLElement,value:string)=>{const node=create('p','vv-sample-line',parent);node.textContent=value;return node;};
+  const representationName=(info?:{kind:string;exact?:boolean;method?:string})=>{if(!info)return;const method=info.method??'';if(info.kind==='density'||/density|count aggregation/i.test(method))return 'density';if(info.kind==='line'&&info.exact===false)return 'reduced line';if(info.exact===true)return 'exact';if(info.kind==='line'&&/min\/max|pixel column/i.test(method))return 'reduced line';};
+  const representationFor=(spec:Figure['spec'],layerId:string)=>{const inspected=figure.inspect().find(info=>info.layerId===layerId);const record=spec.observation?.representation;const recorded=record&&record.status==='rendered'?record.layers.find(info=>info.layerId===layerId):undefined;return representationName(inspected)??representationName(recorded);};
+  const unitFor=(spec:Figure['spec'],layerId:string,channel:string)=>{const source=spec.layers.find(layer=>layer.id===layerId)?.data[channel];const unit=source?spec.semantics?.sources[source]?.unit:undefined;return typeof unit==='string'&&unit.trim()?unit.trim():undefined;};
+  const withUnit=(value:unknown,unit?:string)=>`${String(value)}${unit?` ${unit}`:''}`;
+  const cellLine=(event:HoverEvent)=>{if(Array.isArray(event.cell))return `Cell row, column: ${event.cell.join(', ')}`;if(typeof event.row==='number'&&typeof event.column==='number')return `Cell row, column: ${event.row}, ${event.column}`;};
+  const rawLines=(event:HoverEvent)=>{const lines:string[]=[];for(const [key,label]of [['sequence','Sequence'],['frameId','Frame'],['snapshotId','Snapshot'],['sourceRevision','Source revision'],['dataRevision','Data revision']] as const)if(event[key]!==undefined)lines.push(`${label}: ${String(event[key])}`);if(event.sourceVersions&&typeof event.sourceVersions==='object')lines.push(`Channel versions: ${Object.entries(event.sourceVersions).map(([key,value])=>`${key} ${String(value)}`).join(', ')}`);return lines;};
   const showObservation=(event:HoverEvent|undefined,selected=false)=>{
-    if(!event){text(inspection,inspectionHint);return;}
-    const shown=figure.getInspectionState().mode==='frozen'?figure.getInspectionSnapshot().figure:figure.spec;
-    syncMetadata(shown,event.layerId);
+    sampleBody.replaceChildren();sampleRaw.replaceChildren();sharedCursor.hidden=true;sharedCursor.replaceChildren();
+    if(!event){addLine(sampleBody,inspectionHint);return;}
+    const shown=shownSpec();syncMetadata(shown,event.layerId);
     const label=shown.layers.find(layer=>layer.id===event.layerId)?.style.label??event.layerId;
-    const detail=[`${selected?'Selected':'Hovered'} ${event.interpolated?'interpolated value':'observation'} · ${label}`];
-    for(const key of ['x','y','z','value','count'])if(event[key]!==undefined)detail.push(`${key}: ${String(event[key])}`);
-    const sourceIndex=event.index??event.sourceIndex;if(sourceIndex!==undefined)detail.push(`Source index: ${sourceIndex}`);
-    if(Array.isArray(event.cell))detail.push(`Cell row, column: ${event.cell.join(', ')}`);
-    if(event.triangle!==undefined)detail.push(`Triangle: ${event.triangle}`);
-    if(Array.isArray(event.indices))detail.push(`Segment indices: ${event.indices.join(', ')}`);
-    for(const [key,label]of [['sequence','Sequence'],['frameId','Frame'],['snapshotId','Snapshot'],['sourceRevision','Source revision'],['dataRevision','Data revision']] as const)if(event[key]!==undefined)detail.push(`${label}: ${String(event[key])}`);
-    if(event.sourceVersions&&typeof event.sourceVersions==='object')detail.push(`Channel versions: ${Object.entries(event.sourceVersions).map(([key,value])=>`${key} ${value}`).join(', ')}`);
-    text(inspection,detail.join('\n'));
+    addLine(sampleBody,`${selected?'Selected':'Hovered'} ${event.interpolated?'interpolated value':'observation'}`);
+    addLine(sampleBody,String(label));
+    for(const key of ['x','y','z','value'] as const)if(event[key]!==undefined)addLine(sampleBody,`${key}: ${withUnit(event[key],key==='value'?undefined:unitFor(shown,event.layerId,key))}`);
+    if(event.count!==undefined)addLine(sampleBody,`count: ${String(event.count)}`);
+    const sourceIndex=event.index??event.sourceIndex;if(typeof sourceIndex==='number')addLine(sampleBody,`Source index: ${sourceIndex}`);
+    const cell=cellLine(event);if(cell)addLine(sampleBody,cell);
+    if(event.triangle!==undefined)addLine(sampleBody,`Triangle: ${String(event.triangle)}`);
+    if(Array.isArray(event.indices))addLine(sampleBody,`Segment indices: ${event.indices.join(', ')}`);
+    const method=representationFor(shown,event.layerId);if(method)addLine(sampleBody,`Representation: ${method}`);
+    const raw=rawLines(event);if(raw.length)addLine(sampleRaw,raw.join('\n'));
   };
+  const showXHover=(event:XHoverEvent)=>{
+    const shown=shownSpec(),share=shown.layout?.shareX===true;
+    sampleBody.replaceChildren();sampleRaw.replaceChildren();sharedCursor.replaceChildren();sharedCursor.hidden=!share;
+    if(share)addLine(sampleBody,'Shared cursor');
+    if(!event.items.length&&!(share&&lastCell&&cellLine(lastCell)))addLine(sampleBody,inspectionHint);
+    for(const item of event.items){
+      const label=shown.layers.find(layer=>layer.id===item.layerId)?.style.label??item.layerId;
+      addLine(sampleBody,String(label));
+      addLine(sampleBody,`x: ${withUnit(item.x,unitFor(shown,item.layerId,'x'))}`);
+      addLine(sampleBody,`y: ${withUnit(item.y,unitFor(shown,item.layerId,'y'))}`);
+      if(typeof item.index==='number')addLine(sampleBody,`Source index: ${item.index}`);
+      if(item.sequence!==undefined)addLine(sampleBody,`Sequence: ${item.sequence}`);
+      const method=representationFor(shown,item.layerId);if(method)addLine(sampleBody,`Representation: ${method}`);
+      syncMetadata(shown,item.layerId);
+    }
+    if(share&&lastCell){const cell=cellLine(lastCell);if(cell){addLine(sampleBody,cell);if(lastCell.value!==undefined)addLine(sampleBody,`value: ${String(lastCell.value)}`);}}
+    if(share){addLine(sharedCursor,'Shared cursor');for(const node of sampleBody.querySelectorAll('.vv-sample-line'))addLine(sharedCursor,node.textContent??'');}
+  };
+  const placeGuide=()=>{
+    const spec=shownSpec(),share=spec.layout?.shareX===true,cols=spec.layout?.cols??1,point=lastXHover?.pointerPosition,canvas=chart.querySelector('canvas');
+    if(!share||cols!==1||!point||!(canvas instanceof HTMLElement)){cursorGuide.hidden=true;return;}
+    const plotRect=plot.getBoundingClientRect(),canvasRect=canvas.getBoundingClientRect();
+    if(plotRect.width<=0||canvasRect.width<=0){cursorGuide.hidden=true;return;}
+    cursorGuide.hidden=false;cursorGuide.style.top=`${canvasRect.top-plotRect.top}px`;cursorGuide.style.height=`${canvasRect.height}px`;cursorGuide.style.left=`${canvasRect.left-plotRect.left+point.x}px`;
+  };
+  const overviewPanels=(spec:Figure['spec'])=>{
+    const panels:Array<{id:string;view:ViewSpec;layers:LayerSpec[]}>=[{id:'main',view:spec.view,layers:spec.layers.filter(layer=>(layer.panelId??'main')==='main')}];
+    if(spec.layout)for(const panel of spec.panels??[])if(panel.id!=='main'&&panel.view)panels.push({id:panel.id,view:panel.view,layers:spec.layers.filter(layer=>layer.panelId===panel.id)});
+    return panels;
+  };
+  const overviewEligible=(panel:{view:ViewSpec;layers:LayerSpec[]})=>panel.view?.kind==='2d'&&(!panel.view.projection||panel.view.projection==='cartesian')&&(panel.view.xScale==='linear'||panel.view.xScale==='time')&&panel.layers.some(layer=>layer.visible!==false&&OVERVIEW_KINDS.has(layer.kind));
+  const paintOverview=(full:Domain,domain:Domain)=>{const span=full[1]-full[0]||1,left=Math.min(1,Math.max(0,(domain[0]-full[0])/span)),right=Math.min(1,Math.max(left,(domain[1]-full[0])/span));overviewWindow.style.left=`${left*100}%`;overviewWindow.style.width=`${Math.max((right-left)*100,.8)}%`;};
+  const applyXDomain=(panelId:string,domain:Domain|undefined)=>{const patch={xDomain:domain};if(figure.getInspectionState().mode==='frozen'){figure.setInspectionView(panelId,patch);return;}if(panelId==='main')figure.setView(patch);else figure.setPanelView(panelId,patch);};
+  const syncOverview=()=>{
+    const spec=shownSpec(),panels=overviewPanels(spec).filter(overviewEligible),share=spec.layout?.shareX===true;
+    const target=share?panels.length?{id:'main'}:undefined:panels.length===1?panels[0]:undefined;
+    if(!target){overview.hidden=true;overviewState=undefined;return;}
+    const watched=share?panels:[panels[0]];
+    let min=Infinity,max=-Infinity;
+    for(const panel of watched)for(const layer of panel.layers)if(layer.visible!==false&&OVERVIEW_KINDS.has(layer.kind)){const span=finiteExtent(sourceValues(layer.data.x)??[]);if(!span)continue;min=Math.min(min,span[0]);max=Math.max(max,span[1]);}
+    if(!(min<max)){overview.hidden=true;overviewState=undefined;return;}
+    const full:Domain=[min,max];let domain:Domain|undefined;
+    try{const view=figure.getInspectionView(target.id);if(view.xDomain&&view.xDomain[0]<view.xDomain[1])domain=[view.xDomain[0],view.xDomain[1]];}catch{/* A mounted view reports the domain after the first frame. */}
+    overview.hidden=false;overviewState={panelId:target.id,full,domain};const shown=domain??full;paintOverview(full,shown);
+    overviewTrack.setAttribute('aria-valuemin',String(full[0]));overviewTrack.setAttribute('aria-valuemax',String(full[1]));overviewTrack.setAttribute('aria-valuenow',String(shown[0]));overviewTrack.setAttribute('aria-valuetext',`${shown[0]} to ${shown[1]}`);
+  };
+  const dataAt=(clientX:number,full:Domain)=>{const rect=overviewTrack.getBoundingClientRect(),width=Math.max(1,rect.width),fraction=Math.min(1,Math.max(0,(clientX-rect.left)/width));return full[0]+fraction*(full[1]-full[0]);};
+  overviewTrack.addEventListener('pointerdown',event=>{if(!overviewState||event.button!==0)return;try{overviewTrack.setPointerCapture?.(event.pointerId);}catch{/* Pointer capture is optional for a domain drag. */}const state=overviewState;overviewDrag={pointerId:event.pointerId,originClient:event.clientX,origin:dataAt(event.clientX,state.full),full:state.full,panelId:state.panelId,moved:false};});
+  overviewTrack.addEventListener('pointermove',event=>{if(!overviewDrag||event.pointerId!==overviewDrag.pointerId)return;if(Math.abs(event.clientX-overviewDrag.originClient)>=3)overviewDrag.moved=true;const end=dataAt(event.clientX,overviewDrag.full);paintOverview(overviewDrag.full,[Math.min(overviewDrag.origin,end),Math.max(overviewDrag.origin,end)]);});
+  overviewTrack.addEventListener('pointerup',event=>{if(!overviewDrag||event.pointerId!==overviewDrag.pointerId)return;const drag=overviewDrag;overviewDrag=undefined;if(!drag.moved)return;const end=dataAt(event.clientX,drag.full),domain:Domain=[Math.min(drag.origin,end),Math.max(drag.origin,end)];if(domain[1]>domain[0])run(()=>applyXDomain(drag.panelId,domain));});
+  overviewTrack.addEventListener('dblclick',event=>{if(!overviewState)return;event.preventDefault();const panelId=overviewState.panelId;run(()=>applyXDomain(panelId,undefined));});
+  const selectionIndices=(event:Selection)=>event.kind==='density'||!('indices' in event)||!event.indices?undefined:Array.from(event.indices);
+  const renderSelection=(event?:Selection)=>{
+    if(event){selectionEvent=event;selectionPage=0;}
+    const current=selectionEvent;
+    if(!current||current.count<=0){selectionDetails.hidden=true;return;}
+    selectionDetails.hidden=false;
+    const indices=selectionIndices(current),preview=!!indices&&(('truncated' in current&&current.truncated)||indices.length<current.count);
+    const spec=shownSpec();
+    selectionSummary.textContent=`Selection · ${number(current.count)}`;
+    text(selectionNote,!indices?`${number(current.count)} selected. No row preview was included.`:preview?`This page is a preview. ${number(current.count)} selected; ${number(indices!.length)} indices are included.`:`${number(current.count)} selected.`);
+    const layers=current.kind==='linked'&&spec.selectionLink?[...spec.selectionLink.scatter,spec.selectionLink.histogram].flatMap(id=>{const layer=spec.layers.find(item=>item.id===id);return layer?[layer]:[];}):spec.layers.filter(layer=>layer.id===current.layerId);
+    const columns:Array<{header:string;cell:(index:number)=>string}>=[{header:'Source index',cell:index=>String(index)}];
+    for(const layer of layers){const label=layer.style.label??layer.id;for(const [channel,source] of Object.entries(layer.data))columns.push({header:`${label} ${channel}`,cell:index=>{const values=sourceValues(source);return !values||index<0||index>=values.length||!Number.isFinite(values[index])?'—':String(values[index]);}});}
+    const pages=Math.max(1,Math.ceil((indices?.length??0)/PAGE_SIZE));
+    if(selectionPage>=pages)selectionPage=pages-1;if(selectionPage<0)selectionPage=0;
+    const page=indices?indices.slice(selectionPage*PAGE_SIZE,selectionPage*PAGE_SIZE+PAGE_SIZE):[];
+    tableHead.replaceChildren();tableBody.replaceChildren();tableWrap.hidden=page.length===0;
+    if(page.length){const head=document.createElement('tr');tableHead.append(head);for(const column of columns){const cell=document.createElement('th');cell.textContent=column.header;head.append(cell);}for(const index of page){const row=document.createElement('tr');tableBody.append(row);for(const column of columns){const cell=document.createElement('td');cell.textContent=column.cell(index);row.append(cell);}}}
+    pager.hidden=!indices||indices.length<=PAGE_SIZE;text(pageLabel,`Page ${selectionPage+1} of ${pages}`);pagePrev.disabled=selectionPage<=0;pageNext.disabled=selectionPage>=pages-1;
+  };
+  pagePrev.addEventListener('click',()=>{if(selectionPage>0){selectionPage-=1;renderSelection();}});
+  pageNext.addEventListener('click',()=>{selectionPage+=1;renderSelection();});
   const handle:ViewerHandle={element:root,figure,setTheme(next){if(next!=='light'&&next!=='dark')throw new TypeError('Viewer theme must be light or dark.');if(disposed)return;theme=next;root.dataset.theme=next;themeButton.textContent=next==='dark'?'Light theme':'Dark theme';if(!options.preserveTheme){pendingTheme=figure.getInspectionState().mode==='frozen';if(!pendingTheme)figure.setTheme(next==='dark'?OBSIDIAN_DARK:OBSIDIAN_LIGHT);}},updateOptions(patch){if(disposed)return;applyPresentation(presentationPatch(patch,document));},dispose(){if(disposed)return;disposed=true;for(const remove of removers)remove();for(const url of downloads)URL.revokeObjectURL(url);downloads.clear();try{if(mounted&&figure.hasMountedView())figure.unmount();}finally{attachments.delete(figure);root.remove();}}};
   applyPresentation(presentation);
   attachments.set(figure,handle);container.append(root);
   removers.push(
-    figure.on('frame',()=>{errorPanel.hidden=true;selectedObservation=figure.getInspectionSelection();refresh();showObservation(selectedObservation,!!selectedObservation);}),
+    figure.on('frame',()=>{errorPanel.hidden=true;selectedObservation=figure.getInspectionSelection();lastXHover=null;refresh();showObservation(selectedObservation,!!selectedObservation);placeGuide();}),
     figure.on('inspectionchange',refresh),figure.on('representation',refresh),figure.on('error',event=>fail(event.message)),
     figure.on('runtimechange',event=>{if(event.status==='recovering')text(status,'Restoring graphics…');else if(event.status==='fallback')text(status,'Ready · cooperative processing');}),
-    figure.on('click',event=>{selectedObservation=structuredClone(event);inspectDetails.open=true;showObservation(selectedObservation,true);}),
-    figure.on('hover',event=>showObservation(event??selectedObservation,!event&&!!selectedObservation)),
-    figure.on('xhover',event=>{if(!event){showObservation(selectedObservation,!!selectedObservation);return;}const shown=figure.getInspectionState().mode==='frozen'?figure.getInspectionSnapshot().figure:figure.spec;const values=event.items.map(item=>`${shown.layers.find(layer=>layer.id===item.layerId)?.style.label??'Signal'}\nx: ${String(item.x)} · y: ${String(item.y)}${item.sequence===undefined?'':` · sample ${item.sequence}`}`);text(inspection,values.join('\n\n'));}),
-    figure.on('selection',event=>text(inspection,`${number(event.count)} selected${'truncated' in event&&event.truncated?' · preview truncated':''}`)),
+    figure.on('click',event=>{selectedObservation=structuredClone(event);lastXHover=null;inspectDetails.open=true;showObservation(selectedObservation,true);placeGuide();}),
+    figure.on('hover',event=>{if(event?.kind==='cell'&&(Array.isArray(event.cell)||typeof event.row==='number'||typeof event.column==='number'))lastCell=event;else lastCell=undefined;if(lastXHover&&shownSpec().layout?.shareX){showXHover(lastXHover);placeGuide();return;}showObservation(event??selectedObservation,!event&&!!selectedObservation);}),
+    figure.on('xhover',event=>{lastXHover=event;placeGuide();if(!event){showObservation(selectedObservation,!!selectedObservation);return;}showXHover(event);}),
+    figure.on('selection',event=>renderSelection(event)),
   );
   try{if(options.height!==undefined)figure.setSize({height:options.height});handle.setTheme(theme);figure.mount(chart,{responsivePanels:options.responsivePanels!==false});mounted=true;refresh();showObservation(selectedObservation,!!selectedObservation);void figure.ready().then(refresh).catch(fail);}catch(error){fail(error);}
   return handle;

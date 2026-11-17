@@ -44,7 +44,8 @@ test('viewer exports the selected source and observation record using the matchi
   await viewer.locator('summary').filter({hasText:'Data meaning'}).click();
   await expect(viewer.locator('.vv-semantics')).toContainText('Original calibration');
   await expect(viewer.locator('.vv-semantics')).not.toContainText('Latest calibration');
-  await viewer.locator('summary').filter({hasText:'Export options'}).click();
+  const exportMenu=viewer.locator('.vv-export');
+  if(!(await exportMenu.evaluate(node=>node.open))) await exportMenu.locator('summary').click();
   for(const source of ['displayed','accepted']){
     await viewer.getByRole('combobox',{name:'Export source',exact:true}).selectOption(source);
     const promised=page.waitForEvent('download');await viewer.getByRole('button',{name:'Export HTML',exact:true}).click();

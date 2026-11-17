@@ -21,7 +21,7 @@ cells = [f'''from pathlib import Path
 import runpy
 import vesora as vs
 assert Path(vs.__file__).resolve().is_relative_to(Path({str(target)!r})), vs.__file__
-assert vs.__version__ == "1.0.0"
+assert vs.__version__ == "1.1.0"
 make = runpy.run_path({str(root / "skills/vesora/scripts/example_python.py")!r})["make_figure"]
 fig = make()
 fig.show(host="notebook")

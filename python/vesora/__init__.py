@@ -4,7 +4,7 @@ from typing import Any
 from .figure import Figure, Layer, Panel, Annotation, SelectionLink, SurfaceSlice, PROTOCOL_VERSION, EXTENDED_PROTOCOL_VERSION, STATISTICS_PROTOCOL_VERSION, LINKED_PROTOCOL_VERSION, PRESENTATION_PROTOCOL_VERSION, QUALITY_PROTOCOL_VERSION, SCENE3D_PROTOCOL_VERSION, OBSERVATION_PROTOCOL_VERSION, ADVANCED_PROTOCOL_VERSION
 from .analysis import create_run_comparison, link_observations, ObservationController, query_ecdf
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["Figure", "Layer", "Panel", "Annotation", "SelectionLink", "SurfaceSlice", "figure", "subplots", "plot", "plot3d", "fill_between", "scatter", "heatmap", "surface", "scatter3d", "hist", "bar", "barh", "boxplot", "show", "savefig", "process_events"]
 __all__ += ["ecdf", "ccdf", "spectrogram", "event_timeline", "errorbar", "contour", "contourf", "quiver", "parallel_coordinates", "pareto_front", "phase_portrait", "hysteresis", "ternary", "create_run_comparison", "link_observations", "ObservationController"]
 __all__ += ["query_ecdf"]

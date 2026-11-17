@@ -1,4 +1,4 @@
-# Analysis chart contracts (Vesora 1.0.0)
+# Analysis chart contracts (Vesora 1.1.0)
 
 Methods below exist on a JavaScript `Figure` or `Panel`. Python equivalents are snake_case. All return a mutable layer and accept normal Vesora style options where applicable. Raw source channels and analysis options travel in scene protocol 9 and offline HTML.
 
